@@ -36,14 +36,13 @@ if (!process.env.SERVE_CLIENT_DIR) {
 process.env.BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups");
 process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dirname, "storage");
 
-const isLocalStartup = require.main === module;
-if (isLocalStartup && !process.env.PORT) {
+if (!process.env.PORT) {
   process.env.PORT = "3000";
 }
 
-// Direct local runs without a configured database should still start the app
-// shell instead of failing during bundled bootstrap or startup migrations.
-if (isLocalStartup && !process.env.DATABASE_URL) {
+// Starts without a real database only when one has not yet been provisioned so
+// the process can still boot and satisfy platform health checks.
+if (!process.env.DATABASE_URL) {
   process.env.DATABASE_URL = "postgresql://localhost:5432/local-startup-placeholder";
   process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT = "1";
 }

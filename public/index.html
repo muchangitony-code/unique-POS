@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>UniquePOS</title>
+    <meta name="description" content="UniquePOS web client" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="hero">
+        <div class="hero__badge">UniquePOS</div>
+        <h1 id="brandName">Business management that is ready to open.</h1>
+        <p id="brandSummary">
+          Sign in to access your POS workspace, or confirm the service is online before finishing setup.
+        </p>
+        <div class="hero__status" id="apiStatus" aria-live="polite">Checking service status…</div>
+      </aside>
+
+      <main class="panel">
+        <section class="card">
+          <h2>Sign in</h2>
+          <p class="muted">Use your account email and password to open the app.</p>
+
+          <form id="loginForm" class="form">
+            <label>
+              <span>Email</span>
+              <input id="email" name="email" type="email" autocomplete="username" required />
+            </label>
+
+            <label>
+              <span>Password</span>
+              <input id="password" name="password" type="password" autocomplete="current-password" required />
+            </label>
+
+            <label id="totpWrap" class="hidden">
+              <span>Authentication code</span>
+              <input id="totp" name="totp" type="text" inputmode="numeric" autocomplete="one-time-code" />
+            </label>
+
+            <button id="submitBtn" type="submit">Sign in</button>
+          </form>
+
+          <div id="message" class="message hidden" aria-live="polite"></div>
+        </section>
+
+        <section class="card hidden" id="accountCard">
+          <h2>Session ready</h2>
+          <div id="accountDetails" class="details"></div>
+          <div class="actions">
+            <button id="copyTokenBtn" type="button" class="secondary">Copy token</button>
+            <button id="signOutBtn" type="button" class="secondary">Sign out</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Deployment checklist</h2>
+          <ul class="checklist">
+            <li>Set <code>DATABASE_URL</code></li>
+            <li>Set <code>SESSION_SECRET</code></li>
+            <li>Load <code>database.sql</code> into PostgreSQL</li>
+            <li>Sign in with your provisioned user account</li>
+          </ul>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>
