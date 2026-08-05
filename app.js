@@ -28,11 +28,16 @@ process.env.SERVE_CLIENT_DIR = process.env.SERVE_CLIENT_DIR || path.join(__dirna
 process.env.BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups");
 process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dirname, "storage");
 
+const isLocalStartup = require.main === module || process.argv[1] === __filename;
+if (isLocalStartup && !process.env.PORT) {
+  process.env.PORT = "3000";
+}
+
 // Synchronous require — the bundled server is CommonJS and starts on import.
 // For local startup, provide a harmless placeholder connection string so startup
 // reaches later startup validation instead of failing immediately in the bundled
 // database bootstrap when no DATABASE_URL was provided.
-if (!process.env.DATABASE_URL) {
+if (isLocalStartup && !process.env.DATABASE_URL) {
   process.env.DATABASE_URL = "postgresql://localhost:5432/local-startup-placeholder";
 }
 
