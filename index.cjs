@@ -73092,7 +73092,7 @@ if (clientDir) {
     res.sendFile(import_path.default.join(absClientDir, "index.html"));
   });
 }
-var PUBLIC_PATHS = ["/api/auth/login", "/api/auth/logout", "/api/auth/forgot-password", "/api/auth/reset-password", "/api/health", "/api/storage/objects", "/api/storage/public-objects", "/api/storage/upload/"];
+var PUBLIC_PATHS = ["/api/auth/login", "/api/auth/logout", "/api/auth/forgot-password", "/api/auth/reset-password", "/api/health", "/api/healthz", "/api/storage/objects", "/api/storage/public-objects", "/api/storage/upload/"];
 var PUBLIC_GET_PATHS = ["/api/settings/branding"];
 function conditionalAuth(req, res, next) {
   const isPublic = PUBLIC_PATHS.some((p) => req.path === p || req.path.startsWith(p)) || req.method === "GET" && PUBLIC_GET_PATHS.includes(req.path);
