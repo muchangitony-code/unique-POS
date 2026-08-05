@@ -48,4 +48,13 @@ if (isLocalStartup && !process.env.DATABASE_URL) {
   process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT = "1";
 }
 
+// index.cjs checks SESSION_SECRET at module load time. Supply a placeholder so
+// the process starts (and passes the health check) even when the secret is not
+// yet configured (e.g. Railway PR-preview environments). JWT operations will
+// fail at runtime until a real secret is provided, which is the correct
+// behaviour — the app should not be usable without a proper SESSION_SECRET.
+if (!process.env.SESSION_SECRET) {
+  process.env.SESSION_SECRET = "unconfigured-placeholder-change-me";
+}
+
 require("./index.cjs");
