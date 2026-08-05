@@ -75099,6 +75099,23 @@ app_default.listen(port, (err) => {
   startScheduler();
   logger.info({ port }, "Server listening");
 });
+if (process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT === "1") {
+  const originalRunStartupMigrations = runStartupMigrations;
+  runStartupMigrations = async () => {
+    try {
+      await originalRunStartupMigrations();
+    } catch (err) {
+      const dbCode = err && typeof err === "object" ? err.code : void 0;
+      if (dbCode === "ECONNREFUSED" || dbCode === "ENOTFOUND") {
+        console.warn(
+          "Skipping startup database connection for local run because DATABASE_URL is not configured."
+        );
+        return;
+      }
+      throw err;
+    }
+  };
+}
 runStartupMigrations().catch((err) => {
   logger.error({ err }, "Startup migrations failed \u2014 aborting");
   process.exit(1);
