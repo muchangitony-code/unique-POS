@@ -22,7 +22,7 @@ connection string.
 Load the included dump (schema + starter data, including the admin login):
 
 ```bash
-psql "YOUR_DATABASE_URL" -f db/database.sql
+psql "YOUR_DATABASE_URL" -f database.sql
 ```
 
 Default login: `admin@uniquepos.com` / `Test1234!` — change this password
@@ -58,6 +58,7 @@ Application Startup File to `app.js`, add the environment variables, then click
 4. Set the following environment variables in Railway → **Variables**:
    - `DATABASE_URL` — your PostgreSQL connection string (**required**)
    - `SESSION_SECRET` — a long random string (e.g. 32+ random characters) (**required**)
+   - `APP_URL` — your Railway public URL, e.g. `https://your-service.up.railway.app` (**recommended**)
    - `NODE_ENV` — `production` (Railway sets this automatically; you can leave it unset)
 5. Railway injects `PORT` automatically — do **not** set it manually.
 6. Load the database schema once (from your local machine or Railway's shell):
@@ -66,6 +67,8 @@ Application Startup File to `app.js`, add the environment variables, then click
    ```
 7. Click **Deploy**. Railway will run `npm install --omit=dev` (via `railway.json`) and
    then `node app.js`.
+8. After Railway assigns a public domain, copy it into `APP_URL` so generated links and
+   email actions use the correct production address.
 
 > **Note on the web frontend:** If the `public/` directory is not present in the
 > repository, the server starts in API-only mode — all `/api/*` routes work normally
