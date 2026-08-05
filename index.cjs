@@ -75091,16 +75091,32 @@ var port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
-runStartupMigrations().then(() => {
-  app_default.listen(port, (err) => {
-    if (err) {
-      logger.error({ err }, "Error listening on port");
-      process.exit(1);
+app_default.listen(port, (err) => {
+  if (err) {
+    logger.error({ err }, "Error listening on port");
+    process.exit(1);
+  }
+  startScheduler();
+  logger.info({ port }, "Server listening");
+});
+if (process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT === "1") {
+  const originalRunStartupMigrations = runStartupMigrations;
+  runStartupMigrations = async () => {
+    try {
+      await originalRunStartupMigrations();
+    } catch (err) {
+      const dbCode = err && typeof err === "object" ? err.code : void 0;
+      if (dbCode === "ECONNREFUSED" || dbCode === "ENOTFOUND") {
+        console.warn(
+          "Skipping startup database connection for local run because DATABASE_URL is not configured."
+        );
+        return;
+      }
+      throw err;
     }
-    startScheduler();
-    logger.info({ port }, "Server listening");
-  });
-}).catch((err) => {
+  };
+}
+runStartupMigrations().catch((err) => {
   logger.error({ err }, "Startup migrations failed \u2014 aborting");
   process.exit(1);
 });
