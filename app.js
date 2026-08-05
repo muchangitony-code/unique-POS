@@ -29,4 +29,4 @@ process.env.BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups
 process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dirname, "storage");
 
 // Synchronous require — the bundled server is CommonJS and starts on import.
-require("./server/index.cjs");
+require("./index.cjs");
