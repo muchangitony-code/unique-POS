@@ -24,7 +24,15 @@ if (fs.existsSync(envPath)) {
 
 // On-disk defaults (resolved next to this file).
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
-process.env.SERVE_CLIENT_DIR = process.env.SERVE_CLIENT_DIR || path.join(__dirname, "public");
+const _defaultClientDir = path.join(__dirname, "public");
+if (!process.env.SERVE_CLIENT_DIR) {
+  // Only set SERVE_CLIENT_DIR when the public/ folder actually exists so the
+  // server starts cleanly as an API-only deployment when the built frontend
+  // has not been committed to the repository.
+  if (fs.existsSync(_defaultClientDir)) {
+    process.env.SERVE_CLIENT_DIR = _defaultClientDir;
+  }
+}
 process.env.BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups");
 process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dirname, "storage");
 

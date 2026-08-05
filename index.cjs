@@ -67104,7 +67104,12 @@ if (!process.env.DATABASE_URL) {
     "DATABASE_URL must be set. Did you forget to provision a database?"
   );
 }
-var pool = new Pool3({ connectionString: process.env.DATABASE_URL });
+var _dbUrl = process.env.DATABASE_URL;
+var _isLocalDb = /localhost|127\.0\.0\.1|::1/.test(_dbUrl);
+var pool = new Pool3({
+  connectionString: _dbUrl,
+  ssl: _isLocalDb ? false : { rejectUnauthorized: false }
+});
 var db = drizzle(pool, { schema: schema_exports });
 
 // artifacts/api-server/src/lib/auth.ts
