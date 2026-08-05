@@ -34,6 +34,11 @@ Copy `.env.example` to `.env` and fill in `DATABASE_URL` and `SESSION_SECRET`.
 On cPanel you can instead set these as environment variables in the
 "Setup Node.js App" screen.
 
+**SSL note:** The app automatically enables SSL (`rejectUnauthorized: false`) for
+any non-localhost database connection. If your provider's connection string already
+includes `?sslmode=require` or similar, that takes precedence. Local connections
+(`localhost` / `127.0.0.1`) do not use SSL.
+
 ## 3. Install & start
 
 ```bash
