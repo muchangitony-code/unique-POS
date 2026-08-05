@@ -28,7 +28,7 @@ process.env.SERVE_CLIENT_DIR = process.env.SERVE_CLIENT_DIR || path.join(__dirna
 process.env.BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups");
 process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dirname, "storage");
 
-const isLocalStartup = require.main === module || process.argv[1] === __filename;
+const isLocalStartup = require.main === module;
 if (isLocalStartup && !process.env.PORT) {
   process.env.PORT = "3000";
 }
