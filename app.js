@@ -33,7 +33,7 @@ process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dir
 // reaches the app's own required-env validation instead of failing earlier in the
 // bundled database bootstrap.
 if (!process.env.DATABASE_URL && fs.existsSync(envPath)) {
-  process.env.DATABASE_URL = "******127.0.0.1:5432/local-startup-placeholder";
+  process.env.DATABASE_URL = "postgresql://localhost:5432/local-startup-placeholder";
 }
 
 require("./index.cjs");
