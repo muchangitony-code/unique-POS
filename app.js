@@ -37,14 +37,17 @@ if (isLocalStartup && !process.env.PORT) {
 // shell instead of failing during bundled bootstrap or startup migrations.
 if (isLocalStartup && !process.env.DATABASE_URL) {
   process.env.DATABASE_URL = "postgresql://localhost:5432/local-startup-placeholder";
-  const originalExit = process.exit;
   const originalStderrWrite = process.stderr.write.bind(process.stderr);
-  let suppressNextDbAbort = false;
+  const originalExit = process.exit;
+  let skipNextExit = false;
 
   process.stderr.write = (chunk, encoding, callback) => {
     const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
     if (text.includes("Startup migrations failed — aborting")) {
-      suppressNextDbAbort = true;
+      skipNextExit = true;
+      console.warn(
+        "Skipping startup database connection for local run because DATABASE_URL is not configured."
+      );
       if (typeof callback === "function") callback();
       return true;
     }
@@ -52,11 +55,8 @@ if (isLocalStartup && !process.env.DATABASE_URL) {
   };
 
   process.exit = (code) => {
-    if (code && code !== 0 && suppressNextDbAbort) {
-      suppressNextDbAbort = false;
-      console.warn(
-        "Skipping startup database connection for local run because DATABASE_URL is not configured."
-      );
+    if (code && code !== 0 && skipNextExit) {
+      skipNextExit = false;
       return;
     }
     return originalExit.call(process, code);
