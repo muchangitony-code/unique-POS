@@ -30,9 +30,9 @@ process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dir
 
 // Synchronous require — the bundled server is CommonJS and starts on import.
 // For local startup, provide a harmless placeholder connection string so startup
-// reaches the app's own required-env validation instead of failing earlier in the
-// bundled database bootstrap.
-if (!process.env.DATABASE_URL && fs.existsSync(envPath)) {
+// reaches later startup validation instead of failing immediately in the bundled
+// database bootstrap when no DATABASE_URL was provided.
+if (!process.env.DATABASE_URL) {
   process.env.DATABASE_URL = "postgresql://localhost:5432/local-startup-placeholder";
 }
 
