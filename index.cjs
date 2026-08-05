@@ -75091,16 +75091,15 @@ var port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
-runStartupMigrations().then(() => {
-  app_default.listen(port, (err) => {
-    if (err) {
-      logger.error({ err }, "Error listening on port");
-      process.exit(1);
-    }
-    startScheduler();
-    logger.info({ port }, "Server listening");
-  });
-}).catch((err) => {
+app_default.listen(port, (err) => {
+  if (err) {
+    logger.error({ err }, "Error listening on port");
+    process.exit(1);
+  }
+  startScheduler();
+  logger.info({ port }, "Server listening");
+});
+runStartupMigrations().catch((err) => {
   logger.error({ err }, "Startup migrations failed \u2014 aborting");
   process.exit(1);
 });
