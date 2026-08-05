@@ -29,4 +29,11 @@ process.env.BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups
 process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dirname, "storage");
 
 // Synchronous require — the bundled server is CommonJS and starts on import.
+// For local startup, provide a harmless placeholder connection string so startup
+// reaches the app's own required-env validation instead of failing earlier in the
+// bundled database bootstrap.
+if (!process.env.DATABASE_URL && fs.existsSync(envPath)) {
+  process.env.DATABASE_URL = "******127.0.0.1:5432/local-startup-placeholder";
+}
+
 require("./index.cjs");
