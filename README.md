@@ -1,109 +1,119 @@
-# UniquePOS — Standalone Deployment
+# UniquePOS Deployment Guide (Railway + PostgreSQL)
 
-A self-contained build of UniquePOS (ERP + POS) for ordinary Node.js hosting
-such as cPanel/Truehost. The Node app serves both the API and the web frontend.
+This repository is a standalone Node.js POS backend+frontend bundle.
 
-## Requirements
+## Stack
 
-- Node.js 22 (set in the cPanel "Setup Node.js App" tool).
-- A PostgreSQL database. Your host offers MySQL only, so use a free/managed
-  PostgreSQL such as Neon (neon.tech), Supabase or Railway and point
-  `DATABASE_URL` at it.
-- `psql` command-line tool to load the database (from your PC is fine).
-- For in-app backup/restore to work on the server, `pg_dump`/`psql` must be on
-  the server PATH. If they are not available, use your managed provider's own
-  backups instead — the rest of the app works without them.
+- Runtime: Node.js 22+
+- Server: Express (bundled in `index.cjs`)
+- Database: PostgreSQL via `DATABASE_URL`
+- ORM/query layer: Drizzle ORM (bundled)
+- Frontend: static files from `public/`
 
-## 1. Create the database
+## Startup process
 
-Create an empty PostgreSQL database with your managed provider and copy its
-connection string.
+- Entrypoint: `app.js`
+- Start command: `npm start`
+- Port binding: `process.env.PORT` (required by Railway)
+- Health check endpoint: `/api/healthz`
 
-Load the included dump (schema + starter data, including the admin login):
+Startup order:
+
+1. Load `.env` (if present).
+2. Apply runtime defaults (storage paths, `PORT` fallback).
+3. Run DB bootstrap (`scripts/bootstrap-db.cjs`):
+   - auto-initialize schema from `database.sql` if required tables are missing
+   - ensure admin user exists
+   - ensure `roles`, `permissions`, and `role_permissions` tables exist
+4. Start API/server (`index.cjs`).
+
+## Railway deployment (no manual SQL import required)
+
+1. Push repo to GitHub.
+2. In Railway, create a new project from the repo.
+3. Add PostgreSQL in the same Railway project (or use external PostgreSQL).
+4. Set required environment variables (below).
+5. Deploy.
+
+Railway config is already provided in `railway.json`.
+
+## Environment variables
+
+### Required
+
+- `DATABASE_URL`
+  - PostgreSQL connection string.
+- `SESSION_SECRET`
+  - Secret used to sign auth tokens.
+
+### Recommended
+
+- `APP_URL`
+  - Public app URL (used in generated links and notification emails).
+- `NODE_ENV`
+  - `production` (Railway usually sets this automatically).
+
+### Optional bootstrap controls
+
+- `UNIQUEPOS_AUTO_DB_INIT`
+  - Default: `1`
+  - If `1`, app initializes database from `database.sql` when required tables are missing.
+- `UNIQUEPOS_BOOTSTRAP_ADMIN`
+  - Default: `1`
+  - If `1`, ensures admin account exists and is active.
+- `UNIQUEPOS_BOOTSTRAP_ADMIN_USERNAME`
+  - Default: `admin`
+- `UNIQUEPOS_BOOTSTRAP_ADMIN_EMAIL`
+  - Default: `admin@uniquepos.com`
+- `UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD`
+  - Default: `admin123`
+
+### Optional runtime settings
+
+- `SMTP_PASSWORD`
+- `SERVE_CLIENT_DIR` (default `./public` if folder exists)
+- `BACKUP_DIR` (default `./backups`)
+- `LOCAL_STORAGE_DIR` (default `./storage`)
+
+## Admin login
+
+Default bootstrap credentials:
+
+- Username: `admin`
+- Email: `admin@uniquepos.com`
+- Password: `admin123`
+
+Login endpoint accepts username or email in the `email` field for compatibility.
+
+## Database initialization behavior
+
+- If core tables are already present, bootstrap is skipped.
+- If core tables are missing, app restores schema from `database.sql` automatically.
+- The following core tables are validated before server starts:
+  - `users`, `products`, `customers`, `suppliers`, `sales`, `quotations`, `invoices`, `purchases`, `product_stock`, `expenses`, `business_settings`, `branches`, `login_history`, `audit_log`, `data_migrations`
+- Additional access-control tables are ensured:
+  - `roles`, `permissions`, `role_permissions`
+
+## Local run
 
 ```bash
-psql "YOUR_DATABASE_URL" -f database.sql
-```
-
-Default login: `admin@uniquepos.com` / `Test1234!` — change this password
-immediately after first sign-in (Settings → Users).
-
-## 2. Configure environment
-
-Copy `.env.example` to `.env` and fill in `DATABASE_URL` and `SESSION_SECRET`.
-On cPanel you can instead set these as environment variables in the
-"Setup Node.js App" screen.
-
-**SSL note:** The app automatically enables SSL (`rejectUnauthorized: false`) for
-any non-localhost database connection. If your provider's connection string already
-includes `?sslmode=require` or similar, that takes precedence. Local connections
-(`localhost` / `127.0.0.1`) do not use SSL.
-
-## 3. Install & start
-
-```bash
-npm install --omit=dev
+npm install
+cp .env.example .env
 npm start
 ```
 
-On cPanel: upload this folder, set the Application Root to it and the
-Application Startup File to `app.js`, add the environment variables, then click
-"Run NPM Install" followed by "Restart".
-
-## Deploying on Railway
-
-1. Push this repository to GitHub.
-2. In Railway, create a new project → **Deploy from GitHub repo** → select this repo.
-3. Add a **PostgreSQL** plugin (or use an external managed DB) and copy its `DATABASE_URL`.
-4. Set the following environment variables in Railway → **Variables**:
-   - `DATABASE_URL` — your PostgreSQL connection string (**required**)
-   - `SESSION_SECRET` — a long random string (e.g. 32+ random characters) (**required**)
-   - `APP_URL` — your Railway public URL, e.g. `https://your-service.up.railway.app` (**recommended**)
-   - `NODE_ENV` — `production` (Railway sets this automatically; you can leave it unset)
-5. Railway injects `PORT` automatically — do **not** set it manually.
-6. Load the database schema once (from your local machine or Railway's shell):
-   ```bash
-   psql "$DATABASE_URL" -f database.sql
-   ```
-7. Click **Deploy**. Railway will run `npm install --omit=dev` (via `railway.json`) and
-   then `node app.js`.
-8. After Railway assigns a public domain, copy it into `APP_URL` so generated links and
-   email actions use the correct production address.
-
-### Railway deployment troubleshooting
-
-- If you see **Application failed to respond**, open Railway deploy/runtime logs first.
-- If logs contain `password authentication failed for user ...` (PostgreSQL error code `28P01`), your `DATABASE_URL` credentials are incorrect. Copy the connection string again from your DB provider and update Railway Variables.
-- If logs contain `database ... does not exist` (`3D000`), create the database first, then run:
+Health check:
 
 ```bash
-psql "$DATABASE_URL" -f database.sql
+curl http://localhost:3000/api/healthz
 ```
 
-- To generate a strong `SESSION_SECRET` locally:
+## Files relevant to deployment
 
-```bash
-openssl rand -base64 48
-```
-
-> **Note on the web frontend:** If the `public/` directory is not present in the
-> repository, the server starts in API-only mode — all `/api/*` routes work normally
-> and the health check at `/api/healthz` passes. To serve the frontend, add your
-> built `public/` folder to the repository root before deploying.
-
-The app's health endpoint is `/api/healthz`.
-
-## Layout
-
-- `app.js` — startup file (loads .env, boots the server).
-- `index.cjs` — bundled API + app logic (single file, no build step needed).
-- `public/` — built web frontend, served by the Node app (optional; API works without it).
-- `database.sql` — database dump to restore.
-- `backups/` — local database backups created by the in-app backup feature.
-- `storage/` — uploaded branding images (logo/stamp/signature).
-
-## Notes
-
-- All API routes are served under `/api`; the frontend is served from `/`.
-- File uploads and backups are stored on local disk (see folders above). Make
-  sure those folders are writable and included in your own off-site backups.
+- `app.js` - runtime entrypoint and pre-start bootstrap
+- `index.cjs` - bundled API/server
+- `scripts/bootstrap-db.cjs` - automated PostgreSQL initialization and admin bootstrap
+- `database.sql` - canonical schema/data restore source
+- `.env.example` - environment variable template
+- `railway.json` - Railway build/deploy settings
+- `Procfile` - process declaration fallback

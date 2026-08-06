@@ -4,7 +4,7 @@
     "buildCommand": "npm install --omit=dev"
   },
   "deploy": {
-    "startCommand": "node app.js",
+    "startCommand": "npm start",
     "healthcheckPath": "/api/healthz",
     "healthcheckTimeout": 60,
     "restartPolicyType": "ON_FAILURE",
