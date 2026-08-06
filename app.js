@@ -56,4 +56,21 @@ if (!process.env.SESSION_SECRET) {
   process.env.SESSION_SECRET = "unconfigured-placeholder-change-me";
 }
 
-require("./index.cjs");
+async function start() {
+  try {
+    const { bootstrapDatabaseIfNeeded } = require("./scripts/bootstrap-db.cjs");
+    const result = await bootstrapDatabaseIfNeeded();
+    if (result.initializedFromSql) {
+      console.log("[bootstrap-db] Database initialized from database.sql");
+    }
+    if (result.adminBootstrapped) {
+      console.log("[bootstrap-db] Admin account ensured");
+    }
+    require("./index.cjs");
+  } catch (err) {
+    console.error("[startup] Database bootstrap failed", err);
+    process.exit(1);
+  }
+}
+
+start();
