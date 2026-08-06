@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "node app.js",
-    "db:init": "node scripts/bootstrap-db.cjs"
+    "db:init": "node scripts/bootstrap-db.cjs",
+    "db:migrate": "node scripts/run-migrations.cjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

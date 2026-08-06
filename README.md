@@ -23,6 +23,7 @@ Startup order:
 2. Apply runtime defaults (storage paths, `PORT` fallback).
 3. Run DB bootstrap (`scripts/bootstrap-db.cjs`):
    - auto-initialize schema from `database.sql` if required tables are missing
+  - run SQL migrations from `migrations/*.sql`
    - ensure admin user exists
    - ensure `roles`, `permissions`, and `role_permissions` tables exist
 4. Start API/server (`index.cjs`).
@@ -100,6 +101,12 @@ Login endpoint accepts username or email in the `email` field for compatibility.
 npm install
 cp .env.example .env
 npm start
+```
+
+Run migrations only:
+
+```bash
+npm run db:migrate
 ```
 
 Health check:

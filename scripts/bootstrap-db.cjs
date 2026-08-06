@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
+const { applyMigrations } = require("./run-migrations.cjs");
 
 const REQUIRED_TABLES = [
   "users",
@@ -288,6 +289,7 @@ async function bootstrapDatabaseIfNeeded(options = {}) {
     }
 
     await ensureRolesAndPermissionsTables(client);
+    await applyMigrations({ migrationsDir: path.resolve(__dirname, "..", "migrations") });
 
     let adminBootstrapped = false;
     if (bootstrapAdminEnabled) {
