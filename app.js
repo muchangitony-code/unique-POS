@@ -37,7 +37,7 @@ process.env.BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups
 process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dirname, "storage");
 
 if (!process.env.PORT) {
-  process.env.PORT = "3000";
+  process.env.PORT = "8080";
 }
 
 // Starts without a real database only when one has not yet been provisioned so

@@ -70,6 +70,22 @@ Application Startup File to `app.js`, add the environment variables, then click
 8. After Railway assigns a public domain, copy it into `APP_URL` so generated links and
    email actions use the correct production address.
 
+### Railway deployment troubleshooting
+
+- If you see **Application failed to respond**, open Railway deploy/runtime logs first.
+- If logs contain `password authentication failed for user ...` (PostgreSQL error code `28P01`), your `DATABASE_URL` credentials are incorrect. Copy the connection string again from your DB provider and update Railway Variables.
+- If logs contain `database ... does not exist` (`3D000`), create the database first, then run:
+
+```bash
+psql "$DATABASE_URL" -f database.sql
+```
+
+- To generate a strong `SESSION_SECRET` locally:
+
+```bash
+openssl rand -base64 48
+```
+
 > **Note on the web frontend:** If the `public/` directory is not present in the
 > repository, the server starts in API-only mode — all `/api/*` routes work normally
 > and the health check at `/api/healthz` passes. To serve the frontend, add your

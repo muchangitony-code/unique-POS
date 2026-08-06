@@ -75121,10 +75121,23 @@ if (process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT === "1") {
     }
   };
 }
-runStartupMigrations().catch((err) => {
-  logger.error({ err }, "Startup migrations failed \u2014 aborting");
-  process.exit(1);
-});
+var abortOnMigrationFailure = process.env.UNIQUEPOS_ABORT_ON_MIGRATION_FAILURE === "1";
+var startupMigrationRetryMsRaw = Number(process.env.UNIQUEPOS_STARTUP_MIGRATION_RETRY_MS || "30000");
+var startupMigrationRetryMs = Number.isFinite(startupMigrationRetryMsRaw) && startupMigrationRetryMsRaw > 0 ? startupMigrationRetryMsRaw : 3e4;
+function startMigrationsWithRetry() {
+  runStartupMigrations().then(() => {
+    logger.info("Startup migrations complete");
+  }).catch((err) => {
+    if (abortOnMigrationFailure) {
+      logger.error({ err }, "Startup migrations failed \u2014 aborting");
+      process.exit(1);
+      return;
+    }
+    logger.error({ err, retryMs: startupMigrationRetryMs }, "Startup migrations failed \u2014 keeping server alive and retrying");
+    setTimeout(startMigrationsWithRetry, startupMigrationRetryMs);
+  });
+}
+startMigrationsWithRetry();
 /*! Bundled license information:
 
 depd/index.js:
