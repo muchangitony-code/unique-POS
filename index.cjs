@@ -69458,6 +69458,62 @@ function publicUser(user) {
     created_at: user.createdAt
   };
 }
+async function findLoginUser(loginId) {
+  const normalized = String(loginId).trim();
+  try {
+    const lookup = await db.execute(sql`
+      SELECT
+        id,
+        name,
+        email,
+        password_hash AS "passwordHash",
+        role,
+        branch,
+        branch_id AS "branchId",
+        phone,
+        is_active AS "isActive",
+        created_at AS "createdAt",
+        totp_secret AS "totpSecret",
+        totp_enabled AS "totpEnabled",
+        failed_login_attempts AS "failedLoginAttempts",
+        locked_until AS "lockedUntil",
+        password_changed_at AS "passwordChangedAt"
+      FROM users
+      WHERE lower(email) = lower(${normalized}) OR lower(name) = lower(${normalized})
+      ORDER BY CASE WHEN lower(email) = lower(${normalized}) THEN 0 ELSE 1 END, id ASC
+      LIMIT 1
+    `);
+    const rows = lookup.rows ?? lookup;
+    return rows[0];
+  } catch (err) {
+    if (err?.code !== "42703") throw err;
+    logger.warn({ err }, "Legacy users schema detected during login lookup; using compatibility query");
+    const fallback = await db.execute(sql`
+      SELECT
+        id,
+        name,
+        email,
+        password_hash AS "passwordHash",
+        role,
+        branch,
+        NULL::integer AS "branchId",
+        phone,
+        is_active AS "isActive",
+        created_at AS "createdAt",
+        NULL::text AS "totpSecret",
+        FALSE AS "totpEnabled",
+        0 AS "failedLoginAttempts",
+        NULL::timestamptz AS "lockedUntil",
+        NULL::timestamptz AS "passwordChangedAt"
+      FROM users
+      WHERE lower(email) = lower(${normalized}) OR lower(name) = lower(${normalized})
+      ORDER BY CASE WHEN lower(email) = lower(${normalized}) THEN 0 ELSE 1 END, id ASC
+      LIMIT 1
+    `);
+    const rows = fallback.rows ?? fallback;
+    return rows[0];
+  }
+}
 router2.post("/auth/login", async (req, res) => {
   const { email: email3, password, totp_code } = req.body ?? {};
   if (!email3 || !password) {
@@ -69465,30 +69521,7 @@ router2.post("/auth/login", async (req, res) => {
     return;
   }
   const loginId = String(email3).trim();
-  const lookup = await db.execute(sql`
-    SELECT
-      id,
-      name,
-      email,
-      password_hash AS "passwordHash",
-      role,
-      branch,
-      branch_id AS "branchId",
-      phone,
-      is_active AS "isActive",
-      created_at AS "createdAt",
-      totp_secret AS "totpSecret",
-      totp_enabled AS "totpEnabled",
-      failed_login_attempts AS "failedLoginAttempts",
-      locked_until AS "lockedUntil",
-      password_changed_at AS "passwordChangedAt"
-    FROM users
-    WHERE lower(email) = lower(${loginId}) OR lower(name) = lower(${loginId})
-    ORDER BY CASE WHEN lower(email) = lower(${loginId}) THEN 0 ELSE 1 END, id ASC
-    LIMIT 1
-  `);
-  const rows = lookup.rows ?? lookup;
-  const user = rows[0];
+  const user = await findLoginUser(loginId);
   if (!user || !user.isActive) {
     await recordLogin(req, { userId: user?.id ?? null, email: loginId, success: false, reason: user ? "inactive" : "unknown_user" });
     await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user?.id, description: `Failed login attempt for "${loginId}" \u2014 user not found or inactive` });
