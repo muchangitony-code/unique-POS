@@ -75096,13 +75096,14 @@ var port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
-app_default.listen(port, (err) => {
+var listenHost = process.env.HOST || "0.0.0.0";
+app_default.listen(port, listenHost, (err) => {
   if (err) {
-    logger.error({ err }, "Error listening on port");
+    logger.error({ err, port, host: listenHost }, "Error listening on port");
     process.exit(1);
   }
   startScheduler();
-  logger.info({ port }, "Server listening");
+  logger.info({ port, host: listenHost }, "Server listening");
 });
 if (process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT === "1") {
   const originalRunStartupMigrations = runStartupMigrations;
