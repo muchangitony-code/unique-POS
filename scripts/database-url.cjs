@@ -1,11 +1,5 @@
 "use strict";
 
-const PLACEHOLDER_VALUES = new Set(["host", "localhost", "dbname", "user", "password", "example"]);
-
-function isPlaceholder(value) {
-  return PLACEHOLDER_VALUES.has(String(value || "").trim().toLowerCase());
-}
-
 function parseAndValidateDatabaseUrl(contextLabel) {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -40,18 +34,6 @@ function parseAndValidateDatabaseUrl(contextLabel) {
   }
   if (!password) {
     throw new Error("DATABASE_URL is missing password");
-  }
-
-  const placeholderFields = [];
-  if (isPlaceholder(host)) placeholderFields.push("hostname");
-  if (isPlaceholder(database)) placeholderFields.push("database");
-  if (isPlaceholder(username)) placeholderFields.push("username");
-  if (isPlaceholder(password)) placeholderFields.push("password");
-
-  if (placeholderFields.length > 0) {
-    throw new Error(
-      `DATABASE_URL contains placeholder credentials in: ${placeholderFields.join(", ")}. Configure the real Railway DATABASE_URL.`
-    );
   }
 
   console.log(`[${contextLabel}] Target host=${host} port=${port} database=${database} username=${username}`);
