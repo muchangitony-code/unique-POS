@@ -6,6 +6,8 @@ function parseAndValidateDatabaseUrl(contextLabel) {
     throw new Error("DATABASE_URL is required");
   }
 
+  console.log(`[${contextLabel}] DATABASE_URL source=process.env.DATABASE_URL`);
+
   let parsed;
   try {
     parsed = new URL(databaseUrl);
