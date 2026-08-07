@@ -38,6 +38,16 @@ function parseAndValidateDatabaseUrl(contextLabel) {
     throw new Error("DATABASE_URL is missing password");
   }
 
+  const isTemplatePlaceholder = host.toLowerCase() === "host"
+    && database.toLowerCase() === "dbname"
+    && username.toLowerCase() === "user"
+    && password.toLowerCase() === "password";
+  if (isTemplatePlaceholder) {
+    throw new Error(
+      "DATABASE_URL is set to a template placeholder (user/password@host/.../dbname). Replace the Railway service variable with the real Postgres DATABASE_URL."
+    );
+  }
+
   console.log(`[${contextLabel}] Target host=${host} port=${port} database=${database} username=${username}`);
   return { databaseUrl, host, port, database };
 }
