@@ -9,7 +9,9 @@
   "scripts": {
     "start": "node app.js",
     "db:init": "node scripts/bootstrap-db.cjs",
-    "db:migrate": "node scripts/run-migrations.cjs"
+    "db:migrate": "node scripts/run-migrations.cjs",
+    "db:generate-initial": "node scripts/generate-initial-migration.cjs",
+    "db:verify": "node scripts/verify-schema.cjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

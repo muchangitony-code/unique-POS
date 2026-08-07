@@ -109,6 +109,18 @@ Run migrations only:
 npm run db:migrate
 ```
 
+Generate initial migration from the canonical SQL dump:
+
+```bash
+npm run db:generate-initial
+```
+
+Verify required POS tables exist in PostgreSQL:
+
+```bash
+npm run db:verify
+```
+
 Health check:
 
 ```bash
