@@ -18,6 +18,7 @@ if (fs.existsSync(envPath)) {
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
     }
+    if (key === "DATABASE_URL") continue;
     if (!(key in process.env)) process.env[key] = val;
   }
 }
