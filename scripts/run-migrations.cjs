@@ -4,29 +4,24 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { Pool } = require("pg");
 
-function loadDotEnv() {
-  const envPath = path.resolve(process.cwd(), ".env");
-  if (!fs.existsSync(envPath)) return;
-
-  for (const line of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-
-    const key = trimmed.slice(0, eq).trim();
-    let value = trimmed.slice(eq + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-
-    if (!(key in process.env)) {
-      process.env[key] = value;
-    }
-  }
+function databaseTargetFromUrl(databaseUrl) {
+  const parsed = new URL(databaseUrl);
+  const databaseName = parsed.pathname.replace(/^\//, "") || "postgres";
+  return {
+    host: parsed.hostname,
+    port: parsed.port || "5432",
+    database: databaseName
+  };
 }
 
-loadDotEnv();
+function getDatabaseUrl() {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) throw new Error("DATABASE_URL is required");
+
+  const target = databaseTargetFromUrl(databaseUrl);
+  console.log(`[migrations] Target host=${target.host} port=${target.port} database=${target.database}`);
+  return databaseUrl;
+}
 
 function resolveSsl(databaseUrl) {
   const isLocal = /localhost|127\.0\.0\.1|::1/.test(databaseUrl);
@@ -51,8 +46,7 @@ function listMigrationFiles(migrationsDir) {
 }
 
 async function applyMigrations(options = {}) {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) throw new Error("DATABASE_URL is required");
+  const databaseUrl = getDatabaseUrl();
 
   const migrationsDir = options.migrationsDir || path.resolve(process.cwd(), "migrations");
   const files = listMigrationFiles(migrationsDir);
