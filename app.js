@@ -4,6 +4,7 @@
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
+const { parseAndValidateDatabaseUrl } = require("./scripts/database-url.cjs");
 
 // Load .env (simple KEY=VALUE parser; no external dependency).
 const envPath = path.join(__dirname, ".env");
@@ -41,12 +42,8 @@ if (!process.env.PORT) {
   process.env.PORT = "8080";
 }
 
-// Starts without a real database only when one has not yet been provisioned so
-// the process can still boot and satisfy platform health checks.
-if (!process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = "postgresql://localhost:5432/local-startup-placeholder";
-  process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT = "1";
-}
+// DATABASE_URL must come from the deployment environment.
+parseAndValidateDatabaseUrl("startup");
 
 // index.cjs checks SESSION_SECRET at module load time. Supply a placeholder so
 // the process starts (and passes the health check) even when the secret is not

@@ -1,34 +1,7 @@
 "use strict";
 
-const fs = require("node:fs");
-const path = require("node:path");
 const { Pool } = require("pg");
-
-function databaseTargetFromUrl(databaseUrl) {
-  const parsed = new URL(databaseUrl);
-  const databaseName = parsed.pathname.replace(/^\//, "") || "postgres";
-  return {
-    host: parsed.hostname,
-    port: parsed.port || "5432",
-    database: databaseName
-  };
-}
-
-function getDatabaseUrl() {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    throw new Error("DATABASE_URL is required");
-  }
-
-  const target = databaseTargetFromUrl(databaseUrl);
-  console.log(`[verify-schema] Target host=${target.host} port=${target.port} database=${target.database}`);
-  return databaseUrl;
-}
-
-function resolveSsl(databaseUrl) {
-  const isLocal = /localhost|127\.0\.0\.1|::1/.test(databaseUrl);
-  return isLocal ? false : { rejectUnauthorized: false };
-}
+const { parseAndValidateDatabaseUrl, railwaySsl } = require("./database-url.cjs");
 
 const REQUIRED_TABLES = [
   "users",
@@ -83,11 +56,11 @@ const REQUIRED_TABLES = [
 ];
 
 async function verifySchema() {
-  const databaseUrl = getDatabaseUrl();
+  const { databaseUrl } = parseAndValidateDatabaseUrl("verify-schema");
 
   const pool = new Pool({
     connectionString: databaseUrl,
-    ssl: resolveSsl(databaseUrl)
+    ssl: railwaySsl()
   });
 
   const client = await pool.connect();

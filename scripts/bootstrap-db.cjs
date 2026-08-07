@@ -5,27 +5,7 @@ const path = require("node:path");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const { applyMigrations } = require("./run-migrations.cjs");
-
-function databaseTargetFromUrl(databaseUrl) {
-  const parsed = new URL(databaseUrl);
-  const databaseName = parsed.pathname.replace(/^\//, "") || "postgres";
-  return {
-    host: parsed.hostname,
-    port: parsed.port || "5432",
-    database: databaseName
-  };
-}
-
-function getDatabaseUrl() {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    throw new Error("DATABASE_URL is required for bootstrap.");
-  }
-
-  const target = databaseTargetFromUrl(databaseUrl);
-  console.log(`[bootstrap-db] Target host=${target.host} port=${target.port} database=${target.database}`);
-  return databaseUrl;
-}
+const { parseAndValidateDatabaseUrl, railwaySsl } = require("./database-url.cjs");
 
 const REQUIRED_TABLES = [
   "users",
@@ -48,11 +28,6 @@ const REQUIRED_TABLES = [
 function isEnabled(value, defaultValue) {
   if (value == null || value === "") return defaultValue;
   return !["0", "false", "no", "off"].includes(String(value).toLowerCase());
-}
-
-function resolveSsl(databaseUrl) {
-  const isLocal = /localhost|127\.0\.0\.1|::1/.test(databaseUrl);
-  return isLocal ? false : { rejectUnauthorized: false };
 }
 
 function stripPsqlMetaAndCopy(sqlText) {
@@ -267,7 +242,7 @@ async function ensureAdminAccount(client, options) {
 }
 
 async function bootstrapDatabaseIfNeeded(options = {}) {
-  const databaseUrl = getDatabaseUrl();
+  const { databaseUrl } = parseAndValidateDatabaseUrl("bootstrap-db");
 
   const autoInitEnabled = isEnabled(process.env.UNIQUEPOS_AUTO_DB_INIT, true);
   const bootstrapAdminEnabled = isEnabled(process.env.UNIQUEPOS_BOOTSTRAP_ADMIN, true);
@@ -276,7 +251,7 @@ async function bootstrapDatabaseIfNeeded(options = {}) {
   }
 
   const sqlFile = path.resolve(options.sqlFilePath || path.join(__dirname, "..", "database.sql"));
-  const pool = new Pool({ connectionString: databaseUrl, ssl: resolveSsl(databaseUrl) });
+  const pool = new Pool({ connectionString: databaseUrl, ssl: railwaySsl() });
   const client = await pool.connect();
 
   try {

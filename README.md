@@ -124,7 +124,7 @@ npm run db:verify
 Health check:
 
 ```bash
-curl http://localhost:3000/api/healthz
+curl "$APP_URL/api/healthz"
 ```
 
 ## Files relevant to deployment
