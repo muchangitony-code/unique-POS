@@ -21,12 +21,14 @@ Startup order:
 
 1. Load `.env` (if present).
 2. Apply runtime defaults (storage paths, `PORT` fallback).
-3. Run DB bootstrap (`scripts/bootstrap-db.cjs`):
-   - auto-initialize schema from `database.sql` if required tables are missing
-  - run SQL migrations from `migrations/*.sql`
-   - ensure admin user exists
-   - ensure `roles`, `permissions`, and `role_permissions` tables exist
-4. Start API/server (`index.cjs`).
+3. Validate required startup environment variables.
+4. Run DB bootstrap (`scripts/bootstrap-db.cjs`):
+   - run tracked SQL migrations from `migrations/*.sql`
+   - verify the required schema exists
+   - seed the default business settings row if missing
+   - seed the `MAIN` branch if missing
+   - ensure the bootstrap admin user exists
+5. Start API/server (`index.cjs`).
 
 ## Railway deployment (no manual SQL import required)
 
@@ -36,7 +38,7 @@ Startup order:
 4. Set required environment variables (below).
 5. Deploy.
 
-Railway config is already provided in `railway.json`.
+Railway config is already provided in `railway.json`. Railway only needs to run `npm run build` and `npm start`.
 
 ## Environment variables
 
@@ -56,9 +58,6 @@ Railway config is already provided in `railway.json`.
 
 ### Optional bootstrap controls
 
-- `UNIQUEPOS_AUTO_DB_INIT`
-  - Default: `1`
-  - If `1`, app initializes database from `database.sql` when required tables are missing.
 - `UNIQUEPOS_BOOTSTRAP_ADMIN`
   - Default: `1`
   - If `1`, ensures admin account exists and is active.
@@ -68,6 +67,9 @@ Railway config is already provided in `railway.json`.
   - Default: `admin@uniquepos.com`
 - `UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD`
   - Default: `admin123`
+- `UNIQUEPOS_BOOTSTRAP_ADMIN_ROTATE_PASSWORD`
+  - Default: `0`
+  - If `1`, startup also resets the existing bootstrap admin password.
 
 ### Optional runtime settings
 
@@ -88,12 +90,11 @@ Login endpoint accepts username or email in the `email` field for compatibility.
 
 ## Database initialization behavior
 
-- If core tables are already present, bootstrap is skipped.
-- If core tables are missing, app restores schema from `database.sql` automatically.
-- The following core tables are validated before server starts:
-  - `users`, `products`, `customers`, `suppliers`, `sales`, `quotations`, `invoices`, `purchases`, `product_stock`, `expenses`, `business_settings`, `branches`, `login_history`, `audit_log`, `data_migrations`
-- Additional access-control tables are ensured:
-  - `roles`, `permissions`, `role_permissions`
+- Migrations are tracked in `schema_migrations` and guarded by a PostgreSQL advisory lock.
+- Fresh databases are initialized from `migrations/*.sql`.
+- Existing databases only run unapplied migrations.
+- Startup verifies the required schema before the server begins accepting traffic.
+- Default records are seeded idempotently after migrations.
 
 ## Local run
 
@@ -121,6 +122,18 @@ Verify required POS tables exist in PostgreSQL:
 npm run db:verify
 ```
 
+Validate startup environment variables:
+
+```bash
+npm run startup:validate
+```
+
+Validate the committed runtime bundle:
+
+```bash
+npm run build
+```
+
 Health check:
 
 ```bash
@@ -132,7 +145,8 @@ curl "$APP_URL/api/healthz"
 - `app.js` - runtime entrypoint and pre-start bootstrap
 - `index.cjs` - bundled API/server
 - `scripts/bootstrap-db.cjs` - automated PostgreSQL initialization and admin bootstrap
-- `database.sql` - canonical schema/data restore source
+- `scripts/run-migrations.cjs` - tracked SQL migration runner with advisory locking
+- `database.sql` - legacy schema export retained for compatibility/reference
 - `.env.example` - environment variable template
 - `railway.json` - Railway build/deploy settings
 - `Procfile` - process declaration fallback

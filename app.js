@@ -4,7 +4,7 @@
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
-const { parseAndValidateDatabaseUrl } = require("./scripts/database-url.cjs");
+const { validateStartupEnv } = require("./scripts/validate-startup-env.cjs");
 
 // Load .env (simple KEY=VALUE parser; no external dependency).
 const envPath = path.join(__dirname, ".env");
@@ -42,31 +42,19 @@ if (!process.env.PORT) {
   process.env.PORT = "8080";
 }
 
-// DATABASE_URL must come from the deployment environment.
-parseAndValidateDatabaseUrl("startup");
-
-// index.cjs checks SESSION_SECRET at module load time. Supply a placeholder so
-// the process starts (and passes the health check) even when the secret is not
-// yet configured (e.g. Railway PR-preview environments). JWT operations will
-// fail at runtime until a real secret is provided, which is the correct
-// behaviour — the app should not be usable without a proper SESSION_SECRET.
-if (!process.env.SESSION_SECRET) {
-  process.env.SESSION_SECRET = "unconfigured-placeholder-change-me";
-}
-
 async function start() {
   try {
+    validateStartupEnv();
     const { bootstrapDatabaseIfNeeded } = require("./scripts/bootstrap-db.cjs");
     const result = await bootstrapDatabaseIfNeeded();
-    if (result.initializedFromSql) {
-      console.log("[bootstrap-db] Database initialized from database.sql");
-    }
+    process.env.UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS = "1";
+    console.log("[startup] Database bootstrap complete", result);
     if (result.adminBootstrapped) {
       console.log("[bootstrap-db] Admin account ensured");
     }
     require("./index.cjs");
   } catch (err) {
-    console.error("[startup] Database bootstrap failed", err);
+    console.error("[startup] Startup failed", err);
     process.exit(1);
   }
 }

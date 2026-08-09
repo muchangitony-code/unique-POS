@@ -2,58 +2,7 @@
 
 const { Pool } = require("pg");
 const { parseAndValidateDatabaseUrl, railwaySsl } = require("./database-url.cjs");
-
-const REQUIRED_TABLES = [
-  "users",
-  "roles",
-  "permissions",
-  "role_permissions",
-  "branches",
-  "business_settings",
-  "customers",
-  "customer_groups",
-  "suppliers",
-  "categories",
-  "brands",
-  "products",
-  "product_units",
-  "stock",
-  "stock_adjustments",
-  "purchases",
-  "purchase_items",
-  "sales",
-  "sale_items",
-  "quotations",
-  "quotation_items",
-  "invoices",
-  "invoice_items",
-  "payments",
-  "payment_methods",
-  "expenses",
-  "expense_categories",
-  "returns",
-  "return_items",
-  "transfers",
-  "transfer_items",
-  "audit_logs",
-  "audit_log",
-  "sessions",
-  "settings",
-  "tax_rates",
-  "discounts",
-  "barcode_labels",
-  "receipts",
-  "currencies",
-  "notifications",
-  "product_stock",
-  "stock_movements",
-  "stock_transfers",
-  "invoice_payments",
-  "login_history",
-  "admin_notifications",
-  "data_migrations",
-  "schema_migrations"
-];
+const { REQUIRED_TABLES } = require("./schema-config.cjs");
 
 async function verifySchema() {
   const { databaseUrl } = parseAndValidateDatabaseUrl("verify-schema");
