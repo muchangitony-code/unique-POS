@@ -66,7 +66,8 @@ Railway config is already provided in `railway.json`. Railway only needs to run 
 - `UNIQUEPOS_BOOTSTRAP_ADMIN_EMAIL`
   - Default: `admin@uniquepos.com`
 - `UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD`
-  - Default: `admin123`
+  - Required in production
+  - Default: `admin123` outside production only
 - `UNIQUEPOS_BOOTSTRAP_ADMIN_ROTATE_PASSWORD`
   - Default: `0`
   - If `1`, startup also resets the existing bootstrap admin password.

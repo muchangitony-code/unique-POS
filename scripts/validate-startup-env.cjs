@@ -24,7 +24,6 @@ function validateStartupEnv() {
   }
 
   const nodeEnv = process.env.NODE_ENV || "production";
-  process.env.NODE_ENV = nodeEnv;
 
   const rawPort = process.env.PORT || "8080";
   const port = Number(rawPort);

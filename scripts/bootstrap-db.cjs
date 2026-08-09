@@ -6,6 +6,20 @@ const { applyMigrations } = require("./run-migrations.cjs");
 const { parseAndValidateDatabaseUrl, railwaySsl } = require("./database-url.cjs");
 const { REQUIRED_TABLES } = require("./schema-config.cjs");
 
+const DEFAULT_ADMIN_PASSWORD = "admin123";
+const BRANCH_BACKFILL_STATEMENTS = Object.freeze({
+  users: "UPDATE users SET branch_id = $1 WHERE branch_id IS NULL",
+  customers: "UPDATE customers SET branch_id = $1 WHERE branch_id IS NULL",
+  suppliers: "UPDATE suppliers SET branch_id = $1 WHERE branch_id IS NULL",
+  quotations: "UPDATE quotations SET branch_id = $1 WHERE branch_id IS NULL",
+  invoices: "UPDATE invoices SET branch_id = $1 WHERE branch_id IS NULL",
+  purchases: "UPDATE purchases SET branch_id = $1 WHERE branch_id IS NULL",
+  expenses: "UPDATE expenses SET branch_id = $1 WHERE branch_id IS NULL",
+  sales: "UPDATE sales SET branch_id = $1 WHERE branch_id IS NULL",
+  stock_movements: "UPDATE stock_movements SET branch_id = $1 WHERE branch_id IS NULL",
+  audit_log: "UPDATE audit_log SET branch_id = $1 WHERE branch_id IS NULL"
+});
+
 function isEnabled(value, defaultValue) {
   if (value == null || value === "") return defaultValue;
   return !["0", "false", "no", "off"].includes(String(value).toLowerCase());
@@ -115,19 +129,8 @@ async function ensureMainBranch(client) {
     throw new Error("Failed to resolve MAIN branch.");
   }
 
-  for (const table of [
-    "users",
-    "customers",
-    "suppliers",
-    "quotations",
-    "invoices",
-    "purchases",
-    "expenses",
-    "sales",
-    "stock_movements",
-    "audit_log"
-  ]) {
-    await client.query(`UPDATE ${table} SET branch_id = $1 WHERE branch_id IS NULL`, [branchId]);
+  for (const statement of Object.values(BRANCH_BACKFILL_STATEMENTS)) {
+    await client.query(statement, [branchId]);
   }
 
   await client.query(
@@ -148,7 +151,17 @@ async function bootstrapDatabaseIfNeeded(options = {}) {
 
   const bootstrapAdminEnabled = isEnabled(process.env.UNIQUEPOS_BOOTSTRAP_ADMIN, true);
   const rotateExistingAdminPassword = isEnabled(process.env.UNIQUEPOS_BOOTSTRAP_ADMIN_ROTATE_PASSWORD, false);
+  const nodeEnv = process.env.NODE_ENV || "production";
+  const adminPassword = process.env.UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD || DEFAULT_ADMIN_PASSWORD;
+  if (bootstrapAdminEnabled && adminPassword === DEFAULT_ADMIN_PASSWORD) {
+    if (nodeEnv === "production") {
+      throw new Error("UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD must be set in production.");
+    }
+    console.warn("[bootstrap-db] Using the default bootstrap admin password; override UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD before production deployment.");
+  }
 
+  // Migrations commit independently; the seeding below must stay idempotent so a
+  // failed retry never requires manual cleanup or rerunning old migrations.
   const migrationResult = await applyMigrations({
     migrationsDir: options.migrationsDir
   });
@@ -171,7 +184,7 @@ async function bootstrapDatabaseIfNeeded(options = {}) {
       await ensureAdminAccount(client, {
         adminUsername: process.env.UNIQUEPOS_BOOTSTRAP_ADMIN_USERNAME || "admin",
         adminEmail: process.env.UNIQUEPOS_BOOTSTRAP_ADMIN_EMAIL || "admin@uniquepos.com",
-        adminPassword: process.env.UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD || "admin123",
+        adminPassword,
         rotateExistingPassword: rotateExistingAdminPassword
       });
       adminBootstrapped = true;

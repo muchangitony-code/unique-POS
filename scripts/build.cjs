@@ -11,7 +11,11 @@ const requiredFiles = [
   "public/index.html",
   "public/app.js",
   "scripts/bootstrap-db.cjs",
-  "scripts/run-migrations.cjs"
+  "scripts/database-url.cjs",
+  "scripts/run-migrations.cjs",
+  "scripts/schema-config.cjs",
+  "scripts/sql-utils.cjs",
+  "scripts/validate-startup-env.cjs"
 ];
 
 for (const relativePath of requiredFiles) {
@@ -21,7 +25,11 @@ for (const relativePath of requiredFiles) {
   }
 }
 
-for (const relativePath of ["app.js", "index.cjs", "scripts/bootstrap-db.cjs", "scripts/run-migrations.cjs"]) {
+const syntaxCheckedFiles = requiredFiles.filter((relativePath) =>
+  relativePath.endsWith(".js") || relativePath.endsWith(".cjs")
+);
+
+for (const relativePath of syntaxCheckedFiles) {
   const absolutePath = path.join(repoRoot, relativePath);
   const result = spawnSync(process.execPath, ["--check", absolutePath], { stdio: "inherit" });
   if (result.status !== 0) {

@@ -130,7 +130,8 @@ async function applyMigrations(options = {}) {
   } finally {
     try {
       await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_ID]);
-    } catch {
+    } catch (err) {
+      console.warn("[migrations] Failed to release advisory lock", err);
     }
     client.release();
     await pool.end();
