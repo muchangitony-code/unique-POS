@@ -182,7 +182,8 @@
     const raw = String(value || "").trim();
     if (!raw) return "";
     if (raw.indexOf("/objects/") === 0) return "/api/storage/objects/" + raw.slice("/objects/".length);
-    return raw;
+    if (/^https?:\/\//i.test(raw) || raw.charAt(0) === "/" || /^data:image\//i.test(raw)) return raw;
+    return "";
   }
 
   function brandingInitials(name) {

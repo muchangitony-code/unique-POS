@@ -71831,7 +71831,8 @@ function resolveStoredAssetUrl(rawPath) {
   const raw = String(rawPath || "").trim();
   if (!raw) return "";
   if (raw.startsWith("/objects/")) return `/api/storage/objects/${raw.slice("/objects/".length)}`;
-  return raw;
+  if (/^https?:\/\//i.test(raw) || raw.startsWith("/") || /^data:image\//i.test(raw)) return raw;
+  return "";
 }
 function assetMimeType(rawPath) {
   const lower = String(rawPath || "").toLowerCase();
