@@ -39,6 +39,7 @@
   const state = {
     token: readStoredToken(),
     user: readStoredUser(),
+    currency: "KES",
     activeModule: "dashboard",
     dashboardStats: null,
     moduleData: {},
@@ -236,6 +237,7 @@
       }
       return;
     }
+    await refreshCurrency();
     showPosRoute();
     await switchModule("dashboard");
   }
@@ -516,7 +518,8 @@
 
   async function deleteReference(kind, id) {
     if (!window.confirm("Delete this " + kind + "?")) return;
-    await apiJson("/api/" + kind + "s/" + id, { method: "DELETE" });
+    var path = kind === "category" ? "categories" : kind + "s";
+    await apiJson("/api/" + path + "/" + id, { method: "DELETE" });
     setFlash("products", "success", titleize(kind) + " deleted.");
     await loadProducts();
     renderProducts();
@@ -703,7 +706,7 @@
       renderFlash("sales"),
       '<section class="card"><div class="section-head"><h3>Document composer</h3></div>' +
         '<form id="salesComposerForm" class="form-grid two">' +
-          '<label><span>Document type</span><select name="document_type" id="salesDocumentType">' + optionTags([{"id":"sale","name":"POS sale"},{"id":"quotation","name":"Quotation"},{"id":"invoice","name":"Invoice"}], composer.type, true, "id", "name") + '</select></label>' +
+          '<label><span>Document type</span><select name="document_type" id="salesDocumentType">' + optionTags([{"id":"sale","name":"POS sale"},{"id":"quotation","name":"Quotation"},{"id":"invoice","name":"Invoice"}], composer.type, false, "id", "name") + '</select></label>' +
           selectField("Customer", "customer_id", data.customers, null) +
           numberField("Discount amount", "discount_amount", 0, "0.01") +
           (composer.type === "sale" ? numberField("Amount paid", "amount_paid", 0, "0.01") + selectFieldFromValues("Payment method", "payment_method", PAYMENT_METHODS, "cash") : "") +
@@ -811,7 +814,11 @@
     const form = event.currentTarget;
     const type = trimmed(form, "document_type") || state.ui.salesComposer.type;
     const items = readComposerItems(form, state.ui.salesComposer.rows);
-    if (!items.length) throw new Error("Add at least one line item.");
+    if (!items.length) {
+      setFlash("sales", "error", "Add at least one line item.");
+      renderSales();
+      return;
+    }
     const payload = compactObject({
       customer_id: optionalNumber(form, "customer_id"),
       items: items,
@@ -865,9 +872,20 @@
     if (!amount) return;
     const method = window.prompt("Payment method", "cash");
     if (!method) return;
+    const parsedAmount = Number(amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      setFlash("sales", "error", "Enter a valid positive payment amount.");
+      renderSales();
+      return;
+    }
+    if (PAYMENT_METHODS.indexOf(method) === -1) {
+      setFlash("sales", "error", "Choose a valid payment method: " + PAYMENT_METHODS.join(", "));
+      renderSales();
+      return;
+    }
     await apiJson("/api/invoices/" + id + "/pay", {
       method: "POST",
-      body: JSON.stringify({ amount: Number(amount), method: method, reference: "", notes: "" })
+      body: JSON.stringify({ amount: parsedAmount, method: method, reference: "", notes: "" })
     });
     setFlash("sales", "success", "Invoice payment recorded.");
     await loadSales();
@@ -877,6 +895,11 @@
   async function updateInvoiceStatus(id) {
     const status = window.prompt("Set status (draft, sent, partial, paid, cancelled)", "sent");
     if (!status) return;
+    if (SALES_STATUSES.indexOf(status) === -1) {
+      setFlash("sales", "error", "Choose a valid invoice status: " + SALES_STATUSES.join(", "));
+      renderSales();
+      return;
+    }
     await apiJson("/api/invoices/" + id, { method: "PATCH", body: JSON.stringify({ status: status }) });
     setFlash("sales", "success", "Invoice updated.");
     await loadSales();
@@ -891,6 +914,7 @@
     renderSimpleCrudModule({
       module: "customers",
       title: "Customers",
+      singularTitle: "Customer",
       editStateKey: "customerEdit",
       data: (state.moduleData.customers || {}).customers || [],
       fields: [
@@ -964,6 +988,7 @@
     renderSimpleCrudModule({
       module: "suppliers",
       title: "Suppliers",
+      singularTitle: "Supplier",
       editStateKey: "supplierEdit",
       data: (state.moduleData.suppliers || {}).suppliers || [],
       fields: [
@@ -1110,11 +1135,17 @@
     await loadPurchases();
     renderPurchases();
     await loadInventory();
+    if (state.activeModule === "inventory") renderInventory();
   }
 
   async function updatePurchaseStatus(id) {
     const status = window.prompt("Set purchase status", "ordered");
     if (!status) return;
+    if (PURCHASE_STATUSES.indexOf(status) === -1) {
+      setFlash("purchases", "error", "Choose a valid purchase status: " + PURCHASE_STATUSES.join(", "));
+      renderPurchases();
+      return;
+    }
     await apiJson("/api/purchases/" + id, { method: "PATCH", body: JSON.stringify({ status: status }) });
     setFlash("purchases", "success", "Purchase updated.");
     await loadPurchases();
@@ -1129,6 +1160,7 @@
     renderSimpleCrudModule({
       module: "expenses",
       title: "Expenses",
+      singularTitle: "Expense",
       editStateKey: "expenseEdit",
       data: (state.moduleData.expenses || {}).expenses || [],
       fields: [
@@ -1359,6 +1391,7 @@
 
   async function loadSettings() {
     state.moduleData.settings = { settings: await apiJson("/api/settings") };
+    state.currency = firstText(state.moduleData.settings.settings.currency, "KES");
   }
 
   function renderSettings() {
@@ -1517,7 +1550,7 @@
     body.innerHTML = [
       renderFlash(config.module),
       '<div class="module-grid two">',
-      '<section class="card"><div class="section-head"><h3>' + (edit && edit.id ? "Edit " : "New ") + escapeHtml(config.title.slice(0, -1) || config.title) + '</h3></div><form id="' + config.formId + '" class="form-grid two">' +
+      '<section class="card"><div class="section-head"><h3>' + (edit && edit.id ? "Edit " : "New ") + escapeHtml(config.singularTitle || config.title) + '</h3></div><form id="' + config.formId + '" class="form-grid two">' +
         config.fields.join("") +
         '<div class="form-actions span-2"><button type="submit">Save</button><button type="button" class="secondary" id="' + config.formId + 'ResetBtn">Clear</button></div>' +
       '</form></section>',
@@ -1593,6 +1626,7 @@
       if (response.status === 401 && !skipAuthRedirect) {
         clearSession();
         await routeAfterAuthChange({ showExpiredMessage: true });
+        throw new Error("__AUTH_REDIRECT__");
       }
       throw new Error(firstText(errorBody.error, errorBody.message, response.statusText, "Request failed"));
     }
@@ -1681,6 +1715,7 @@
   function renderFlash(module) {
     const flash = state.flashes[module];
     if (!flash || !flash.text) return "";
+    state.flashes[module] = null;
     return '<div class="message ' + escapeHtml(flash.type) + '">' + escapeHtml(flash.text) + '</div>';
   }
 
@@ -1750,7 +1785,7 @@
       const productId = optionalNumber(form, 'item_product_id_' + index);
       const quantity = optionalNumber(form, 'item_quantity_' + index);
       const price = optionalNumber(form, 'item_price_' + index);
-      if (!productId || !quantity || price == null) continue;
+      if (!productId || quantity == null || quantity <= 0 || price == null || price < 0) continue;
       const item = {
         product_id: productId,
         quantity: quantity
@@ -1809,8 +1844,8 @@
     const vKey = valueKey || 'id';
     const lKey = labelKey || 'name';
     return (items || []).map(function (item) {
-      const value = keepKeys ? item.id : item[vKey];
-      const label = keepKeys ? item.name : firstText(item[lKey], item.name, item.product_name, item.code, value);
+      const value = item[vKey];
+      const label = firstText(item[lKey], item.name, item.product_name, item.code, value);
       return '<option value="' + escapeAttr(value) + '"' + (String(value) === String(selectedValue) ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
     }).join("");
   }
@@ -1844,6 +1879,7 @@
   }
 
   function handleActionError(error) {
+    if (error && error.message === "__AUTH_REDIRECT__") return;
     setFlash(state.activeModule, 'error', error && error.message ? error.message : 'Action failed.');
     renderByModule(state.activeModule);
   }
@@ -1853,8 +1889,6 @@
     if (Array.isArray(response)) return response;
     if (Array.isArray(response.data)) return response.data;
     if (Array.isArray(response.items)) return response.items;
-    if (Array.isArray(response.notifications)) return response.notifications;
-    if (Array.isArray(response.branches)) return response.branches;
     return [];
   }
 
@@ -1942,7 +1976,7 @@
   function money(value) {
     var num = Number(value || 0);
     if (!Number.isFinite(num)) num = 0;
-    return num.toLocaleString(undefined, { style: 'currency', currency: 'KES', maximumFractionDigits: 2 });
+    return num.toLocaleString(undefined, { style: 'currency', currency: state.currency || 'KES', maximumFractionDigits: 2 });
   }
 
   function numberText(value) {
@@ -1976,7 +2010,8 @@
   }
 
   function subnavButton(module, tab, label) {
-    return '<button type="button" class="js-' + module + '-tab subnav__item ' + (state.ui.salesTab === tab ? 'active' : '') + '" data-tab="' + escapeAttr(tab) + '">' + escapeHtml(label) + '</button>';
+    var activeTab = state.ui[module + 'Tab'] || '';
+    return '<button type="button" class="js-' + module + '-tab subnav__item ' + (activeTab === tab ? 'active' : '') + '" data-tab="' + escapeAttr(tab) + '">' + escapeHtml(label) + '</button>';
   }
 
   function labelForDocument(type) {
@@ -1992,6 +2027,16 @@
 
   function todayIso() {
     return new Date().toISOString().slice(0, 10);
+  }
+
+  async function refreshCurrency() {
+    try {
+      const settings = await apiJson("/api/settings", { skipAuthRedirect: true });
+      state.moduleData.settings = { settings: settings };
+      state.currency = firstText(settings.currency, "KES");
+    } catch (_error) {
+      state.currency = state.currency || "KES";
+    }
   }
 
   function valueOrDefault(value, fallback) {
