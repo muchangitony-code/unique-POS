@@ -162,24 +162,74 @@
       state.branding = branding || {};
       const brandName = firstText(branding.business_name, branding.businessName, "UniquePOS");
       const summary = firstText(branding.tagline, branding.description, "Sign in to access your POS workspace, or confirm the service is online before finishing setup.");
-      const logoUrl = firstText(branding.logo_url, branding.logoUrl, "");
       document.title = brandName;
       login.brandName.textContent = brandName;
       login.brandSummary.textContent = summary;
       pos.navBrand.textContent = brandName;
-      applyBrandLogo(login.brandLogo, logoUrl);
-      applyBrandLogo(pos.navLogo, logoUrl);
+      applyBrandTheme(branding);
+      applyBrandLogo(login.brandLogo, branding);
+      applyBrandLogo(pos.navLogo, branding);
     } catch (_error) {}
   }
 
-  function applyBrandLogo(node, logoUrl) {
+  function normalizeHexColor(value, fallback) {
+    const text = String(value || "").trim();
+    if (/^#?[0-9a-fA-F]{6}$/.test(text)) return text.charAt(0) === "#" ? text : "#" + text;
+    return fallback;
+  }
+
+  function resolveBrandAssetUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (raw.indexOf("/objects/") === 0) return "/api/storage/objects/" + raw.slice("/objects/".length);
+    return raw;
+  }
+
+  function brandingInitials(name) {
+    const text = String(firstText(name, "UniquePOS")).trim();
+    const parts = text.split(/\s+/).filter(Boolean).slice(0, 2);
+    const initials = parts.map(function (part) { return part.charAt(0).toUpperCase(); }).join("");
+    return initials || "UP";
+  }
+
+  function buildBrandPlaceholder(branding) {
+    const primary = normalizeHexColor(firstText(branding && (branding.primary_color || branding.primaryColor), "#0f172a"), "#0f172a");
+    const secondary = normalizeHexColor(firstText(branding && (branding.secondary_color || branding.secondaryColor), "#38bdf8"), "#38bdf8");
+    const label = escapeHtml(brandingInitials(branding && (branding.business_name || branding.businessName)));
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0%" stop-color="' + primary + '"/><stop offset="100%" stop-color="' + secondary + '"/></linearGradient></defs><rect width="160" height="160" rx="28" fill="url(#g)"/><text x="80" y="94" text-anchor="middle" font-family="Arial, sans-serif" font-size="52" font-weight="700" fill="#ffffff">' + label + '</text></svg>';
+    return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
+  }
+
+  function buildBrandLogoUrl(branding) {
+    return resolveBrandAssetUrl(firstText(branding && branding.logo_url, branding && branding.logoUrl, ""));
+  }
+
+  function buildBrandLogoSrc(branding) {
+    return buildBrandLogoUrl(branding) || buildBrandPlaceholder(branding || state.branding || {});
+  }
+
+  function applyBrandTheme(branding) {
+    const root = document.documentElement;
+    const primary = normalizeHexColor(firstText(branding.primary_color, branding.primaryColor, "#0f172a"), "#0f172a");
+    const secondary = normalizeHexColor(firstText(branding.secondary_color, branding.secondaryColor, "#38bdf8"), "#38bdf8");
+    root.style.setProperty("--brand-primary", primary);
+    root.style.setProperty("--brand-secondary", secondary);
+    root.style.setProperty("--accent", secondary);
+    root.style.setProperty("--accent-strong", primary);
+  }
+
+  function applyBrandLogo(node, branding) {
     if (!node) return;
-    if (!logoUrl) {
-      node.classList.add("hidden");
-      node.removeAttribute("src");
-      return;
-    }
-    node.src = logoUrl;
+    const src = buildBrandLogoSrc(branding || state.branding || {});
+    const hasUploadedLogo = Boolean(buildBrandLogoUrl(branding || state.branding || {}));
+    node.src = src;
+    node.alt = firstText(branding && branding.business_name, branding && branding.businessName, "Company") + " logo";
+    node.onerror = function () {
+      node.onerror = null;
+      node.src = buildBrandPlaceholder(branding || state.branding || {});
+      node.classList.add("brand-logo--placeholder");
+    };
+    node.classList.toggle("brand-logo--placeholder", !hasUploadedLogo);
     node.classList.remove("hidden");
   }
 
@@ -326,6 +376,7 @@
     body.innerHTML = [
       renderFlash("dashboard"),
       '<div class="module-grid two">',
+      renderBrandingCard("Business branding", "Dashboard branding and contact details come from Settings.", true),
       renderTableCard("Recent transactions", ["Reference", "Customer", "Total", "Status", "Date"], (data.recentTransactions || []).map(function (item) {
         return [
           escapeHtml(firstText(item.receipt_number, item.invoice_number, item.reference, "—")),
@@ -1338,6 +1389,7 @@
     const range = state.ui.reportsRange;
     body.innerHTML = [
       renderFlash("reports"),
+      renderBrandingCard("Report branding", "Exports and print previews use the same saved business profile.", false),
       '<section class="card"><div class="section-head"><h3>Report filters</h3></div><form id="reportsForm" class="inline-form report-form">' +
         '<label><span>From</span><input type="date" name="from" value="' + escapeAttr(range.from) + '" required /></label>' +
         '<label><span>To</span><input type="date" name="to" value="' + escapeAttr(range.to) + '" required /></label>' +
@@ -1516,7 +1568,18 @@
       '<section class="card"><div class="section-head"><h3>Branding</h3></div><form id="brandingForm" class="form-grid two">' +
         textField("Tagline", "tagline", s.tagline) +
         textField("Website", "website", s.website) +
-        textField("Logo URL", "logo_url", s.logo_url) +
+        '<label class="span-2"><span>Company logo</span>' +
+          hiddenInput("logo_url", s.logo_url) +
+          '<div class="branding-upload">' +
+            '<img id="brandingLogoPreview" class="brand-logo brand-logo--xl" alt="Logo preview" />' +
+            '<div class="branding-upload__meta">' +
+              '<input id="brandingLogoFile" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" />' +
+              '<p class="muted branding-upload__hint">Upload PNG, JPG, WebP, or SVG up to 2 MB. The stored logo is reused on login, navigation, documents, PDFs, print previews, and emails.</p>' +
+              '<div class="inline-actions"><button type="button" class="secondary small" id="brandingLogoUploadBtn">Upload selected logo</button><button type="button" class="secondary small" id="brandingLogoClearBtn">Use placeholder</button></div>' +
+              '<div class="muted branding-upload__status" id="brandingLogoStatus">Current logo will stay in use until you save branding changes.</div>' +
+            '</div>' +
+          '</div>' +
+        '</label>' +
         textField("Alternative phone", "business_phone2", s.business_phone2) +
         textField("Primary color", "primary_color", s.primary_color, false, "#0f172a") +
         textField("Secondary color", "secondary_color", s.secondary_color, false, "#38bdf8") +
@@ -1558,10 +1621,8 @@
     ].join("");
 
     bindForm("settingsForm", function (event) { saveSettingsGroup(event, "/api/settings", "Business settings saved."); });
-    bindForm("brandingForm", async function (event) {
-      await saveSettingsGroup(event, "/api/settings/branding", "Branding settings saved.");
-      await loadBranding();
-    });
+    bindBrandingUploadControls();
+    bindForm("brandingForm", saveBrandingSettings);
     bindForm("paymentSettingsForm", function (event) { saveSettingsGroup(event, "/api/settings/payment", "Payment settings saved."); });
     bindForm("securitySettingsForm", function (event) { saveSettingsGroup(event, "/api/settings/security", "Security settings saved."); });
   }
@@ -1860,6 +1921,32 @@
     }).join("") + '</dl></section>';
   }
 
+  function renderBrandingCard(title, summary, compact) {
+    const branding = state.branding || {};
+    const taxDetails = [
+      firstText(branding.tax_number, branding.taxNumber, "") ? "KRA PIN: " + firstText(branding.tax_number, branding.taxNumber, "") : "",
+      firstText(branding.vat_number, branding.vatNumber, "") ? "VAT: " + firstText(branding.vat_number, branding.vatNumber, "") : ""
+    ].filter(Boolean).join(" • ");
+    const lines = [
+      firstText(branding.business_address, branding.businessAddress, ""),
+      [firstText(branding.business_phone, branding.businessPhone, ""), firstText(branding.business_phone2, branding.businessPhone2, "")].filter(Boolean).join(" / "),
+      firstText(branding.business_email, branding.businessEmail, ""),
+      firstText(branding.website, branding.website, ""),
+      taxDetails
+    ].filter(Boolean);
+    return '<section class="card brand-card' + (compact ? " brand-card--compact" : "") + '">' +
+      '<div class="section-head"><h3>' + escapeHtml(title) + '</h3></div>' +
+      '<div class="brand-card__body">' +
+        '<img class="brand-logo brand-logo--panel' + (buildBrandLogoUrl(branding) ? '' : ' brand-logo--placeholder') + '" src="' + escapeAttr(buildBrandLogoSrc(branding)) + '" alt="' + escapeAttr(firstText(branding.business_name, branding.businessName, "Company")) + ' logo" />' +
+        '<div class="brand-card__copy">' +
+          '<h4>' + escapeHtml(firstText(branding.business_name, branding.businessName, "UniquePOS")) + '</h4>' +
+          '<p class="muted">' + escapeHtml(firstText(branding.tagline, branding.description, summary || "Branding is managed from Settings.")) + '</p>' +
+          (lines.length ? '<div class="brand-card__meta">' + lines.map(function (line) { return '<div>' + escapeHtml(line) + '</div>'; }).join("") + '</div>' : "") +
+        '</div>' +
+      '</div>' +
+    '</section>';
+  }
+
   function renderTable(headers, rows, emptyText) {
     if (!rows.length) {
       return '<div class="empty-state">' + escapeHtml(emptyText) + '</div>';
@@ -1997,6 +2084,89 @@
         Promise.resolve(handler(event)).catch(handleActionError);
       });
     }
+  }
+
+  function brandingLogoElements() {
+    return {
+      hidden: document.querySelector('#brandingForm input[name="logo_url"]'),
+      preview: document.getElementById("brandingLogoPreview"),
+      file: document.getElementById("brandingLogoFile"),
+      status: document.getElementById("brandingLogoStatus")
+    };
+  }
+
+  function setBrandingLogoStatus(message) {
+    const elements = brandingLogoElements();
+    if (elements.status) elements.status.textContent = message;
+  }
+
+  function syncBrandingLogoPreview() {
+    const elements = brandingLogoElements();
+    if (!elements.preview) return;
+    const branding = Object.assign({}, state.branding, { logo_url: elements.hidden ? elements.hidden.value : "", logoUrl: elements.hidden ? elements.hidden.value : "" });
+    applyBrandLogo(elements.preview, branding);
+  }
+
+  function bindBrandingUploadControls() {
+    syncBrandingLogoPreview();
+    bindClick("brandingLogoUploadBtn", uploadBrandingLogo);
+    bindClick("brandingLogoClearBtn", function () {
+      const elements = brandingLogoElements();
+      if (elements.hidden) elements.hidden.value = "";
+      if (elements.file) elements.file.value = "";
+      syncBrandingLogoPreview();
+      setBrandingLogoStatus("Placeholder selected. Save branding changes to remove the uploaded logo everywhere.");
+    });
+  }
+
+  async function uploadBrandingLogo() {
+    const elements = brandingLogoElements();
+    const file = elements.file && elements.file.files && elements.file.files[0];
+    if (!file) throw new Error("Choose an image file first.");
+    if (file.size > 2 * 1024 * 1024) throw new Error("Logo image must be 2 MB or smaller.");
+    if (!/^image\/(png|jpeg|webp|svg\+xml)$/i.test(file.type || "")) throw new Error("Logo image must be PNG, JPG, WebP, or SVG.");
+    setBrandingLogoStatus("Uploading logo…");
+    const upload = await apiJson("/api/storage/uploads/request-url", {
+      method: "POST",
+      body: JSON.stringify({
+        name: file.name,
+        size: file.size,
+        content_type: file.type || "application/octet-stream"
+      })
+    });
+    const response = await fetch(upload.upload_url, {
+      method: "PUT",
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+      body: file
+    });
+    if (!response.ok) {
+      let message = "Upload failed.";
+      try {
+        const body = await response.json();
+        message = firstText(body.error, body.message, message);
+      } catch (_error) {}
+      throw new Error(message);
+    }
+    if (elements.hidden) elements.hidden.value = upload.object_path;
+    if (elements.file) elements.file.value = "";
+    syncBrandingLogoPreview();
+    setBrandingLogoStatus("Logo uploaded. Save branding changes to publish it across the POS.");
+  }
+
+  async function saveBrandingSettings(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const payload = readFormPayload(form);
+    const logoField = form.elements.logo_url;
+    payload.logo_url = logoField ? String(logoField.value || "") : "";
+    await apiJson("/api/settings/branding", {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    });
+    setFlash("settings", "success", "Branding settings saved.");
+    await loadSettings();
+    await loadBranding();
+    renderSettings();
   }
 
   function bindRowActions(root, handlers) {

@@ -1,6 +1,8 @@
 :root {
   color-scheme: dark;
   --bg: #0f172a;
+  --brand-primary: #0f172a;
+  --brand-secondary: #38bdf8;
   --panel: rgba(15, 23, 42, 0.88);
   --panel-soft: rgba(30, 41, 59, 0.8);
   --border: rgba(148, 163, 184, 0.2);
@@ -154,11 +156,28 @@ label span {
   object-fit: contain;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.92);
+  display: inline-block;
 }
 
 .brand-logo--sm {
   width: 28px;
   height: 28px;
+}
+
+.brand-logo--xl {
+  width: 120px;
+  height: 120px;
+}
+
+.brand-logo--panel {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  flex-shrink: 0;
+}
+
+.brand-logo--placeholder {
+  background: transparent;
 }
 
 .hero h1 {
@@ -206,6 +225,12 @@ label span {
   margin: 0;
 }
 
+.section-head h3,
+.brand-card__copy h4,
+.pos-header__title {
+  color: var(--brand-secondary);
+}
+
 .muted {
   color: var(--muted);
   margin: 0 0 18px;
@@ -214,6 +239,51 @@ label span {
 .form {
   display: grid;
   gap: 14px;
+}
+
+.brand-card {
+  border-color: rgba(56, 189, 248, 0.28);
+}
+
+.brand-card__body {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.brand-card__copy {
+  min-width: 0;
+}
+
+.brand-card__meta {
+  display: grid;
+  gap: 4px;
+  font-size: 0.92rem;
+  color: #cbd5e1;
+}
+
+.brand-card--compact .brand-card__body {
+  align-items: flex-start;
+}
+
+.branding-upload {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 14px;
+  border: 1px dashed rgba(148, 163, 184, 0.32);
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.branding-upload__meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.branding-upload__hint,
+.branding-upload__status {
+  margin: 8px 0 0;
 }
 
 .pos-shell {
@@ -239,7 +309,7 @@ label span {
   font-size: 1.1rem;
   font-weight: 800;
   letter-spacing: 0.04em;
-  color: #bae6fd;
+  color: var(--brand-secondary);
   border-bottom: 1px solid var(--nav-border);
   flex-shrink: 0;
   display: flex;
@@ -620,6 +690,12 @@ label span {
   .line-item-headings,
   .line-item-row {
     grid-template-columns: 1fr;
+  }
+
+  .brand-card__body,
+  .branding-upload {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 
