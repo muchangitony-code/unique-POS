@@ -69458,31 +69458,88 @@ function publicUser(user) {
     created_at: user.createdAt
   };
 }
+async function findLoginUser(loginId) {
+  const normalized = String(loginId).trim();
+  try {
+    const lookup = await db.execute(sql`
+      SELECT
+        id,
+        name,
+        email,
+        password_hash AS "passwordHash",
+        role,
+        branch,
+        branch_id AS "branchId",
+        phone,
+        is_active AS "isActive",
+        created_at AS "createdAt",
+        totp_secret AS "totpSecret",
+        totp_enabled AS "totpEnabled",
+        failed_login_attempts AS "failedLoginAttempts",
+        locked_until AS "lockedUntil",
+        password_changed_at AS "passwordChangedAt"
+      FROM users
+      WHERE lower(email) = lower(${normalized}) OR lower(name) = lower(${normalized})
+      ORDER BY CASE WHEN lower(email) = lower(${normalized}) THEN 0 ELSE 1 END, id ASC
+      LIMIT 1
+    `);
+    const rows = lookup.rows ?? lookup;
+    return rows[0];
+  } catch (err) {
+    if (err?.code !== "42703") throw err;
+    logger.warn({ err }, "Legacy users schema detected during login lookup; using compatibility query");
+    const fallback = await db.execute(sql`
+      SELECT
+        id,
+        name,
+        email,
+        password_hash AS "passwordHash",
+        role,
+        branch,
+        NULL::integer AS "branchId",
+        phone,
+        is_active AS "isActive",
+        created_at AS "createdAt",
+        NULL::text AS "totpSecret",
+        FALSE AS "totpEnabled",
+        0 AS "failedLoginAttempts",
+        NULL::timestamptz AS "lockedUntil",
+        NULL::timestamptz AS "passwordChangedAt"
+      FROM users
+      WHERE lower(email) = lower(${normalized}) OR lower(name) = lower(${normalized})
+      ORDER BY CASE WHEN lower(email) = lower(${normalized}) THEN 0 ELSE 1 END, id ASC
+      LIMIT 1
+    `);
+    const rows = fallback.rows ?? fallback;
+    return rows[0];
+  }
+}
 router2.post("/auth/login", async (req, res) => {
   const { email: email3, password, totp_code } = req.body ?? {};
   if (!email3 || !password) {
     res.status(400).json({ error: "Email and password required" });
     return;
   }
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email3));
+  const loginId = String(email3).trim();
+  const user = await findLoginUser(loginId);
   if (!user || !user.isActive) {
-    await recordLogin(req, { userId: user?.id ?? null, email: email3, success: false, reason: user ? "inactive" : "unknown_user" });
-    await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user?.id, description: `Failed login attempt for "${email3}" \u2014 user not found or inactive` });
+    await recordLogin(req, { userId: user?.id ?? null, email: loginId, success: false, reason: user ? "inactive" : "unknown_user" });
+    await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user?.id, description: `Failed login attempt for "${loginId}" \u2014 user not found or inactive` });
     res.status(401).json({ error: "Invalid credentials" });
     return;
   }
   const policy = await getSecurityPolicy();
   if (user.lockedUntil && new Date(user.lockedUntil).getTime() > Date.now()) {
     const mins = Math.ceil((new Date(user.lockedUntil).getTime() - Date.now()) / 6e4);
-    await recordLogin(req, { userId: user.id, email: email3, success: false, reason: "account_locked" });
+    await recordLogin(req, { userId: user.id, email: loginId, success: false, reason: "account_locked" });
     res.status(423).json({ error: `Account locked due to failed login attempts. Try again in ${mins} minute${mins === 1 ? "" : "s"}.` });
     return;
   }
   const valid = await comparePassword(password, user.passwordHash);
   if (!valid) {
     await registerFailedAttempt(user.id, policy);
-    await recordLogin(req, { userId: user.id, email: email3, success: false, reason: "wrong_password" });
-    await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user.id, description: `Failed login attempt for "${email3}" \u2014 wrong password` });
+    await recordLogin(req, { userId: user.id, email: loginId, success: false, reason: "wrong_password" });
+    await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user.id, description: `Failed login attempt for "${loginId}" \u2014 wrong password` });
     res.status(401).json({ error: "Invalid credentials" });
     return;
   }
@@ -69493,20 +69550,20 @@ router2.post("/auth/login", async (req, res) => {
     }
     if (!verifyTotp(user.totpSecret, String(totp_code))) {
       await registerFailedAttempt(user.id, policy);
-      await recordLogin(req, { userId: user.id, email: email3, success: false, reason: "invalid_2fa" });
-      await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user.id, description: `Failed 2FA for "${email3}"` });
+      await recordLogin(req, { userId: user.id, email: loginId, success: false, reason: "invalid_2fa" });
+      await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user.id, description: `Failed 2FA for "${loginId}"` });
       res.status(401).json({ error: "Invalid authentication code" });
       return;
     }
   }
   await db.update(usersTable).set({ failedLoginAttempts: 0, lockedUntil: null }).where(eq(usersTable.id, user.id));
-  await recordLogin(req, { userId: user.id, email: email3, success: true });
+  await recordLogin(req, { userId: user.id, email: loginId, success: true });
   await logAudit(req, { action: "auth.login", entityType: "user", entityId: user.id, description: `"${user.name}" logged in (${user.role})` });
   const token = signToken(
     { userId: user.id, email: user.email, role: user.role, name: user.name, branchId: user.branchId ?? null },
     policy.sessionTimeoutMinutes * 60
   );
-  res.json({ token, user: publicUser(user) });
+  res.json({ token, user: publicUser(user), force_password_change: !user.passwordChangedAt });
 });
 async function registerFailedAttempt(userId, policy) {
   const lockoutMs = policy.lockoutMinutes * 6e4;

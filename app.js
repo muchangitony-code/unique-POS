@@ -4,6 +4,7 @@
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
+const { parseAndValidateDatabaseUrl } = require("./scripts/database-url.cjs");
 
 // Load .env (simple KEY=VALUE parser; no external dependency).
 const envPath = path.join(__dirname, ".env");
@@ -18,6 +19,7 @@ if (fs.existsSync(envPath)) {
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
     }
+    if (key === "DATABASE_URL") continue;
     if (!(key in process.env)) process.env[key] = val;
   }
 }
@@ -40,12 +42,8 @@ if (!process.env.PORT) {
   process.env.PORT = "8080";
 }
 
-// Starts without a real database only when one has not yet been provisioned so
-// the process can still boot and satisfy platform health checks.
-if (!process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = "postgresql://localhost:5432/local-startup-placeholder";
-  process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT = "1";
-}
+// DATABASE_URL must come from the deployment environment.
+parseAndValidateDatabaseUrl("startup");
 
 // index.cjs checks SESSION_SECRET at module load time. Supply a placeholder so
 // the process starts (and passes the health check) even when the secret is not
@@ -56,4 +54,21 @@ if (!process.env.SESSION_SECRET) {
   process.env.SESSION_SECRET = "unconfigured-placeholder-change-me";
 }
 
-require("./index.cjs");
+async function start() {
+  try {
+    const { bootstrapDatabaseIfNeeded } = require("./scripts/bootstrap-db.cjs");
+    const result = await bootstrapDatabaseIfNeeded();
+    if (result.initializedFromSql) {
+      console.log("[bootstrap-db] Database initialized from database.sql");
+    }
+    if (result.adminBootstrapped) {
+      console.log("[bootstrap-db] Admin account ensured");
+    }
+    require("./index.cjs");
+  } catch (err) {
+    console.error("[startup] Database bootstrap failed", err);
+    process.exit(1);
+  }
+}
+
+start();
