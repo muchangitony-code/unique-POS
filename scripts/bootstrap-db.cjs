@@ -267,9 +267,44 @@ async function bootstrapDatabaseIfNeeded(options = {}) {
       const sanitizedSql = stripPsqlMetaAndCopy(rawSql);
       const statements = splitSqlStatements(sanitizedSql);
 
+      const duplicateCodes = new Set(["42710", "42P07", "42701", "42723", "42P06"]);
+      function isIdempotentStatement(stmt) {
+        const s = stmt.trim().toUpperCase();
+        return (
+          s.startsWith("CREATE TYPE") ||
+          s.startsWith("CREATE TABLE") ||
+          s.startsWith("CREATE INDEX") ||
+          s.startsWith("CREATE UNIQUE INDEX") ||
+          s.startsWith("CREATE SEQUENCE") ||
+          s.startsWith("CREATE EXTENSION") ||
+          (s.startsWith("ALTER TABLE") && (s.includes(" ADD CONSTRAINT") || s.includes(" ADD COLUMN")))
+        );
+      }
+      function shouldIgnore(err, stmt) {
+        if (!isIdempotentStatement(stmt)) return false;
+        if (duplicateCodes.has(err?.code)) return true;
+        return /already exists/i.test(err?.message || "");
+      }
+
       await client.query("BEGIN");
       for (const statement of statements) {
-        await client.query(statement);
+        if (isIdempotentStatement(statement)) {
+          await client.query("SAVEPOINT uniquepos_bootstrap_stmt");
+          try {
+            await client.query(statement);
+            await client.query("RELEASE SAVEPOINT uniquepos_bootstrap_stmt");
+          } catch (err) {
+            await client.query("ROLLBACK TO SAVEPOINT uniquepos_bootstrap_stmt");
+            await client.query("RELEASE SAVEPOINT uniquepos_bootstrap_stmt");
+            if (shouldIgnore(err, statement)) {
+              console.warn(`[bootstrap-db] Skipping existing object (${err.code ?? "n/a"})`);
+              continue;
+            }
+            throw err;
+          }
+        } else {
+          await client.query(statement);
+        }
       }
       await client.query("COMMIT");
       await client.query("SET search_path TO public");
