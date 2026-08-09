@@ -19,7 +19,7 @@
       </aside>
 
       <main class="panel">
-        <section class="card">
+        <section class="card" id="loginCard">
           <h2>Sign in</h2>
           <p class="muted">Use your account email and password to open the app.</p>
 
@@ -46,8 +46,9 @@
         </section>
 
         <section class="card hidden" id="accountCard">
-          <h2>Session ready</h2>
+          <h2 id="dashboardTitle">Dashboard</h2>
           <div id="accountDetails" class="details"></div>
+          <div id="dashboardStats" class="details hidden"></div>
           <div class="actions">
             <button id="copyTokenBtn" type="button" class="secondary">Copy token</button>
             <button id="signOutBtn" type="button" class="secondary">Sign out</button>
