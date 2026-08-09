@@ -1,68 +1,117 @@
 (function () {
   const TOKEN_STORAGE_KEY = "uniquepos.token";
   const USER_STORAGE_KEY = "uniquepos.user";
-  const ROLE_DASHBOARD_PATHS = {
-    super_admin: "/dashboard",
-    administrator: "/dashboard",
-    manager: "/dashboard",
-    storekeeper: "/dashboard",
-    sales_cashier: "/pos"
+
+  const MODULE_TITLES = {
+    dashboard:  "Dashboard",
+    products:   "Products",
+    inventory:  "Inventory",
+    sales:      "Sales",
+    customers:  "Customers",
+    suppliers:  "Suppliers",
+    purchases:  "Purchases",
+    reports:    "Reports",
+    users:      "Users",
+    settings:   "Settings",
+    branches:   "Branches"
   };
+
   const state = {
     token: readStoredToken(),
     user: readStoredUser(),
-    dashboardStats: null
+    dashboardStats: null,
+    activeModule: "dashboard"
   };
 
-  const els = {
+  // Login-screen elements
+  const login = {
+    shell:     document.getElementById("loginShell"),
     apiStatus: document.getElementById("apiStatus"),
     brandName: document.getElementById("brandName"),
     brandSummary: document.getElementById("brandSummary"),
-    loginCard: document.getElementById("loginCard"),
-    loginForm: document.getElementById("loginForm"),
-    email: document.getElementById("email"),
-    password: document.getElementById("password"),
-    totpWrap: document.getElementById("totpWrap"),
-    totp: document.getElementById("totp"),
+    card:      document.getElementById("loginCard"),
+    form:      document.getElementById("loginForm"),
+    email:     document.getElementById("email"),
+    password:  document.getElementById("password"),
+    totpWrap:  document.getElementById("totpWrap"),
+    totp:      document.getElementById("totp"),
     submitBtn: document.getElementById("submitBtn"),
-    message: document.getElementById("message"),
-    accountCard: document.getElementById("accountCard"),
-    dashboardTitle: document.getElementById("dashboardTitle"),
-    accountDetails: document.getElementById("accountDetails"),
-    dashboardStats: document.getElementById("dashboardStats"),
-    copyTokenBtn: document.getElementById("copyTokenBtn"),
-    signOutBtn: document.getElementById("signOutBtn")
+    message:   document.getElementById("message")
+  };
+
+  // POS shell elements
+  const pos = {
+    shell:       document.getElementById("posShell"),
+    navBrand:    document.getElementById("posNavBrand"),
+    navUser:     document.getElementById("posNavUser"),
+    moduleTitle: document.getElementById("posModuleTitle"),
+    signOutBtn:  document.getElementById("posSignOutBtn"),
+    menuToggle:  document.getElementById("posMenuToggle"),
+    nav:         document.getElementById("posNav"),
+    statTodaySales:    document.getElementById("statTodaySalesVal"),
+    statMonthlySales:  document.getElementById("statMonthlySalesVal"),
+    statGrossProfit:   document.getElementById("statGrossProfitVal"),
+    statLowStock:      document.getElementById("statLowStockVal")
   };
 
   boot();
 
   async function boot() {
-    bindEvents();
+    bindLoginEvents();
+    bindPosEvents();
     const hadStoredToken = Boolean(state.token);
     await Promise.all([loadHealth(), loadBranding()]);
     await syncSessionFromToken();
     await routeAfterAuthChange({ showExpiredMessage: hadStoredToken });
   }
 
-  function bindEvents() {
-    els.loginForm.addEventListener("submit", onLogin);
-    els.copyTokenBtn.addEventListener("click", copyToken);
-    els.signOutBtn.addEventListener("click", signOut);
+  /* ── Event binding ─────────────────────────────────────────────────── */
+
+  function bindLoginEvents() {
+    login.form.addEventListener("submit", onLogin);
   }
+
+  function bindPosEvents() {
+    pos.signOutBtn.addEventListener("click", signOut);
+    pos.menuToggle.addEventListener("click", function () {
+      pos.nav.classList.toggle("open");
+    });
+
+    // Close nav overlay when clicking outside on mobile
+    document.addEventListener("click", function (e) {
+      if (
+        pos.nav.classList.contains("open") &&
+        !pos.nav.contains(e.target) &&
+        e.target !== pos.menuToggle
+      ) {
+        pos.nav.classList.remove("open");
+      }
+    });
+
+    // Module navigation buttons
+    document.querySelectorAll(".pos-nav__item[data-module]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        switchModule(btn.dataset.module);
+        pos.nav.classList.remove("open");
+      });
+    });
+  }
+
+  /* ── Health & branding ─────────────────────────────────────────────── */
 
   async function loadHealth() {
     try {
       const res = await fetch("/api/healthz");
       const data = await res.json();
       if (res.ok && data.status === "ok") {
-        els.apiStatus.textContent = "Service is online.";
-        els.apiStatus.style.borderColor = "rgba(34, 197, 94, 0.4)";
+        login.apiStatus.textContent = "Service is online.";
+        login.apiStatus.style.borderColor = "rgba(34, 197, 94, 0.4)";
       } else {
         throw new Error("Unexpected health response");
       }
     } catch (_error) {
-      els.apiStatus.textContent = "Service is not responding yet. Confirm Railway variables and database setup.";
-      els.apiStatus.style.borderColor = "rgba(248, 113, 113, 0.35)";
+      login.apiStatus.textContent = "Service is not responding yet. Confirm Railway variables and database setup.";
+      login.apiStatus.style.borderColor = "rgba(248, 113, 113, 0.35)";
     }
   }
 
@@ -78,29 +127,31 @@
         "Sign in to access your POS workspace, or confirm the service is online before finishing setup."
       );
       document.title = brandName;
-      els.brandName.textContent = brandName;
-      els.brandSummary.textContent = summary;
-    } catch (_error) {
-    }
+      login.brandName.textContent = brandName;
+      login.brandSummary.textContent = summary;
+      pos.navBrand.textContent = brandName;
+    } catch (_error) {}
   }
+
+  /* ── Auth ──────────────────────────────────────────────────────────── */
 
   async function onLogin(event) {
     event.preventDefault();
     setMessage("", "");
-    els.submitBtn.disabled = true;
-    els.submitBtn.textContent = "Signing in…";
+    login.submitBtn.disabled = true;
+    login.submitBtn.textContent = "Signing in…";
 
     const payload = {
-      email: els.email.value.trim(),
-      password: els.password.value
+      email: login.email.value.trim(),
+      password: login.password.value
     };
     if (!payload.email || !payload.password) {
       setMessage("error", "Email and password are required.");
       resetSubmit();
       return;
     }
-    if (!els.totpWrap.classList.contains("hidden")) {
-      payload.totp_code = els.totp.value.trim();
+    if (!login.totpWrap.classList.contains("hidden")) {
+      payload.totp_code = login.totp.value.trim();
     }
 
     try {
@@ -116,7 +167,7 @@
         throw new Error(data.error || "Sign-in failed");
       }
       if (data.two_factor_required) {
-        els.totpWrap.classList.remove("hidden");
+        login.totpWrap.classList.remove("hidden");
         setMessage("success", "Enter your authentication code to finish signing in.");
         resetSubmit("Verify code");
         return;
@@ -126,119 +177,14 @@
       }
 
       persistSession(data.token, data.user);
-      els.loginForm.reset();
-      els.totpWrap.classList.add("hidden");
+      login.form.reset();
+      login.totpWrap.classList.add("hidden");
       setMessage("", "");
       await routeAfterAuthChange();
     } catch (error) {
       setMessage("error", error.message || "Unable to sign in.");
     } finally {
       resetSubmit();
-    }
-  }
-
-  async function routeAfterAuthChange(options) {
-    const showExpiredMessage = options && options.showExpiredMessage;
-    const user = state.user;
-    const isAuthenticated = Boolean(state.token && user);
-    if (!isAuthenticated) {
-      showLoginRoute();
-      if (showExpiredMessage) {
-        setMessage("error", "Your session has expired. Please sign in again.");
-      }
-      return;
-    }
-    const navigating = redirectToDashboardForRole(user.role);
-    if (navigating) {
-      return;
-    }
-    await loadDashboard();
-    renderSession();
-  }
-
-  function renderSession() {
-    const user = state.user;
-    els.loginCard.classList.add("hidden");
-    els.accountCard.classList.remove("hidden");
-    if (els.dashboardTitle) {
-      els.dashboardTitle.textContent = "Dashboard • " + roleLabel(user.role);
-    }
-    els.accountDetails.innerHTML = [
-      detail("Name", user.name),
-      detail("Email", user.email),
-      detail("Role", formatValue(user.role)),
-      detail("Branch", firstText(user.branch && user.branch.name, user.branch && user.branch.branch_name, user.branch_id, "Not assigned"))
-    ].join("");
-    renderDashboardStats();
-  }
-
-  function showLoginRoute() {
-    setMessage("", "");
-    if (!isLoginPath()) {
-      window.history.replaceState({}, "", "/");
-    }
-    els.loginCard.classList.remove("hidden");
-    els.accountCard.classList.add("hidden");
-    if (els.dashboardStats) {
-      els.dashboardStats.classList.add("hidden");
-    }
-  }
-
-  function redirectToDashboardForRole(role) {
-    const targetPath = getDashboardPathForRole(role);
-    if (window.location.pathname !== targetPath) {
-      window.location.assign(targetPath);
-      return true;
-    }
-    return false;
-  }
-
-  function getDashboardPathForRole(role) {
-    const normalized = String(role || "").toLowerCase();
-    return ROLE_DASHBOARD_PATHS[normalized] || "/dashboard";
-  }
-
-  function isLoginPath() {
-    return window.location.pathname === "/" || window.location.pathname === "/index.html";
-  }
-
-  async function loadDashboard() {
-    try {
-      const res = await authorizedFetch("/api/dashboard/stats");
-      if (!res.ok) {
-        throw new Error("Unable to load dashboard data.");
-      }
-      state.dashboardStats = await res.json();
-    } catch (error) {
-      state.dashboardStats = null;
-      setMessage("error", error.message || "Unable to load dashboard.");
-    }
-  }
-
-  function renderDashboardStats() {
-    if (!els.dashboardStats) return;
-    if (!state.dashboardStats) {
-      els.dashboardStats.classList.add("hidden");
-      els.dashboardStats.innerHTML = "";
-      return;
-    }
-    const stats = state.dashboardStats;
-    els.dashboardStats.innerHTML = [
-      detail("Today Sales", formatNumber(stats.today_sales)),
-      detail("Monthly Sales", formatNumber(stats.monthly_sales)),
-      detail("Gross Profit", formatNumber(stats.gross_profit)),
-      detail("Low Stock Count", formatNumber(stats.low_stock_count))
-    ].join("");
-    els.dashboardStats.classList.remove("hidden");
-  }
-
-  async function copyToken() {
-    if (!state.token) return;
-    try {
-      await navigator.clipboard.writeText(state.token);
-      setMessage("success", "Session token copied.");
-    } catch (_error) {
-      setMessage("error", "Could not copy the token from this browser.");
     }
   }
 
@@ -252,55 +198,88 @@
     }
     clearSession();
     state.dashboardStats = null;
-    els.loginForm.reset();
-    els.totpWrap.classList.add("hidden");
+    login.form.reset();
+    login.totpWrap.classList.add("hidden");
     showLoginRoute();
     setMessage("success", "Signed out.");
   }
 
-  function setMessage(type, text) {
-    els.message.className = "message";
-    if (!text) {
-      els.message.classList.add("hidden");
-      els.message.textContent = "";
+  /* ── Routing ───────────────────────────────────────────────────────── */
+
+  async function routeAfterAuthChange(options) {
+    const showExpiredMessage = options && options.showExpiredMessage;
+    const isAuthenticated = Boolean(state.token && state.user);
+    if (!isAuthenticated) {
+      showLoginRoute();
+      if (showExpiredMessage) {
+        setMessage("error", "Your session has expired. Please sign in again.");
+      }
       return;
     }
-    els.message.classList.add(type);
-    els.message.textContent = text;
+    await loadDashboard();
+    showPosRoute();
   }
 
-  function resetSubmit(label) {
-    els.submitBtn.disabled = false;
-    els.submitBtn.textContent = label || "Sign in";
+  function showLoginRoute() {
+    pos.shell.classList.add("hidden");
+    login.shell.classList.remove("hidden");
   }
 
-  function detail(label, value) {
-    return "<div><strong>" + escapeHtml(label) + ":</strong> " + escapeHtml(formatValue(value)) + "</div>";
+  function showPosRoute() {
+    login.shell.classList.add("hidden");
+    pos.shell.classList.remove("hidden");
+    renderPosUser();
+    renderDashboardStats();
+    switchModule("dashboard");
   }
 
-  function formatValue(value) {
-    if (value === null || value === undefined || value === "") return "—";
-    return String(value).replace(/_/g, " ");
+  /* ── POS navigation ────────────────────────────────────────────────── */
+
+  function switchModule(name) {
+    if (!MODULE_TITLES[name]) return;
+    state.activeModule = name;
+
+    // Update header title
+    pos.moduleTitle.textContent = MODULE_TITLES[name];
+
+    // Toggle nav button active state
+    document.querySelectorAll(".pos-nav__item[data-module]").forEach(function (btn) {
+      btn.classList.toggle("active", btn.dataset.module === name);
+    });
+
+    // Show/hide module panels
+    document.querySelectorAll(".pos-module").forEach(function (section) {
+      section.classList.toggle("active", section.id === "mod-" + name);
+    });
   }
 
-  function firstText() {
-    for (let i = 0; i < arguments.length; i += 1) {
-      const value = arguments[i];
-      if (typeof value === "string" && value.trim()) return value.trim();
-      if (typeof value === "number") return String(value);
+  /* ── Dashboard data ────────────────────────────────────────────────── */
+
+  async function loadDashboard() {
+    try {
+      const res = await authorizedFetch("/api/dashboard/stats");
+      if (!res.ok) throw new Error("Unable to load dashboard data.");
+      state.dashboardStats = await res.json();
+    } catch (_error) {
+      state.dashboardStats = null;
     }
-    return "";
   }
 
-  function roleLabel(role) {
-    return formatValue(role || "user");
+  function renderDashboardStats() {
+    const stats = state.dashboardStats || {};
+    pos.statTodaySales.textContent   = formatNumber(stats.today_sales);
+    pos.statMonthlySales.textContent = formatNumber(stats.monthly_sales);
+    pos.statGrossProfit.textContent  = formatNumber(stats.gross_profit);
+    pos.statLowStock.textContent     = formatNumber(stats.low_stock_count);
   }
 
-  function formatNumber(value) {
-    const num = Number(value || 0);
-    if (!Number.isFinite(num)) return "0";
-    return num.toLocaleString();
+  function renderPosUser() {
+    const user = state.user;
+    if (!user || !pos.navUser) return;
+    pos.navUser.textContent = firstText(user.name, user.email, "");
   }
+
+  /* ── Session helpers ───────────────────────────────────────────────── */
 
   async function syncSessionFromToken() {
     if (!state.token) {
@@ -310,9 +289,7 @@
     }
     try {
       const res = await authorizedFetch("/api/auth/me");
-      if (!res.ok) {
-        throw new Error("Unauthorized");
-      }
+      if (!res.ok) throw new Error("Unauthorized");
       state.user = await res.json();
       persistSession(state.token, state.user);
     } catch (_error) {
@@ -334,7 +311,7 @@
 
   function persistSession(token, user) {
     state.token = token || "";
-    state.user = user || null;
+    state.user  = user  || null;
     if (state.token) localStorage.setItem(TOKEN_STORAGE_KEY, state.token);
     else localStorage.removeItem(TOKEN_STORAGE_KEY);
     if (state.user) localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(state.user));
@@ -343,7 +320,7 @@
 
   function clearSession() {
     state.token = "";
-    state.user = null;
+    state.user  = null;
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     clearStoredUser();
   }
@@ -369,12 +346,36 @@
     }
   }
 
-  function escapeHtml(value) {
-    return String(value)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
+  /* ── UI helpers ────────────────────────────────────────────────────── */
+
+  function setMessage(type, text) {
+    login.message.className = "message";
+    if (!text) {
+      login.message.classList.add("hidden");
+      login.message.textContent = "";
+      return;
+    }
+    login.message.classList.add(type);
+    login.message.textContent = text;
+  }
+
+  function resetSubmit(label) {
+    login.submitBtn.disabled = false;
+    login.submitBtn.textContent = label || "Sign in";
+  }
+
+  function firstText() {
+    for (let i = 0; i < arguments.length; i += 1) {
+      const value = arguments[i];
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (typeof value === "number") return String(value);
+    }
+    return "";
+  }
+
+  function formatNumber(value) {
+    const num = Number(value || 0);
+    if (!Number.isFinite(num)) return "0";
+    return num.toLocaleString();
   }
 })();
