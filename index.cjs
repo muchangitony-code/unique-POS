@@ -71856,14 +71856,23 @@ function buildDocumentHtml(opts) {
 }
 async function resolveDocumentPayload(req, type, id) {
   const settings = await getDocSettings();
+  const requestedType = type;
+  const mappedType = type === "payment_receipt" ? "receipt" : type === "delivery_note" ? "invoice" : type === "credit_note" ? "invoice" : type;
+  type = mappedType;
   if (type === "invoice") {
     const [invoice] = await db.select().from(invoicesTable).where(eq(invoicesTable.id, id));
     if (!invoice || !isBranchInScope(req, invoice.branchId)) return null;
     const items = await db.select().from(invoiceItemsTable).where(eq(invoiceItemsTable.invoiceId, invoice.id));
     const [customer] = invoice.customerId ? await db.select().from(customersTable).where(eq(customersTable.id, invoice.customerId)) : [null];
+    const invoiceTotals = {
+      subtotal: invoice.subtotal,
+      tax: invoice.taxAmount,
+      discount: invoice.discountAmount,
+      total: requestedType === "credit_note" ? -safeNum(invoice.total) : invoice.total
+    };
     return {
       settings,
-      documentType: "Invoice",
+      documentType: requestedType === "delivery_note" ? "Delivery Note" : requestedType === "credit_note" ? "Credit Note" : "Invoice",
       documentNumber: invoice.invoiceNumber,
       branchName: await getBranchName(invoice.branchId),
       partyName: customer?.name ?? "Walk-in",
@@ -71871,7 +71880,7 @@ async function resolveDocumentPayload(req, type, id) {
       partyPhone: customer?.phone ?? "",
       notes: invoice.notes || settings.invoicePaymentTerms || "",
       rows: items.map((i) => ({ description: i.description || `Product #${i.productId}`, quantity: i.quantity, unitPrice: i.unitPrice, total: i.total })),
-      totals: { subtotal: invoice.subtotal, tax: invoice.taxAmount, discount: invoice.discountAmount, total: invoice.total }
+      totals: invoiceTotals
     };
   }
   if (type === "quotation") {
@@ -71952,6 +71961,60 @@ async function resolveDocumentPayload(req, type, id) {
         discount: 0,
         total: purchases.reduce((sum, p) => sum + safeNum(p.total), 0)
       }
+    };
+  }
+  if (type === "purchase_order" || type === "goods_received_note") {
+    const [purchase] = await db.select().from(purchasesTable).where(eq(purchasesTable.id, id));
+    if (!purchase || !isBranchInScope(req, purchase.branchId)) return null;
+    const [supplier] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, purchase.supplierId));
+    const items = await db.select().from(purchaseItemsTable).where(eq(purchaseItemsTable.purchaseId, purchase.id));
+    return {
+      settings,
+      documentType: type === "purchase_order" ? "Purchase Order" : "Goods Received Note",
+      documentNumber: purchase.purchaseNumber,
+      branchName: await getBranchName(purchase.branchId),
+      partyName: supplier?.name ?? "Supplier",
+      partyEmail: supplier?.email ?? "",
+      partyPhone: supplier?.phone ?? "",
+      notes: [purchase.notes, type === "goods_received_note" ? `Received date: ${purchase.receivedDate || "Pending"}` : `Expected date: ${purchase.expectedDate || "—"}`].filter(Boolean).join("\n"),
+      rows: items.map((i) => ({ description: `Product #${i.productId}`, quantity: i.quantity, unitPrice: i.unitCost, total: i.total })),
+      totals: { subtotal: purchase.subtotal, tax: purchase.taxAmount, discount: 0, total: purchase.total }
+    };
+  }
+  if (type === "stock_transfer_note") {
+    const [transfer] = await db.select().from(stockTransfersTable).where(eq(stockTransfersTable.id, id));
+    if (!transfer || (!isBranchInScope(req, transfer.sourceBranchId) && !isBranchInScope(req, transfer.destinationBranchId))) return null;
+    const [product] = await db.select().from(productsTable).where(eq(productsTable.id, transfer.productId));
+    return {
+      settings,
+      documentType: "Stock Transfer Note",
+      documentNumber: transfer.transferNumber,
+      branchName: `${await getBranchName(transfer.sourceBranchId)} → ${await getBranchName(transfer.destinationBranchId)}`,
+      partyName: "Internal Transfer",
+      partyEmail: "",
+      partyPhone: "",
+      notes: [transfer.notes, transfer.status ? `Status: ${transfer.status}` : ""].filter(Boolean).join("\n"),
+      rows: [{ description: product?.productName || `Product #${transfer.productId}`, quantity: transfer.quantity, unitPrice: 0, total: 0 }],
+      totals: { subtotal: 0, tax: 0, discount: 0, total: 0 }
+    };
+  }
+  if (type === "stock_adjustment_report") {
+    const movements = await db.select().from(stockMovementsTable).where(and(eq(stockMovementsTable.type, "adjust"), branchCondition(stockMovementsTable.branchId, req))).orderBy(sql`${stockMovementsTable.createdAt} desc`).limit(200);
+    const productIds = movements.map((m) => m.productId).filter(Boolean);
+    const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(inArray(productsTable.id, productIds)) : [];
+    const map2 = new Map(products.map((p) => [p.id, p.name]));
+    const branchName = movements[0] ? await getBranchName(movements[0].branchId) : "All branches";
+    return {
+      settings,
+      documentType: "Stock Adjustment Report",
+      documentNumber: `SAR-${new Date().toISOString().slice(0, 10)}`,
+      branchName,
+      partyName: "Internal",
+      partyEmail: "",
+      partyPhone: "",
+      notes: "Latest stock adjustments",
+      rows: movements.map((m) => ({ description: `${map2.get(m.productId) || `Product #${m.productId}`} (${dateText2(m.createdAt)})`, quantity: m.quantity, unitPrice: 0, total: 0 })),
+      totals: { subtotal: 0, tax: 0, discount: 0, total: 0 }
     };
   }
   return null;

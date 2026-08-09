@@ -618,10 +618,12 @@
           escapeHtml(firstText(item.source_branch_name, item.source_branch, "—")),
           escapeHtml(firstText(item.destination_branch_name, item.destination_branch, "—")),
           renderBadge(firstText(item.status, "pending")),
-          item.status === "pending" ? actionButtons([
-            { cls: "js-approve-transfer", label: "Approve", id: item.id },
-            { cls: "js-reject-transfer", label: "Reject", id: item.id, tone: "danger" }
-          ]) : "—"
+          actionButtons([
+            item.status === "pending" ? { cls: "js-approve-transfer", label: "Approve", id: item.id } : null,
+            item.status === "pending" ? { cls: "js-reject-transfer", label: "Reject", id: item.id, tone: "danger" } : null,
+            { cls: "js-print-transfer", label: "Print", id: item.id, tone: "secondary" },
+            { cls: "js-pdf-transfer", label: "PDF", id: item.id, tone: "secondary" }
+          ])
         ];
       }), "No transfers yet.")
     ].join("");
@@ -631,7 +633,9 @@
     bindForm("transferForm", handleTransferStock);
     bindRowActions(body, {
       ".js-approve-transfer": function (event) { actOnTransfer(event.currentTarget.dataset.id, "approve"); },
-      ".js-reject-transfer": function (event) { actOnTransfer(event.currentTarget.dataset.id, "reject"); }
+      ".js-reject-transfer": function (event) { actOnTransfer(event.currentTarget.dataset.id, "reject"); },
+      ".js-print-transfer": function (event) { openDocumentPrint("stock_transfer_note", event.currentTarget.dataset.id, "a4"); },
+      ".js-pdf-transfer": function (event) { openDocumentPdf("stock_transfer_note", event.currentTarget.dataset.id); }
     });
   }
 
@@ -1162,7 +1166,10 @@
           escapeHtml(formatDate(item.expected_date)),
           actionButtons([
             item.status !== "received" ? { cls: "js-receive-purchase", label: "Receive", id: item.id } : null,
-            { cls: "js-status-purchase", label: "Status", id: item.id, tone: "secondary" }
+            { cls: "js-status-purchase", label: "Status", id: item.id, tone: "secondary" },
+            { cls: "js-print-purchase-order", label: "Print PO", id: item.id, tone: "secondary" },
+            { cls: "js-print-grn", label: "Print GRN", id: item.id, tone: "secondary" },
+            { cls: "js-pdf-purchase-order", label: "PDF PO", id: item.id, tone: "secondary" }
           ])
         ];
       }), "No purchase orders yet.")
@@ -1183,6 +1190,15 @@
       },
       ".js-status-purchase": function (event) {
         updatePurchaseStatus(event.currentTarget.dataset.id);
+      },
+      ".js-print-purchase-order": function (event) {
+        openDocumentPrint("purchase_order", event.currentTarget.dataset.id, "a4");
+      },
+      ".js-print-grn": function (event) {
+        openDocumentPrint("goods_received_note", event.currentTarget.dataset.id, "a4");
+      },
+      ".js-pdf-purchase-order": function (event) {
+        openDocumentPdf("purchase_order", event.currentTarget.dataset.id);
       }
     });
   }
@@ -1325,7 +1341,7 @@
       '<section class="card"><div class="section-head"><h3>Report filters</h3></div><form id="reportsForm" class="inline-form report-form">' +
         '<label><span>From</span><input type="date" name="from" value="' + escapeAttr(range.from) + '" required /></label>' +
         '<label><span>To</span><input type="date" name="to" value="' + escapeAttr(range.to) + '" required /></label>' +
-        '<button type="submit">Refresh</button></form></section>',
+        '<button type="submit">Refresh</button></form><div class="form-actions"><button type="button" class="secondary" id="printStockAdjustmentBtn">Print stock adjustment report</button><button type="button" class="secondary" id="pdfStockAdjustmentBtn">Download stock adjustment PDF</button></div></section>',
       '<div class="module-grid two">',
       renderMetricCard("Sales summary", [
         ["Total sales", money(data.salesSummary && data.salesSummary.total_sales)],
@@ -1374,6 +1390,8 @@
       };
       switchModule("reports");
     });
+    bindClick("printStockAdjustmentBtn", function () { openDocumentPrint("stock_adjustment_report", 1, "a4"); });
+    bindClick("pdfStockAdjustmentBtn", function () { openDocumentPdf("stock_adjustment_report", 1); });
   }
 
   async function loadUsers() {
@@ -2169,7 +2187,9 @@
     const payload = await apiJson("/api/documents/" + encodeURIComponent(docType) + "/" + encodeURIComponent(id) + "/preview?paper=" + encodeURIComponent(String(paper || "a4")));
     const win = window.open("", "_blank", "noopener");
     if (!win) {
-      throw new Error("Allow popups to preview and print documents.");
+      setFlash(state.activeModule, "error", "Popup blocked. Allow popups to preview and print documents.");
+      renderByModule(state.activeModule);
+      return;
     }
     win.document.open();
     win.document.write(payload.html || "");
