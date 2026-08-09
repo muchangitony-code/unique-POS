@@ -71849,9 +71849,9 @@ async function loadLogoBuffer(logoUrl) {
   }
 }
 function buildDocumentHtml(opts) {
-  const { settings, documentType, documentNumber, partyName, partyEmail, partyPhone, branchName, rows, totals, notes, generatedAt, paper } = opts;
+  const { settings, documentType, documentNumber, partyName, partyEmail, partyPhone, branchName, rows, totals, notes, generatedAt, paper, logoSrc } = opts;
   const currency = settings.currency || "KES";
-  const logoUrl = normalizeLogoUrl(settings.logoUrl);
+  const logoUrl = logoSrc || normalizeLogoUrl(settings.logoUrl);
   const logo = logoUrl ? `<img src="${htmlEscape2(logoUrl)}" alt="logo" style="max-height:56px;max-width:160px;object-fit:contain;" />` : "";
   const widthCss = paper === "58mm" ? "58mm" : paper === "80mm" ? "80mm" : "210mm";
   const companyName = htmlEscape2(settings.businessName || "UniquePOS");
@@ -72113,6 +72113,7 @@ router17.get("/documents/:type/:id/preview", async (req, res) => {
   const paper = normalizePaper(req.query.paper, type === "receipt" ? "80mm" : "a4");
   const html = buildDocumentHtml({
     ...payload,
+    logoSrc: absoluteLogoUrl(req, payload.settings.logoUrl),
     paper,
     generatedAt: dateText2(/* @__PURE__ */ new Date())
   });
@@ -72814,14 +72815,22 @@ var CONTENT_TYPES = {
   ".jpeg": "image/jpeg",
   ".gif": "image/gif",
   ".webp": "image/webp",
-  ".svg": "image/svg+xml"
+  ".svg": "image/svg+xml",
+  ".csv": "text/csv; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".pdf": "application/pdf",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 };
 var ALLOWED_UPLOAD_EXTENSIONS = new Map([
   ["image/png", ".png"],
   ["image/jpeg", ".jpg"],
   ["image/webp", ".webp"],
   ["image/gif", ".gif"],
-  ["image/svg+xml", ".svg"]
+  ["image/svg+xml", ".svg"],
+  ["text/csv", ".csv"],
+  ["text/plain", ".txt"],
+  ["application/pdf", ".pdf"],
+  ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"]
 ]);
 function resolveUploadExtension(name, contentType) {
   const fromType = ALLOWED_UPLOAD_EXTENSIONS.get(String(contentType || "").toLowerCase()) || "";
@@ -73494,6 +73503,15 @@ router24.get("/security/login-history", async (req, res) => {
   });
 });
 var security_default = router24;
+var { createProductBulkRouter } = require("./product-bulk.cjs");
+var product_bulk_default = createProductBulkRouter({
+  Router: import_express25.Router,
+  pool,
+  logAudit,
+  makeBarcode,
+  requireRole,
+  resolveWriteBranchId
+});
 
 // artifacts/api-server/src/routes/index.ts
 var router25 = (0, import_express25.Router)();
@@ -73525,6 +73543,7 @@ router25.use(backups_default);
 router25.use(dashboard_default);
 router25.use(categories_default);
 router25.use(brands_default);
+router25.use(product_bulk_default);
 router25.use(products_default);
 router25.use(inventory_default);
 router25.use(purchases_default);

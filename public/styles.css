@@ -65,6 +65,17 @@ button.danger-link {
   color: #fecaca;
 }
 
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 11px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+}
+
 input,
 select,
 textarea {
@@ -604,6 +615,23 @@ label span {
 
 .gap-lg {
   gap: 18px;
+}
+
+.gap-sm {
+  gap: 10px;
+}
+
+.dropzone {
+  padding: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+  color: var(--muted);
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.dropzone--active {
+  border-color: var(--accent);
+  background: rgba(56, 189, 248, 0.08);
 }
 
 .subnav {
