@@ -1,6 +1,6 @@
 (function () {
-  const TOKEN_STORAGE_KEYS = ["uniquepos.token"];
-  const USER_STORAGE_KEYS = ["uniquepos.user"];
+  const TOKEN_STORAGE_KEY = "uniquepos.token";
+  const USER_STORAGE_KEY = "uniquepos.user";
   const ROLE_DASHBOARD_PATHS = {
     super_admin: "/dashboard",
     administrator: "/dashboard",
@@ -128,7 +128,7 @@
       persistSession(data.token, data.user);
       els.loginForm.reset();
       els.totpWrap.classList.add("hidden");
-      setMessage("success", "Signed in successfully. Redirecting to dashboard…");
+      setMessage("", "");
       await routeAfterAuthChange();
     } catch (error) {
       setMessage("error", error.message || "Unable to sign in.");
@@ -334,45 +334,29 @@
   function persistSession(token, user) {
     state.token = token || "";
     state.user = user || null;
-    TOKEN_STORAGE_KEYS.forEach(function (key) {
-      if (state.token) localStorage.setItem(key, state.token);
-      else localStorage.removeItem(key);
-    });
-    USER_STORAGE_KEYS.forEach(function (key) {
-      if (state.user) localStorage.setItem(key, JSON.stringify(state.user));
-      else localStorage.removeItem(key);
-    });
+    if (state.token) localStorage.setItem(TOKEN_STORAGE_KEY, state.token);
+    else localStorage.removeItem(TOKEN_STORAGE_KEY);
+    if (state.user) localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(state.user));
+    else localStorage.removeItem(USER_STORAGE_KEY);
   }
 
   function clearSession() {
     state.token = "";
     state.user = null;
-    TOKEN_STORAGE_KEYS.forEach(function (key) {
-      localStorage.removeItem(key);
-    });
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
     clearStoredUsers();
   }
 
   function clearStoredUsers() {
-    USER_STORAGE_KEYS.forEach(function (key) {
-      localStorage.removeItem(key);
-    });
+    localStorage.removeItem(USER_STORAGE_KEY);
   }
 
   function readStoredToken() {
-    for (let i = 0; i < TOKEN_STORAGE_KEYS.length; i += 1) {
-      const value = localStorage.getItem(TOKEN_STORAGE_KEYS[i]);
-      if (value) return value;
-    }
-    return "";
+    return localStorage.getItem(TOKEN_STORAGE_KEY) || "";
   }
 
   function readStoredUser() {
-    for (let i = 0; i < USER_STORAGE_KEYS.length; i += 1) {
-      const value = readStoredJson(USER_STORAGE_KEYS[i]);
-      if (value) return value;
-    }
-    return null;
+    return readStoredJson(USER_STORAGE_KEY);
   }
 
   function readStoredJson(key) {
