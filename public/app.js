@@ -197,21 +197,30 @@
 
   function applyBrandLogo(node, logoUrl) {
     if (!node) return;
-    if (!logoUrl) {
+    const safeLogoUrl = sanitizeImageUrl(logoUrl);
+    if (!safeLogoUrl) {
       node.classList.add("hidden");
       node.removeAttribute("src");
       return;
     }
-    node.src = logoUrl;
+    node.src = safeLogoUrl;
     node.classList.remove("hidden");
   }
 
   function resolveBrandLogoUrl(branding) {
-    return firstText(branding && branding.logo_url, branding && branding.logoUrl, DEFAULT_COMPANY_LOGO_URL);
+    return sanitizeImageUrl(firstText(branding && branding.logo_url, branding && branding.logoUrl, DEFAULT_COMPANY_LOGO_URL)) || DEFAULT_COMPANY_LOGO_URL;
   }
 
   function mapFieldLabel(field) {
     return PRODUCT_IMPORT_FIELDS[field] || field;
+  }
+
+  function sanitizeImageUrl(value) {
+    const candidate = String(value || "").trim();
+    if (!candidate) return "";
+    if (candidate.startsWith("/")) return candidate;
+    if (/^https?:\/\//i.test(candidate)) return candidate;
+    return "";
   }
 
   async function onLogin(event) {
