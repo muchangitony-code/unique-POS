@@ -172,7 +172,8 @@ async function applyMigrationFile(client, filePath, fileName) {
     for (const statement of statements) {
       const target = getStatementTarget(statement);
       if (await objectAlreadyExists(client, target)) {
-        console.log(`[migrations] Skipping existing ${target.kind} ${target.name} in ${fileName}`);
+        const targetName = target.kind === "constraint" ? target.constraintName : target.name;
+        console.log(`[migrations] Skipping existing ${target.kind} ${targetName} in ${fileName}`);
         continue;
       }
 
