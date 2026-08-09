@@ -80,7 +80,26 @@
       reportsRange: defaultDateRange(),
       selectedProducts: {},
       productImport: { job: null, headers: [], mapping: {}, preview: [], total: 0 },
-      productImportFile: null
+      productImportFile: null,
+      posCheckout: {
+        basket: [],
+        customer_id: null,
+        customer: null,
+        discount_amount: 0,
+        notes: "",
+        payment_method: "cash",
+        amount_paid: 0,
+        filter_category: null,
+        filter_brand: null,
+        search_query: "",
+        products: [],
+        categories: [],
+        brands: [],
+        customers: [],
+        heldSales: [],
+        lastSaleId: null,
+        view: "checkout"
+      }
     }
   };
 
@@ -1179,28 +1198,49 @@
   }
 
   async function loadSales() {
-    const results = await Promise.all([
+    var checkout = state.ui.posCheckout;
+    var [salesResult, catResult, brandResult, custResult, quotesResult, invResult] = await Promise.all([
       apiJson("/api/pos/sales?limit=25"),
-      apiJson("/api/products?limit=100"),
-      apiJson("/api/customers?limit=100"),
+      apiJson("/api/categories"),
+      apiJson("/api/brands"),
+      apiJson("/api/customers?limit=200"),
       apiJson("/api/quotations?limit=25"),
       apiJson("/api/invoices?limit=25")
     ]);
+    checkout.categories = normalizeList(catResult);
+    checkout.brands = normalizeList(brandResult);
+    checkout.customers = normalizeList(custResult);
+    if (!checkout.products.length) {
+      var prodResult = await apiJson("/api/products?limit=30");
+      checkout.products = normalizeList(prodResult);
+    }
     state.moduleData.sales = {
-      sales: normalizeList(results[0]),
-      products: normalizeList(results[1]),
-      customers: normalizeList(results[2]),
-      quotations: normalizeList(results[3]),
-      invoices: normalizeList(results[4])
+      sales: normalizeList(salesResult),
+      products: checkout.products,
+      customers: normalizeList(custResult),
+      quotations: normalizeList(quotesResult),
+      invoices: normalizeList(invResult)
     };
   }
 
   function renderSales() {
-    const body = moduleBody("sales");
-    const data = state.moduleData.sales || {};
-    const composer = state.ui.salesComposer;
+    var body = moduleBody("sales");
+    var checkout = state.ui.posCheckout;
+    if (checkout.view === "history") {
+      renderSalesHistoryView(body);
+      return;
+    }
+    renderPosCheckout(body, checkout);
+  }
+
+  function renderSalesHistoryView(body) {
+    var data = state.moduleData.sales || {};
+    var composer = state.ui.salesComposer;
     body.innerHTML = [
       renderFlash("sales"),
+      '<div class="pos-view-toggle">' +
+        '<button type="button" class="secondary small" id="posBackToCheckoutBtn">← Back to Checkout</button>' +
+      '</div>',
       '<section class="card"><div class="section-head"><h3>Document composer</h3></div>' +
         '<form id="salesComposerForm" class="form-grid two">' +
           '<label><span>Document type</span><select name="document_type" id="salesDocumentType">' + optionTags([{"id":"sale","name":"POS sale"},{"id":"quotation","name":"Quotation"},{"id":"invoice","name":"Invoice"}], composer.type, false, "id", "name") + '</select></label>' +
@@ -1221,78 +1261,50 @@
       renderSalesTab(data)
     ].join("");
 
+    bindClick("posBackToCheckoutBtn", function () {
+      state.ui.posCheckout.view = "checkout";
+      renderSales();
+    });
     bindForm("salesComposerForm", handleSalesComposer);
     bindClick("salesAddRowBtn", function () {
       state.ui.salesComposer.rows += 1;
-      renderSales();
+      renderSalesHistoryView(body);
     });
-    const documentType = document.getElementById("salesDocumentType");
+    var documentType = document.getElementById("salesDocumentType");
     if (documentType) {
       documentType.addEventListener("change", function () {
         state.ui.salesComposer.type = documentType.value;
-        renderSales();
+        renderSalesHistoryView(body);
       });
     }
     bindRowActions(body, {
       ".js-sales-tab": function (event) {
         state.ui.salesTab = event.currentTarget.dataset.tab;
-        renderSales();
+        renderSalesHistoryView(body);
       },
-      ".js-delete-quotation": function (event) {
-        deleteQuotation(event.currentTarget.dataset.id);
-      },
-      ".js-convert-quotation": function (event) {
-        convertQuotation(event.currentTarget.dataset.id);
-      },
-      ".js-send-quotation": function (event) {
-        updateQuotation(event.currentTarget.dataset.id, { status: "sent" });
-      },
-      ".js-pay-invoice": function (event) {
-        payInvoice(event.currentTarget.dataset.id);
-      },
-      ".js-update-invoice-status": function (event) {
-        updateInvoiceStatus(event.currentTarget.dataset.id);
-      },
-      ".js-print-quotation": function (event) {
-        openDocumentPrint("quotation", event.currentTarget.dataset.id, "a4");
-      },
-      ".js-pdf-quotation": function (event) {
-        openDocumentPdf("quotation", event.currentTarget.dataset.id);
-      },
-      ".js-email-quotation": function (event) {
-        emailDocument("quotation", event.currentTarget.dataset.id);
-      },
-      ".js-whatsapp-quotation": function (event) {
-        shareDocumentWhatsapp("quotation", event.currentTarget.dataset.id);
-      },
-      ".js-print-invoice": function (event) {
-        openDocumentPrint("invoice", event.currentTarget.dataset.id, "a4");
-      },
+      ".js-delete-quotation": function (event) { deleteQuotation(event.currentTarget.dataset.id); },
+      ".js-convert-quotation": function (event) { convertQuotation(event.currentTarget.dataset.id); },
+      ".js-send-quotation": function (event) { updateQuotation(event.currentTarget.dataset.id, { status: "sent" }); },
+      ".js-pay-invoice": function (event) { payInvoice(event.currentTarget.dataset.id); },
+      ".js-update-invoice-status": function (event) { updateInvoiceStatus(event.currentTarget.dataset.id); },
+      ".js-print-quotation": function (event) { openDocumentPrint("quotation", event.currentTarget.dataset.id, "a4"); },
+      ".js-pdf-quotation": function (event) { openDocumentPdf("quotation", event.currentTarget.dataset.id); },
+      ".js-email-quotation": function (event) { emailDocument("quotation", event.currentTarget.dataset.id); },
+      ".js-whatsapp-quotation": function (event) { shareDocumentWhatsapp("quotation", event.currentTarget.dataset.id); },
+      ".js-print-invoice": function (event) { openDocumentPrint("invoice", event.currentTarget.dataset.id, "a4"); },
       ".js-print-receipt": function (event) {
-        const paper = window.prompt("Paper size: 58mm, 80mm or a4", "80mm");
+        var paper = window.prompt("Paper size: 58mm, 80mm or a4", "80mm");
         openDocumentPrint("receipt", event.currentTarget.dataset.id, paper || "80mm");
       },
-      ".js-pdf-invoice": function (event) {
-        openDocumentPdf("invoice", event.currentTarget.dataset.id);
-      },
-      ".js-pdf-receipt": function (event) {
-        openDocumentPdf("receipt", event.currentTarget.dataset.id);
-      },
-      ".js-email-invoice": function (event) {
-        emailDocument("invoice", event.currentTarget.dataset.id);
-      },
-      ".js-email-receipt": function (event) {
-        emailDocument("receipt", event.currentTarget.dataset.id);
-      },
-      ".js-whatsapp-invoice": function (event) {
-        shareDocumentWhatsapp("invoice", event.currentTarget.dataset.id);
-      },
-      ".js-whatsapp-receipt": function (event) {
-        shareDocumentWhatsapp("receipt", event.currentTarget.dataset.id);
-      },
+      ".js-pdf-invoice": function (event) { openDocumentPdf("invoice", event.currentTarget.dataset.id); },
+      ".js-pdf-receipt": function (event) { openDocumentPdf("receipt", event.currentTarget.dataset.id); },
+      ".js-email-invoice": function (event) { emailDocument("invoice", event.currentTarget.dataset.id); },
+      ".js-email-receipt": function (event) { emailDocument("receipt", event.currentTarget.dataset.id); },
+      ".js-whatsapp-invoice": function (event) { shareDocumentWhatsapp("invoice", event.currentTarget.dataset.id); },
+      ".js-whatsapp-receipt": function (event) { shareDocumentWhatsapp("receipt", event.currentTarget.dataset.id); },
       ".js-remove-sales-row": function () {
         state.ui.salesComposer.rows = Math.max(1, state.ui.salesComposer.rows - 1);
-        renderSales();
+        renderSalesHistoryView(body);
       }
     });
   }
@@ -1355,6 +1367,569 @@
         ])
       ];
     }), "No POS sales yet.");
+  }
+
+  // =============================================
+  // POS CHECKOUT — modern two-panel checkout UI
+  // =============================================
+
+  var posSearchTimer = null;
+  var posFlashTimer = null;
+
+  function renderPosCheckout(body, checkout) {
+    var categories = checkout.categories || [];
+    var brands = checkout.brands || [];
+    var customers = checkout.customers || [];
+
+    var catChips = '<button type="button" class="pos-chip' + (!checkout.filter_category ? ' active' : '') + ' js-pos-cat" data-cat="">All</button>' +
+      categories.map(function (c) {
+        return '<button type="button" class="pos-chip' + (String(checkout.filter_category) === String(c.id) ? ' active' : '') + ' js-pos-cat" data-cat="' + escapeAttr(String(c.id)) + '">' + escapeHtml(c.name) + '</button>';
+      }).join('');
+
+    var brandChips = '<button type="button" class="pos-chip' + (!checkout.filter_brand ? ' active' : '') + ' js-pos-brand" data-brand="">All Brands</button>' +
+      brands.slice(0, 15).map(function (b) {
+        return '<button type="button" class="pos-chip' + (String(checkout.filter_brand) === String(b.id) ? ' active' : '') + ' js-pos-brand" data-brand="' + escapeAttr(String(b.id)) + '">' + escapeHtml(b.name) + '</button>';
+      }).join('');
+
+    var customerOptions = '<option value="">👤 Walk-in Customer</option>' +
+      customers.map(function (c) {
+        return '<option value="' + escapeAttr(String(c.id)) + '"' + (String(checkout.customer_id) === String(c.id) ? ' selected' : '') + '>' + escapeHtml(c.name) + (c.company ? ' (' + escapeHtml(c.company) + ')' : '') + '</option>';
+      }).join('');
+
+    var paymentLabels = { cash: '💵 Cash', mpesa: '📱 M-Pesa', card: '💳 Card', bank_transfer: '🏦 Bank', credit: '🧾 Credit', split: '⚡ Mixed' };
+    var paymentBtns = ['cash', 'mpesa', 'card', 'bank_transfer', 'credit', 'split'].map(function (m) {
+      return '<button type="button" class="pos-pay-btn js-pos-payment' + (checkout.payment_method === m ? ' active' : '') + '" data-method="' + escapeAttr(m) + '">' + escapeHtml(paymentLabels[m] || m) + '</button>';
+    }).join('');
+
+    body.innerHTML = [
+      '<div class="pos-checkout" id="posCheckoutRoot">',
+        '<div class="pos-checkout-topbar">',
+          '<span class="pos-checkout-title">🧾 Point of Sale</span>',
+          '<div class="pos-topbar-actions">',
+            '<button type="button" class="secondary small" id="posViewHistoryBtn">📋 History / Invoices</button>',
+          '</div>',
+        '</div>',
+        '<div class="pos-flash-msg hidden" id="posCheckoutFlash"></div>',
+        '<div class="pos-checkout-layout">',
+
+          // LEFT — products panel
+          '<div class="pos-products-panel">',
+            '<div class="pos-search-wrap">',
+              '<input type="text" id="posSearchInput" class="pos-search-input" placeholder="🔍 Search name, SKU or scan barcode + Enter…" autocomplete="off" value="' + escapeAttr(checkout.search_query || '') + '" />',
+            '</div>',
+            '<div class="pos-filter-bar" id="posCategoryBar">' + catChips + '</div>',
+            '<div class="pos-filter-bar pos-brand-bar" id="posBrandBar">' + brandChips + '</div>',
+            '<div class="pos-product-grid" id="posProductGrid"></div>',
+            '<div class="pos-grid-footer" id="posGridFooter"></div>',
+          '</div>',
+
+          // RIGHT — basket panel
+          '<div class="pos-basket-panel" id="posBasketPanel">',
+            '<select id="posCustomerSelect" class="pos-customer-select">' + customerOptions + '</select>',
+            '<div class="pos-basket-scroll">',
+              '<div class="pos-basket-items" id="posBasketItems"></div>',
+              '<div class="pos-basket-empty' + (checkout.basket.length ? ' hidden' : '') + '" id="posBasketEmpty">Add products to start a sale.</div>',
+            '</div>',
+            '<div class="pos-basket-totals" id="posTotalsSection">',
+              '<div class="pos-total-row"><span>Subtotal</span><span id="posTotalSubtotal">—</span></div>',
+              '<div class="pos-total-row pos-total-discount">',
+                '<span>Discount <input type="number" id="posDiscountInput" class="pos-inline-num" min="0" step="0.01" value="' + escapeAttr(String(checkout.discount_amount || 0)) + '" /></span>',
+                '<span id="posTotalDiscount">—</span>',
+              '</div>',
+              '<div class="pos-total-row"><span>VAT</span><span id="posTotalVat">—</span></div>',
+              '<div class="pos-total-row pos-total-grand"><span>GRAND TOTAL</span><span id="posTotalGrand">—</span></div>',
+            '</div>',
+            '<div class="pos-payment-methods">' + paymentBtns + '</div>',
+            '<div class="pos-pay-row">',
+              '<div class="pos-pay-field">',
+                '<label class="pos-pay-label" for="posAmountPaid">Amount Paid</label>',
+                '<input type="number" id="posAmountPaid" class="pos-amount-input" min="0" step="0.01" value="' + escapeAttr(String(checkout.amount_paid || 0)) + '" />',
+              '</div>',
+              '<div class="pos-balance-box">',
+                '<span class="pos-balance-label">Balance</span>',
+                '<span class="pos-balance-val" id="posBalanceDue">—</span>',
+              '</div>',
+            '</div>',
+            '<input type="text" id="posNotesInput" class="pos-notes-input" placeholder="📝 Notes…" value="' + escapeAttr(checkout.notes || '') + '" />',
+            '<div class="pos-basket-actions">',
+              '<button type="button" class="secondary small" id="posHoldBtn" title="Hold sale">⏸ Hold</button>',
+              '<button type="button" class="secondary small" id="posRecallBtn" title="Recall held sale">📂 Recall' + (checkout.heldSales.length ? ' (' + checkout.heldSales.length + ')' : '') + '</button>',
+              '<button type="button" class="danger-link small" id="posClearBasketBtn" title="Clear basket">🗑 Clear</button>',
+              '<button type="button" class="secondary small" id="posApplyDiscountBtn">% Disc</button>',
+            '</div>',
+            '<button type="button" class="pos-complete-btn" id="posCompleteSaleBtn">✓ COMPLETE SALE</button>',
+            '<div class="pos-after-actions hidden" id="posAfterActions">',
+              '<button type="button" class="secondary small" id="posPrintReceiptBtn">🖨 Print</button>',
+              '<button type="button" class="secondary small" id="posEmailReceiptBtn">✉ Email</button>',
+              '<button type="button" class="secondary small" id="posWhatsappBtn">💬 WhatsApp</button>',
+              '<button type="button" class="secondary small" id="posGenerateInvoiceBtn">📄 Invoice</button>',
+            '</div>',
+            '<input type="hidden" id="posLastSaleId" value="" />',
+          '</div>',
+        '</div>',
+      '</div>'
+    ].join('');
+
+    posRenderProductGrid();
+    posRenderBasket();
+    bindCheckoutEvents(body, checkout);
+  }
+
+  function bindCheckoutEvents(body, checkout) {
+    bindClick("posViewHistoryBtn", function () {
+      state.ui.posCheckout.view = "history";
+      renderSales();
+    });
+
+    var searchInput = document.getElementById("posSearchInput");
+    if (searchInput) {
+      searchInput.addEventListener("input", function () {
+        var query = searchInput.value.trim();
+        clearTimeout(posSearchTimer);
+        posSearchTimer = setTimeout(function () {
+          posLoadProducts(query, checkout.filter_category, checkout.filter_brand);
+        }, 280);
+      });
+      searchInput.addEventListener("keydown", function (event) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          clearTimeout(posSearchTimer);
+          Promise.resolve(posHandleBarcodeOrSearch(searchInput.value.trim())).catch(handleActionError);
+        }
+      });
+      searchInput.focus();
+    }
+
+    body.querySelectorAll(".js-pos-cat").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var catId = btn.dataset.cat ? parseInt(btn.dataset.cat, 10) : null;
+        checkout.filter_category = catId;
+        body.querySelectorAll(".js-pos-cat").forEach(function (b) { b.classList.remove("active"); });
+        btn.classList.add("active");
+        var q = (document.getElementById("posSearchInput") || {}).value || "";
+        posLoadProducts(q, catId, checkout.filter_brand);
+      });
+    });
+
+    body.querySelectorAll(".js-pos-brand").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var brandId = btn.dataset.brand ? parseInt(btn.dataset.brand, 10) : null;
+        checkout.filter_brand = brandId;
+        body.querySelectorAll(".js-pos-brand").forEach(function (b) { b.classList.remove("active"); });
+        btn.classList.add("active");
+        var q = (document.getElementById("posSearchInput") || {}).value || "";
+        posLoadProducts(q, checkout.filter_category, brandId);
+      });
+    });
+
+    var grid = document.getElementById("posProductGrid");
+    if (grid) {
+      grid.addEventListener("click", function (event) {
+        var addBtn = event.target.closest(".js-pos-add");
+        if (addBtn) {
+          var idx = parseInt(addBtn.dataset.productIdx, 10);
+          var prod = checkout.products[idx];
+          if (prod) posAddToBasket(prod);
+          return;
+        }
+        var card = event.target.closest(".js-pos-card");
+        if (card && (event.target.classList.contains("pos-product-thumb") || event.target.classList.contains("pos-no-image"))) {
+          var idx2 = parseInt(card.dataset.productIdx, 10);
+          var prod2 = checkout.products[idx2];
+          if (prod2) posAddToBasket(prod2);
+        }
+      });
+      grid.addEventListener("dblclick", function (event) {
+        var card = event.target.closest(".js-pos-card");
+        if (card) {
+          var idx = parseInt(card.dataset.productIdx, 10);
+          var prod = checkout.products[idx];
+          if (prod) posAddToBasket(prod);
+        }
+      });
+    }
+
+    var basketItems = document.getElementById("posBasketItems");
+    if (basketItems) {
+      basketItems.addEventListener("click", function (event) {
+        var qtyBtn = event.target.closest(".js-pos-qty");
+        if (qtyBtn) {
+          var lineIdx = parseInt(qtyBtn.dataset.line, 10);
+          if (qtyBtn.dataset.action === "inc") posUpdateQty(lineIdx, 1);
+          else if (qtyBtn.dataset.action === "dec") posUpdateQty(lineIdx, -1);
+          return;
+        }
+        var removeBtn = event.target.closest(".js-pos-remove");
+        if (removeBtn) posRemoveItem(parseInt(removeBtn.dataset.line, 10));
+      });
+    }
+
+    var discountEl = document.getElementById("posDiscountInput");
+    if (discountEl) {
+      discountEl.addEventListener("input", function () {
+        checkout.discount_amount = Number(discountEl.value) || 0;
+        posRenderBasket();
+      });
+    }
+
+    var amtPaidEl = document.getElementById("posAmountPaid");
+    if (amtPaidEl) {
+      amtPaidEl.addEventListener("input", function () {
+        checkout.amount_paid = Number(amtPaidEl.value) || 0;
+        posRenderBasket();
+      });
+    }
+
+    var notesEl = document.getElementById("posNotesInput");
+    if (notesEl) {
+      notesEl.addEventListener("input", function () { checkout.notes = notesEl.value; });
+    }
+
+    var customerEl = document.getElementById("posCustomerSelect");
+    if (customerEl) {
+      customerEl.addEventListener("change", function () {
+        checkout.customer_id = customerEl.value ? parseInt(customerEl.value, 10) : null;
+        checkout.customer = checkout.customers.find(function (c) { return String(c.id) === customerEl.value; }) || null;
+      });
+    }
+
+    body.querySelectorAll(".js-pos-payment").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        checkout.payment_method = btn.dataset.method;
+        body.querySelectorAll(".js-pos-payment").forEach(function (b) { b.classList.remove("active"); });
+        btn.classList.add("active");
+      });
+    });
+
+    bindClick("posHoldBtn", posHoldSale);
+    bindClick("posRecallBtn", posRecallSale);
+    bindClick("posClearBasketBtn", posClearBasket);
+    bindClick("posCompleteSaleBtn", function () {
+      Promise.resolve(posCompleteSale()).catch(handleActionError);
+    });
+    bindClick("posApplyDiscountBtn", function () {
+      var co = state.ui.posCheckout;
+      var amt = window.prompt("Enter discount amount:", String(co.discount_amount || 0));
+      if (amt === null) return;
+      var num = Number(amt);
+      if (!Number.isFinite(num) || num < 0) { posFlashMsg("Invalid discount amount.", "error"); return; }
+      co.discount_amount = num;
+      var de = document.getElementById("posDiscountInput");
+      if (de) de.value = String(num);
+      posRenderBasket();
+    });
+    bindClick("posPrintReceiptBtn", function () {
+      var saleId = (document.getElementById("posLastSaleId") || {}).value;
+      if (!saleId) return;
+      var paper = window.prompt("Paper size: 58mm, 80mm or a4", "80mm");
+      openDocumentPrint("receipt", saleId, paper || "80mm");
+    });
+    bindClick("posEmailReceiptBtn", function () {
+      var saleId = (document.getElementById("posLastSaleId") || {}).value;
+      if (saleId) Promise.resolve(emailDocument("receipt", saleId)).catch(handleActionError);
+    });
+    bindClick("posWhatsappBtn", function () {
+      var saleId = (document.getElementById("posLastSaleId") || {}).value;
+      if (saleId) shareDocumentWhatsapp("receipt", saleId);
+    });
+    bindClick("posGenerateInvoiceBtn", function () {
+      Promise.resolve(posGenerateInvoice()).catch(handleActionError);
+    });
+  }
+
+  async function posLoadProducts(query, categoryId, brandId) {
+    var params = new URLSearchParams({ limit: "30" });
+    if (query) params.set("search", query);
+    if (categoryId) params.set("category_id", String(categoryId));
+    if (brandId) params.set("brand_id", String(brandId));
+    try {
+      var result = await apiJson("/api/products?" + params.toString());
+      state.ui.posCheckout.products = normalizeList(result);
+    } catch (_e) {
+      state.ui.posCheckout.products = [];
+    }
+    posRenderProductGrid();
+  }
+
+  async function posHandleBarcodeOrSearch(query) {
+    if (!query) return;
+    var checkout = state.ui.posCheckout;
+    var exact = checkout.products.find(function (p) { return p.barcode && p.barcode.trim() === query.trim(); });
+    if (exact) {
+      posAddToBasket(exact);
+      var si = document.getElementById("posSearchInput");
+      if (si) si.value = "";
+      checkout.search_query = "";
+      return;
+    }
+    var params = new URLSearchParams({ limit: "30", search: query });
+    if (checkout.filter_category) params.set("category_id", String(checkout.filter_category));
+    if (checkout.filter_brand) params.set("brand_id", String(checkout.filter_brand));
+    var result = await apiJson("/api/products?" + params.toString());
+    checkout.products = normalizeList(result);
+    var barcodeMatch = checkout.products.find(function (p) { return p.barcode && p.barcode.trim() === query.trim(); });
+    if (barcodeMatch) {
+      posAddToBasket(barcodeMatch);
+      var si2 = document.getElementById("posSearchInput");
+      if (si2) si2.value = "";
+      checkout.search_query = "";
+      await posLoadProducts("", checkout.filter_category, checkout.filter_brand);
+    } else {
+      checkout.search_query = query;
+      posRenderProductGrid();
+    }
+  }
+
+  function posRenderProductGrid() {
+    var grid = document.getElementById("posProductGrid");
+    var footer = document.getElementById("posGridFooter");
+    if (!grid) return;
+    var products = state.ui.posCheckout.products;
+    if (!products || !products.length) {
+      grid.innerHTML = '<div class="pos-grid-empty">No products found. Try a different search or barcode.</div>';
+      if (footer) footer.textContent = "";
+      return;
+    }
+    grid.innerHTML = products.map(function (p, idx) {
+      var thumb = p.image_url
+        ? '<img class="pos-product-thumb" src="' + escapeAttr(p.image_url) + '" alt="" loading="lazy" />'
+        : '<div class="pos-product-thumb pos-no-image">📦</div>';
+      var stock = Number(p.current_stock || 0);
+      var minStock = Number(p.min_stock || 0);
+      var stockClass = stock <= 0 ? "pos-stock-out" : stock <= minStock ? "pos-stock-low" : "pos-stock-ok";
+      var stockText = stock <= 0 ? "✗ Out of stock" : "✓ " + stock + (p.unit ? " " + p.unit : "");
+      return [
+        '<div class="pos-product-card js-pos-card" data-product-idx="' + idx + '" title="' + escapeAttr(p.product_name) + '">',
+          thumb,
+          '<div class="pos-product-body">',
+            '<div class="pos-product-name">' + escapeHtml(p.product_name) + '</div>',
+            '<div class="pos-product-sku">' + escapeHtml(firstText(p.product_code, '—')) + (p.barcode ? ' · ' + escapeHtml(p.barcode) : '') + '</div>',
+            '<div class="pos-product-price">' + money(p.selling_price) + '</div>',
+            '<div class="pos-product-stock ' + stockClass + '">' + escapeHtml(stockText) + '</div>',
+          '</div>',
+          '<button type="button" class="pos-add-btn js-pos-add" data-product-idx="' + idx + '" title="Add to basket">+</button>',
+        '</div>'
+      ].join('');
+    }).join('');
+    if (footer) footer.textContent = "Showing " + products.length + " product" + (products.length !== 1 ? "s" : "");
+  }
+
+  function posCalcTotals(checkout) {
+    var subtotal = 0;
+    var vat = 0;
+    (checkout.basket || []).forEach(function (line) {
+      var lineAmt = (Number(line.unit_price) - Number(line.line_discount || 0)) * Number(line.quantity);
+      subtotal += lineAmt;
+      vat += lineAmt * (Number(line.vat_rate || 0) / 100);
+    });
+    var discount = Number(checkout.discount_amount || 0);
+    var total = Math.max(0, subtotal - discount + vat);
+    return { subtotal: subtotal, discount: discount, vat: vat, total: total };
+  }
+
+  function posRenderBasket() {
+    var itemsEl = document.getElementById("posBasketItems");
+    var emptyEl = document.getElementById("posBasketEmpty");
+    if (!itemsEl) return;
+    var checkout = state.ui.posCheckout;
+    var basket = checkout.basket || [];
+
+    if (emptyEl) {
+      if (basket.length) emptyEl.classList.add("hidden");
+      else emptyEl.classList.remove("hidden");
+    }
+
+    itemsEl.innerHTML = basket.map(function (line, idx) {
+      var lineTotal = (Number(line.unit_price) - Number(line.line_discount || 0)) * Number(line.quantity);
+      return [
+        '<div class="pos-basket-row">',
+          '<div class="pos-basket-row-main">',
+            '<div class="pos-basket-row-name">' + escapeHtml(line.product_name) + '</div>',
+            '<div class="pos-basket-row-price">' + money(line.unit_price) + (line.line_discount ? ' −' + money(line.line_discount) : '') + '</div>',
+          '</div>',
+          '<div class="pos-basket-row-controls">',
+            '<button type="button" class="pos-qty-btn js-pos-qty" data-line="' + idx + '" data-action="dec">−</button>',
+            '<span class="pos-qty-val">' + escapeHtml(String(line.quantity)) + '</span>',
+            '<button type="button" class="pos-qty-btn js-pos-qty" data-line="' + idx + '" data-action="inc">+</button>',
+          '</div>',
+          '<div class="pos-basket-row-total">' + money(lineTotal) + '</div>',
+          '<button type="button" class="pos-remove-btn js-pos-remove" data-line="' + idx + '" title="Remove">✕</button>',
+        '</div>'
+      ].join('');
+    }).join('');
+
+    var t = posCalcTotals(checkout);
+    var amtPaid = Number(checkout.amount_paid || 0);
+    var balance = amtPaid - t.total;
+
+    function setTxt(id, txt) { var el = document.getElementById(id); if (el) el.textContent = txt; }
+    setTxt("posTotalSubtotal", money(t.subtotal));
+    setTxt("posTotalDiscount", "−" + money(t.discount));
+    setTxt("posTotalVat", money(t.vat));
+    setTxt("posTotalGrand", money(t.total));
+    var balEl = document.getElementById("posBalanceDue");
+    if (balEl) {
+      balEl.textContent = money(balance);
+      balEl.className = "pos-balance-val " + (balance < 0 ? "pos-balance-negative" : balance === 0 ? "pos-balance-zero" : "pos-balance-positive");
+    }
+  }
+
+  function posAddToBasket(product) {
+    var checkout = state.ui.posCheckout;
+    var existing = checkout.basket.find(function (line) { return line.product_id === product.id; });
+    if (existing) {
+      existing.quantity += 1;
+    } else {
+      checkout.basket.push({
+        product_id: product.id,
+        product_name: product.product_name,
+        unit_price: Number(product.selling_price),
+        quantity: 1,
+        line_discount: 0,
+        vat_rate: Number(product.vat_rate || 0),
+        stock: Number(product.current_stock || 0)
+      });
+    }
+    posRenderBasket();
+    posFlashMsg(escapeHtml(product.product_name) + " added.");
+  }
+
+  function posUpdateQty(lineIdx, delta) {
+    var checkout = state.ui.posCheckout;
+    var line = checkout.basket[lineIdx];
+    if (!line) return;
+    line.quantity = Math.max(1, line.quantity + delta);
+    posRenderBasket();
+  }
+
+  function posRemoveItem(lineIdx) {
+    state.ui.posCheckout.basket.splice(lineIdx, 1);
+    posRenderBasket();
+  }
+
+  function posClearBasket() {
+    var co = state.ui.posCheckout;
+    if (co.basket.length && !window.confirm("Clear all items from basket?")) return;
+    co.basket = [];
+    co.discount_amount = 0;
+    co.notes = "";
+    co.amount_paid = 0;
+    co.customer_id = null;
+    co.customer = null;
+    posRenderBasket();
+    var els = ["posCustomerSelect", "posDiscountInput", "posAmountPaid"];
+    els.forEach(function (id) { var el = document.getElementById(id); if (el) el.value = id === "posCustomerSelect" ? "" : "0"; });
+    var ne = document.getElementById("posNotesInput");
+    if (ne) ne.value = "";
+    var aa = document.getElementById("posAfterActions");
+    if (aa) aa.classList.add("hidden");
+  }
+
+  function posHoldSale() {
+    var co = state.ui.posCheckout;
+    if (!co.basket.length) { posFlashMsg("Basket is empty.", "error"); return; }
+    co.heldSales.push({ basket: co.basket.slice(), customer_id: co.customer_id, customer: co.customer, discount_amount: co.discount_amount, notes: co.notes });
+    co.basket = [];
+    co.customer_id = null;
+    co.customer = null;
+    co.discount_amount = 0;
+    co.notes = "";
+    co.amount_paid = 0;
+    posRenderBasket();
+    posFlashMsg("Sale held. " + co.heldSales.length + " held sale(s).");
+    var btn = document.getElementById("posRecallBtn");
+    if (btn) btn.textContent = "📂 Recall (" + co.heldSales.length + ")";
+  }
+
+  function posRecallSale() {
+    var co = state.ui.posCheckout;
+    if (!co.heldSales.length) { posFlashMsg("No held sales.", "error"); return; }
+    if (co.basket.length && !window.confirm("Replace current basket with held sale?")) return;
+    var held = co.heldSales.pop();
+    co.basket = held.basket;
+    co.customer_id = held.customer_id;
+    co.customer = held.customer;
+    co.discount_amount = held.discount_amount;
+    co.notes = held.notes;
+    co.amount_paid = 0;
+    posRenderBasket();
+    var ce = document.getElementById("posCustomerSelect");
+    if (ce && co.customer_id) ce.value = String(co.customer_id);
+    var de = document.getElementById("posDiscountInput");
+    if (de) de.value = String(co.discount_amount);
+    var ne = document.getElementById("posNotesInput");
+    if (ne) ne.value = co.notes || "";
+    posFlashMsg("Sale recalled.");
+    var btn = document.getElementById("posRecallBtn");
+    if (btn) btn.textContent = co.heldSales.length ? "📂 Recall (" + co.heldSales.length + ")" : "📂 Recall";
+  }
+
+  async function posCompleteSale() {
+    var co = state.ui.posCheckout;
+    if (!co.basket.length) { posFlashMsg("Add items first.", "error"); return; }
+    var totals = posCalcTotals(co);
+    var amtPaid = Number(co.amount_paid || 0);
+    if (amtPaid <= 0 && co.payment_method !== "credit") { posFlashMsg("Enter the amount paid.", "error"); return; }
+    var payload = {
+      items: co.basket.map(function (line) {
+        return { product_id: line.product_id, quantity: line.quantity, unit_price: line.unit_price, discount: line.line_discount || 0, vat_rate: line.vat_rate || 0 };
+      }),
+      discount_amount: co.discount_amount || 0,
+      amount_paid: amtPaid,
+      payment_method: co.payment_method || "cash",
+      notes: co.notes || ""
+    };
+    if (co.customer_id) payload.customer_id = co.customer_id;
+    var btn = document.getElementById("posCompleteSaleBtn");
+    if (btn) { btn.disabled = true; btn.textContent = "Processing…"; }
+    try {
+      var result = await apiJson("/api/pos/sale", { method: "POST", body: JSON.stringify(payload) });
+      co.lastSaleId = result && result.id ? String(result.id) : null;
+      var lsi = document.getElementById("posLastSaleId");
+      if (lsi) lsi.value = co.lastSaleId || "";
+      co.basket = [];
+      co.customer_id = null;
+      co.customer = null;
+      co.discount_amount = 0;
+      co.notes = "";
+      co.amount_paid = 0;
+      posRenderBasket();
+      var aa = document.getElementById("posAfterActions");
+      if (aa) aa.classList.remove("hidden");
+      posFlashMsg("Sale complete! Receipt #" + (result && result.receipt_number ? result.receipt_number : ""));
+      await loadDashboard();
+      renderDashboardStats();
+    } catch (e) {
+      posFlashMsg(e && e.message ? e.message : "Sale failed.", "error");
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "✓ COMPLETE SALE"; }
+    }
+  }
+
+  async function posGenerateInvoice() {
+    var co = state.ui.posCheckout;
+    if (!co.basket.length) { posFlashMsg("Add items first.", "error"); return; }
+    var payload = {
+      items: co.basket.map(function (line) {
+        return { product_id: line.product_id, quantity: line.quantity, unit_price: line.unit_price, discount: line.line_discount || 0, vat_rate: line.vat_rate || 0 };
+      }),
+      discount_amount: co.discount_amount || 0,
+      notes: co.notes || "",
+      status: "sent"
+    };
+    if (co.customer_id) payload.customer_id = co.customer_id;
+    await apiJson("/api/invoices", { method: "POST", body: JSON.stringify(payload) });
+    posFlashMsg("Invoice generated.");
+  }
+
+  function posFlashMsg(msg, type) {
+    var el = document.getElementById("posCheckoutFlash");
+    if (!el) return;
+    el.textContent = msg;
+    el.className = "pos-flash-msg " + (type === "error" ? "pos-flash-error" : "pos-flash-success");
+    el.classList.remove("hidden");
+    clearTimeout(posFlashTimer);
+    posFlashTimer = setTimeout(function () { el.classList.add("hidden"); }, 3500);
   }
 
   async function handleSalesComposer(event) {
