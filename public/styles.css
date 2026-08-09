@@ -145,6 +145,20 @@ label span {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand-logo {
+  object-fit: contain;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.brand-logo--sm {
+  width: 28px;
+  height: 28px;
 }
 
 .hero h1 {
@@ -228,6 +242,9 @@ label span {
   color: #bae6fd;
   border-bottom: 1px solid var(--nav-border);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .pos-nav__list {

@@ -44,6 +44,7 @@
     dashboardStats: null,
     moduleData: {},
     flashes: Object.fromEntries(FLASH_KEYS.map(function (key) { return [key, null]; })),
+    branding: {},
     ui: {
       productEdit: null,
       categoryEdit: null,
@@ -64,6 +65,7 @@
     shell: document.getElementById("loginShell"),
     apiStatus: document.getElementById("apiStatus"),
     brandName: document.getElementById("brandName"),
+    brandLogo: document.getElementById("loginBrandLogo"),
     brandSummary: document.getElementById("brandSummary"),
     form: document.getElementById("loginForm"),
     email: document.getElementById("email"),
@@ -77,6 +79,7 @@
   const pos = {
     shell: document.getElementById("posShell"),
     navBrand: document.getElementById("posNavBrand"),
+    navLogo: document.getElementById("posNavLogo"),
     navUser: document.getElementById("posNavUser"),
     moduleTitle: document.getElementById("posModuleTitle"),
     moduleSubtitle: document.getElementById("posHeaderSubtitle"),
@@ -156,13 +159,28 @@
   async function loadBranding() {
     try {
       const branding = await apiJson("/api/settings/branding", { skipAuthRedirect: true, raw: false, noAuth: true });
+      state.branding = branding || {};
       const brandName = firstText(branding.business_name, branding.businessName, "UniquePOS");
       const summary = firstText(branding.tagline, branding.description, "Sign in to access your POS workspace, or confirm the service is online before finishing setup.");
+      const logoUrl = firstText(branding.logo_url, branding.logoUrl, "");
       document.title = brandName;
       login.brandName.textContent = brandName;
       login.brandSummary.textContent = summary;
       pos.navBrand.textContent = brandName;
+      applyBrandLogo(login.brandLogo, logoUrl);
+      applyBrandLogo(pos.navLogo, logoUrl);
     } catch (_error) {}
+  }
+
+  function applyBrandLogo(node, logoUrl) {
+    if (!node) return;
+    if (!logoUrl) {
+      node.classList.add("hidden");
+      node.removeAttribute("src");
+      return;
+    }
+    node.src = logoUrl;
+    node.classList.remove("hidden");
   }
 
   async function onLogin(event) {
@@ -756,6 +774,43 @@
       ".js-update-invoice-status": function (event) {
         updateInvoiceStatus(event.currentTarget.dataset.id);
       },
+      ".js-print-quotation": function (event) {
+        openDocumentPrint("quotation", event.currentTarget.dataset.id, "a4");
+      },
+      ".js-pdf-quotation": function (event) {
+        openDocumentPdf("quotation", event.currentTarget.dataset.id);
+      },
+      ".js-email-quotation": function (event) {
+        emailDocument("quotation", event.currentTarget.dataset.id);
+      },
+      ".js-whatsapp-quotation": function (event) {
+        shareDocumentWhatsapp("quotation", event.currentTarget.dataset.id);
+      },
+      ".js-print-invoice": function (event) {
+        openDocumentPrint("invoice", event.currentTarget.dataset.id, "a4");
+      },
+      ".js-print-receipt": function (event) {
+        const paper = window.prompt("Paper size: 58mm, 80mm or a4", "80mm");
+        openDocumentPrint("receipt", event.currentTarget.dataset.id, paper || "80mm");
+      },
+      ".js-pdf-invoice": function (event) {
+        openDocumentPdf("invoice", event.currentTarget.dataset.id);
+      },
+      ".js-pdf-receipt": function (event) {
+        openDocumentPdf("receipt", event.currentTarget.dataset.id);
+      },
+      ".js-email-invoice": function (event) {
+        emailDocument("invoice", event.currentTarget.dataset.id);
+      },
+      ".js-email-receipt": function (event) {
+        emailDocument("receipt", event.currentTarget.dataset.id);
+      },
+      ".js-whatsapp-invoice": function (event) {
+        shareDocumentWhatsapp("invoice", event.currentTarget.dataset.id);
+      },
+      ".js-whatsapp-receipt": function (event) {
+        shareDocumentWhatsapp("receipt", event.currentTarget.dataset.id);
+      },
       ".js-remove-sales-row": function () {
         state.ui.salesComposer.rows = Math.max(1, state.ui.salesComposer.rows - 1);
         renderSales();
@@ -775,6 +830,10 @@
           actionButtons([
             item.status === "draft" ? { cls: "js-send-quotation", label: "Send", id: item.id } : null,
             item.status !== "converted" ? { cls: "js-convert-quotation", label: "Convert", id: item.id } : null,
+            { cls: "js-print-quotation", label: "Print", id: item.id, tone: "secondary" },
+            { cls: "js-pdf-quotation", label: "PDF", id: item.id, tone: "secondary" },
+            { cls: "js-whatsapp-quotation", label: "WhatsApp", id: item.id, tone: "secondary" },
+            { cls: "js-email-quotation", label: "Email", id: item.id, tone: "secondary" },
             { cls: "js-delete-quotation", label: "Delete", id: item.id, tone: "danger" }
           ])
         ];
@@ -791,12 +850,16 @@
           renderBadge(firstText(item.status, "sent")),
           actionButtons([
             Number(item.balance_due || 0) > 0 ? { cls: "js-pay-invoice", label: "Pay", id: item.id } : null,
-            { cls: "js-update-invoice-status", label: "Status", id: item.id, tone: "secondary" }
+            { cls: "js-update-invoice-status", label: "Status", id: item.id, tone: "secondary" },
+            { cls: "js-print-invoice", label: "Print", id: item.id, tone: "secondary" },
+            { cls: "js-pdf-invoice", label: "PDF", id: item.id, tone: "secondary" },
+            { cls: "js-whatsapp-invoice", label: "WhatsApp", id: item.id, tone: "secondary" },
+            { cls: "js-email-invoice", label: "Email", id: item.id, tone: "secondary" }
           ])
         ];
       }), "No invoices yet.");
     }
-    return renderTableCard("POS sales", ["Receipt", "Customer", "Items", "Total", "Paid", "Method", "Date"], (data.sales || []).map(function (item) {
+    return renderTableCard("POS sales", ["Receipt", "Customer", "Items", "Total", "Paid", "Method", "Date", "Actions"], (data.sales || []).map(function (item) {
       return [
         escapeHtml(firstText(item.receipt_number, "—")),
         escapeHtml(firstText(item.customer_name, "Walk-in")),
@@ -804,7 +867,13 @@
         money(item.total),
         money(item.amount_paid),
         escapeHtml(firstText(item.payment_method, "—")),
-        escapeHtml(formatDateTime(item.created_at))
+        escapeHtml(formatDateTime(item.created_at)),
+        actionButtons([
+          { cls: "js-print-receipt", label: "Print", id: item.id, tone: "secondary" },
+          { cls: "js-pdf-receipt", label: "PDF", id: item.id, tone: "secondary" },
+          { cls: "js-whatsapp-receipt", label: "WhatsApp", id: item.id, tone: "secondary" },
+          { cls: "js-email-receipt", label: "Email", id: item.id, tone: "secondary" }
+        ])
       ];
     }), "No POS sales yet.");
   }
@@ -938,6 +1007,10 @@
           money(item.credit_limit),
           actionButtons([
             { cls: "js-edit-item", label: "Edit", id: item.id },
+            { cls: "js-print-customer-statement", label: "Statement", id: item.id, tone: "secondary" },
+            { cls: "js-pdf-customer-statement", label: "PDF", id: item.id, tone: "secondary" },
+            { cls: "js-whatsapp-customer-statement", label: "WhatsApp", id: item.id, tone: "secondary" },
+            { cls: "js-email-customer-statement", label: "Email", id: item.id, tone: "secondary" },
             { cls: "js-delete-item", label: "Delete", id: item.id, tone: "danger" }
           ])
         ];
@@ -1010,6 +1083,10 @@
           money(item.balance),
           actionButtons([
             { cls: "js-edit-item", label: "Edit", id: item.id },
+            { cls: "js-print-supplier-statement", label: "Statement", id: item.id, tone: "secondary" },
+            { cls: "js-pdf-supplier-statement", label: "PDF", id: item.id, tone: "secondary" },
+            { cls: "js-whatsapp-supplier-statement", label: "WhatsApp", id: item.id, tone: "secondary" },
+            { cls: "js-email-supplier-statement", label: "Email", id: item.id, tone: "secondary" },
             { cls: "js-delete-item", label: "Delete", id: item.id, tone: "danger" }
           ])
         ];
@@ -1404,11 +1481,16 @@
         textField("Business name", "business_name", s.business_name, true) +
         textField("Business email", "business_email", s.business_email, false, "", "email") +
         textField("Business phone", "business_phone", s.business_phone) +
+        textField("KRA PIN / Tax PIN", "tax_number", s.tax_number) +
         textField("Currency", "currency", s.currency) +
         textField("Currency symbol", "currency_symbol", s.currency_symbol) +
         numberField("VAT rate", "vat_rate", s.vat_rate, "0.01") +
         textField("Country", "country", s.country) +
         textField("Timezone", "timezone", s.timezone) +
+        textField("SMTP host", "smtp_host", s.smtp_host) +
+        numberField("SMTP port", "smtp_port", s.smtp_port || 587, "1") +
+        textField("SMTP user", "smtp_user", s.smtp_user) +
+        textField("SMTP from", "smtp_from", s.smtp_from, false, "", "email") +
         textAreaField("Address", "business_address", s.business_address) +
         textAreaField("Receipt footer", "receipt_footer", s.receipt_footer) +
         '<div class="form-actions span-2"><button type="submit">Save business settings</button></div>' +
@@ -1417,10 +1499,14 @@
         textField("Tagline", "tagline", s.tagline) +
         textField("Website", "website", s.website) +
         textField("Logo URL", "logo_url", s.logo_url) +
+        textField("Alternative phone", "business_phone2", s.business_phone2) +
         textField("Primary color", "primary_color", s.primary_color, false, "#0f172a") +
         textField("Secondary color", "secondary_color", s.secondary_color, false, "#38bdf8") +
-        textField("Tax number", "tax_number", s.tax_number) +
         textField("VAT number", "vat_number", s.vat_number) +
+        numberField("Quotation validity days", "quotation_validity_days", s.quotation_validity_days || 30, "1") +
+        textAreaField("Invoice terms & conditions", "invoice_payment_terms", s.invoice_payment_terms) +
+        textAreaField("Warranty text", "warranty_text", s.warranty_text) +
+        textAreaField("Return policy", "return_policy", s.return_policy) +
         textAreaField("Document footer", "document_footer", s.document_footer) +
         '<div class="form-actions span-2"><button type="submit">Save branding</button></div>' +
       '</form></section>',
@@ -1430,10 +1516,13 @@
         textField("M-Pesa paybill", "mpesa_paybill", s.mpesa_paybill) +
         textField("M-Pesa account", "mpesa_paybill_account", s.mpesa_paybill_account) +
         textField("Till number", "mpesa_till", s.mpesa_till) +
+        textField("Buy goods till", "mpesa_buy_goods", s.mpesa_buy_goods) +
         textField("Bank name", "bank_name", s.bank_name) +
         textField("Bank branch", "bank_branch", s.bank_branch) +
         textField("Account name", "bank_account_name", s.bank_account_name) +
         textField("Account number", "bank_account_number", s.bank_account_number) +
+        textField("Bank SWIFT code", "bank_swift_code", s.bank_swift_code) +
+        textAreaField("Other payment methods", "other_payment_methods", s.other_payment_methods) +
         textAreaField("Payment instructions", "payment_instructions", s.payment_instructions) +
         '<div class="form-actions span-2"><button type="submit">Save payment settings</button></div>' +
       '</form></section>',
@@ -1569,6 +1658,30 @@
       },
       ".js-delete-item": function (event) {
         config.onDelete(event.currentTarget.dataset.id);
+      },
+      ".js-print-customer-statement": function (event) {
+        openDocumentPrint("customer_statement", event.currentTarget.dataset.id, "a4");
+      },
+      ".js-pdf-customer-statement": function (event) {
+        openDocumentPdf("customer_statement", event.currentTarget.dataset.id);
+      },
+      ".js-email-customer-statement": function (event) {
+        emailDocument("customer_statement", event.currentTarget.dataset.id);
+      },
+      ".js-whatsapp-customer-statement": function (event) {
+        shareDocumentWhatsapp("customer_statement", event.currentTarget.dataset.id);
+      },
+      ".js-print-supplier-statement": function (event) {
+        openDocumentPrint("supplier_statement", event.currentTarget.dataset.id, "a4");
+      },
+      ".js-pdf-supplier-statement": function (event) {
+        openDocumentPdf("supplier_statement", event.currentTarget.dataset.id);
+      },
+      ".js-email-supplier-statement": function (event) {
+        emailDocument("supplier_statement", event.currentTarget.dataset.id);
+      },
+      ".js-whatsapp-supplier-statement": function (event) {
+        shareDocumentWhatsapp("supplier_statement", event.currentTarget.dataset.id);
       }
     });
   }
@@ -2016,6 +2129,61 @@
 
   function labelForDocument(type) {
     return type === 'sale' ? 'sale' : type === 'quotation' ? 'quotation' : 'invoice';
+  }
+
+  function documentTypeFromUi(type) {
+    if (type === "sale") return "receipt";
+    return type;
+  }
+
+  function openDocumentPdf(type, id) {
+    window.open("/api/documents/" + encodeURIComponent(documentTypeFromUi(type)) + "/" + encodeURIComponent(id) + "/pdf", "_blank", "noopener");
+  }
+
+  async function emailDocument(type, id) {
+    const data = findByIdForDoc(type, id);
+    const to = window.prompt("Recipient email", firstText(data && data.email, data && data.customer_email, data && data.supplier_email, ""));
+    if (!to) return;
+    await apiJson("/api/documents/" + encodeURIComponent(documentTypeFromUi(type)) + "/" + encodeURIComponent(id) + "/email", {
+      method: "POST",
+      body: JSON.stringify({ to: to })
+    });
+    setFlash(state.activeModule, "success", "Document email sent.");
+    renderByModule(state.activeModule);
+  }
+
+  function shareDocumentWhatsapp(type, id) {
+    const data = findByIdForDoc(type, id);
+    const fallbackPhone = firstText(data && data.customer_phone, data && data.supplier_phone, "");
+    const inputPhone = window.prompt("WhatsApp number (e.g. 2547XXXXXXXX)", fallbackPhone);
+    if (!inputPhone) return;
+    const phone = String(inputPhone).replace(/[^\d]/g, "");
+    const docType = documentTypeFromUi(type);
+    const pdfUrl = window.location.origin + "/api/documents/" + encodeURIComponent(docType) + "/" + encodeURIComponent(id) + "/pdf";
+    const message = encodeURIComponent("Hello, please find your " + docType.replace(/_/g, " ") + ": " + pdfUrl);
+    window.open("https://wa.me/" + phone + "?text=" + message, "_blank", "noopener");
+  }
+
+  async function openDocumentPrint(type, id, paper) {
+    const docType = documentTypeFromUi(type);
+    const payload = await apiJson("/api/documents/" + encodeURIComponent(docType) + "/" + encodeURIComponent(id) + "/preview?paper=" + encodeURIComponent(String(paper || "a4")));
+    const win = window.open("", "_blank", "noopener");
+    if (!win) {
+      throw new Error("Allow popups to preview and print documents.");
+    }
+    win.document.open();
+    win.document.write(payload.html || "");
+    win.document.close();
+  }
+
+  function findByIdForDoc(type, id) {
+    const salesData = state.moduleData.sales || {};
+    if (type === "quotation") return findById(salesData.quotations, id);
+    if (type === "invoice") return findById(salesData.invoices, id);
+    if (type === "sale" || type === "receipt") return findById(salesData.sales, id);
+    if (type === "customer_statement") return findById((state.moduleData.customers || {}).customers, id);
+    if (type === "supplier_statement") return findById((state.moduleData.suppliers || {}).suppliers, id);
+    return null;
   }
 
   function defaultDateRange() {
