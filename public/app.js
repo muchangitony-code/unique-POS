@@ -181,8 +181,8 @@
   function resolveBrandAssetUrl(value) {
     const raw = String(value || "").trim();
     if (!raw) return "";
-    if (raw.indexOf("/objects/") === 0) return "/api/storage/objects/" + raw.slice("/objects/".length);
-    if (/^https?:\/\//i.test(raw) || raw.charAt(0) === "/" || /^data:image\//i.test(raw)) return raw;
+    if (raw.indexOf("/objects/") === 0) return "/api/storage/objects/" + encodeURIComponent(raw.slice("/objects/".length)).replace(/%2F/g, "/");
+    if (raw.indexOf("/api/storage/objects/") === 0) return raw;
     return "";
   }
 
