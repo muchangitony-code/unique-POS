@@ -155,14 +155,25 @@ async function applyMigrationFile(client, filePath, fileName) {
   await client.query("BEGIN");
   try {
     for (const statement of statements) {
-      try {
-        await client.query(statement);
-      } catch (err) {
-        if (shouldIgnoreIdempotentError(err, statement)) {
-          console.warn(`[migrations] Skipping existing object in ${fileName} (${err.code ?? "n/a"})`);
-          continue;
+      if (isIdempotentCreateOrAlterStatement(statement)) {
+        // Use a savepoint so a duplicate-object error does not abort the
+        // surrounding transaction (PostgreSQL aborts the whole transaction on
+        // any unhandled error, making subsequent queries fail too).
+        await client.query("SAVEPOINT uniquepos_stmt");
+        try {
+          await client.query(statement);
+          await client.query("RELEASE SAVEPOINT uniquepos_stmt");
+        } catch (err) {
+          await client.query("ROLLBACK TO SAVEPOINT uniquepos_stmt");
+          await client.query("RELEASE SAVEPOINT uniquepos_stmt");
+          if (shouldIgnoreIdempotentError(err, statement)) {
+            console.warn(`[migrations] Skipping existing object in ${fileName} (${err.code ?? "n/a"})`);
+            continue;
+          }
+          throw err;
         }
-        throw err;
+      } else {
+        await client.query(statement);
       }
     }
 
