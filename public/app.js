@@ -173,6 +173,7 @@
   }
 
   function showLoginRoute() {
+    setMessage("", "");
     if (!isLoginPath()) {
       window.history.replaceState({}, "", "/");
     }
@@ -304,7 +305,7 @@
   async function syncSessionFromToken() {
     if (!state.token) {
       state.user = null;
-      clearStoredUsers();
+      clearStoredUser();
       return;
     }
     try {
@@ -344,10 +345,10 @@
     state.token = "";
     state.user = null;
     localStorage.removeItem(TOKEN_STORAGE_KEY);
-    clearStoredUsers();
+    clearStoredUser();
   }
 
-  function clearStoredUsers() {
+  function clearStoredUser() {
     localStorage.removeItem(USER_STORAGE_KEY);
   }
 
