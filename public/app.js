@@ -1533,18 +1533,11 @@
           return;
         }
         var card = event.target.closest(".js-pos-card");
-        if (card && (event.target.classList.contains("pos-product-thumb") || event.target.classList.contains("pos-no-image"))) {
+        var card = event.target.closest(".js-pos-card");
+        if (card) {
           var idx2 = parseInt(card.dataset.productIdx, 10);
           var prod2 = checkout.products[idx2];
           if (prod2) posAddToBasket(prod2);
-        }
-      });
-      grid.addEventListener("dblclick", function (event) {
-        var card = event.target.closest(".js-pos-card");
-        if (card) {
-          var idx = parseInt(card.dataset.productIdx, 10);
-          var prod = checkout.products[idx];
-          if (prod) posAddToBasket(prod);
         }
       });
     }
@@ -1693,7 +1686,7 @@
     grid.innerHTML = products.map(function (p, idx) {
       var thumb = p.image_url
         ? '<img class="pos-product-thumb" src="' + escapeAttr(p.image_url) + '" alt="" loading="lazy" />'
-        : '<div class="pos-product-thumb pos-no-image">📦</div>';
+        : '<div class="pos-no-image">📦</div>';
       var stock = Number(p.current_stock || 0);
       var minStock = Number(p.min_stock || 0);
       var stockClass = stock <= 0 ? "pos-stock-out" : stock <= minStock ? "pos-stock-low" : "pos-stock-ok";
@@ -1791,7 +1784,7 @@
       });
     }
     posRenderBasket();
-    posFlashMsg(escapeHtml(product.product_name) + " added.");
+    posFlashMsg(product.product_name + " added.");
   }
 
   function posUpdateQty(lineIdx, delta) {
@@ -1870,6 +1863,10 @@
     var totals = posCalcTotals(co);
     var amtPaid = Number(co.amount_paid || 0);
     if (amtPaid <= 0 && co.payment_method !== "credit") { posFlashMsg("Enter the amount paid.", "error"); return; }
+    if (co.payment_method !== "credit" && co.payment_method !== "split" && amtPaid < totals.total) {
+      posFlashMsg("Amount paid (" + money(amtPaid) + ") is less than the total (" + money(totals.total) + ").", "error");
+      return;
+    }
     var payload = {
       items: co.basket.map(function (line) {
         return { product_id: line.product_id, quantity: line.quantity, unit_price: line.unit_price, discount: line.line_discount || 0, vat_rate: line.vat_rate || 0 };
@@ -1909,6 +1906,7 @@
   async function posGenerateInvoice() {
     var co = state.ui.posCheckout;
     if (!co.basket.length) { posFlashMsg("Add items first.", "error"); return; }
+    if (!co.customer_id && !window.confirm("No customer selected. Generate a walk-in invoice?")) return;
     var payload = {
       items: co.basket.map(function (line) {
         return { product_id: line.product_id, quantity: line.quantity, unit_price: line.unit_price, discount: line.line_discount || 0, vat_rate: line.vat_rate || 0 };
