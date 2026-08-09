@@ -1,6 +1,9 @@
 (function () {
   const TOKEN_STORAGE_KEY = "uniquepos.token";
   const USER_STORAGE_KEY = "uniquepos.user";
+  const DEFAULT_COMPANY_LOGO_URL = "/assets/unique-solar-kenya-logo.svg";
+  const BRAND_LOGO_UPLOAD_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"];
+  const BRAND_LOGO_UPLOAD_LIMIT = 2 * 1024 * 1024;
   const MODULE_TITLES = {
     dashboard: "Dashboard",
     products: "Products",
@@ -162,7 +165,7 @@
       state.branding = branding || {};
       const brandName = firstText(branding.business_name, branding.businessName, "UniquePOS");
       const summary = firstText(branding.tagline, branding.description, "Sign in to access your POS workspace, or confirm the service is online before finishing setup.");
-      const logoUrl = firstText(branding.logo_url, branding.logoUrl, "");
+      const logoUrl = resolveBrandLogoUrl(branding);
       document.title = brandName;
       login.brandName.textContent = brandName;
       login.brandSummary.textContent = summary;
@@ -181,6 +184,10 @@
     }
     node.src = logoUrl;
     node.classList.remove("hidden");
+  }
+
+  function resolveBrandLogoUrl(branding) {
+    return firstText(branding && branding.logo_url, branding && branding.logoUrl, DEFAULT_COMPANY_LOGO_URL);
   }
 
   async function onLogin(event) {
@@ -344,6 +351,7 @@
       }), "No top-selling products yet."),
       '</div>',
       '<div class="module-grid two">',
+      renderBrandingCard(),
       renderTableCard("Daily sales trend", ["Date", "Sales", "Transactions"], (data.salesChart || []).map(function (item) {
         return [escapeHtml(formatDate(item.date)), money(item.total || 0), escapeHtml(String(Number(item.count || 0)))];
       }), "No chart data available."),
@@ -355,6 +363,23 @@
         '</dl></section>',
       '</div>'
     ].join("");
+    applyBrandLogo(document.getElementById("dashboardBrandLogo"), resolveBrandLogoUrl(state.branding));
+  }
+
+  function renderBrandingCard() {
+    const branding = state.branding || {};
+    const logoUrl = resolveBrandLogoUrl(branding);
+    return '<section class="card brand-card"><div class="section-head"><h3>Business branding</h3></div><div class="brand-panel">' +
+      '<img id="dashboardBrandLogo" class="brand-logo brand-logo--lg hidden" alt="Company logo" />' +
+      '<div class="brand-panel__details">' +
+        '<h4>' + escapeHtml(firstText(branding.business_name, branding.businessName, "UniquePOS")) + '</h4>' +
+        '<p class="muted">' + escapeHtml(firstText(branding.tagline, "Official business branding applied across documents and exports.")) + '</p>' +
+        '<div class="brand-panel__meta">' +
+          '<span>' + escapeHtml(firstText(branding.business_phone, branding.businessPhone, "—")) + '</span>' +
+          '<span>' + escapeHtml(firstText(branding.business_email, branding.businessEmail, "—")) + '</span>' +
+        '</div>' +
+      '</div>' +
+    '</div></section>';
   }
 
   async function loadProducts() {
@@ -1516,7 +1541,15 @@
       '<section class="card"><div class="section-head"><h3>Branding</h3></div><form id="brandingForm" class="form-grid two">' +
         textField("Tagline", "tagline", s.tagline) +
         textField("Website", "website", s.website) +
-        textField("Logo URL", "logo_url", s.logo_url) +
+        textField("Logo URL", "logo_url", resolveBrandLogoUrl(s)) +
+        '<label class="span-2"><span>Company logo upload</span><div class="logo-upload-card">' +
+          '<img id="brandingLogoPreview" class="brand-logo brand-logo--xl hidden" alt="Company logo preview" />' +
+          '<div class="logo-upload-card__body">' +
+            '<input id="brandingLogoFile" type="file" accept="' + BRAND_LOGO_UPLOAD_TYPES.join(",") + '" />' +
+            '<div class="form-actions"><button type="button" class="secondary" id="brandingLogoUploadBtn">Upload logo</button><button type="button" class="secondary" id="brandingLogoRestoreBtn">Restore default</button></div>' +
+            '<p class="muted small">Uploaded logos are stored permanently and become the active company logo everywhere immediately after upload.</p>' +
+          '</div>' +
+        '</div></label>' +
         textField("Alternative phone", "business_phone2", s.business_phone2) +
         textField("Primary color", "primary_color", s.primary_color, false, "#0f172a") +
         textField("Secondary color", "secondary_color", s.secondary_color, false, "#38bdf8") +
@@ -1562,6 +1595,9 @@
       await saveSettingsGroup(event, "/api/settings/branding", "Branding settings saved.");
       await loadBranding();
     });
+    bindClick("brandingLogoUploadBtn", uploadBrandingLogo);
+    bindClick("brandingLogoRestoreBtn", restoreDefaultBrandingLogo);
+    bindBrandLogoPreview();
     bindForm("paymentSettingsForm", function (event) { saveSettingsGroup(event, "/api/settings/payment", "Payment settings saved."); });
     bindForm("securitySettingsForm", function (event) { saveSettingsGroup(event, "/api/settings/security", "Security settings saved."); });
   }
@@ -1575,6 +1611,56 @@
     });
     setFlash("settings", "success", successMessage);
     await loadSettings();
+    renderSettings();
+  }
+
+  function bindBrandLogoPreview() {
+    const logoField = document.querySelector('#brandingForm [name="logo_url"]');
+    const preview = document.getElementById("brandingLogoPreview");
+    if (!logoField || !preview) return;
+    const sync = function () {
+      applyBrandLogo(preview, firstText(logoField.value, DEFAULT_COMPANY_LOGO_URL));
+    };
+    logoField.addEventListener("input", sync);
+    sync();
+  }
+
+  async function uploadBrandingLogo() {
+    const input = document.getElementById("brandingLogoFile");
+    if (!input || !input.files || !input.files[0]) throw new Error("Choose a logo file to upload.");
+    const file = input.files[0];
+    if (!BRAND_LOGO_UPLOAD_TYPES.includes(file.type)) throw new Error("Choose a PNG, JPG, WEBP, GIF, or SVG logo.");
+    if (file.size > BRAND_LOGO_UPLOAD_LIMIT) throw new Error("Logo files must be 2MB or smaller.");
+    const uploadTicket = await apiJson("/api/storage/uploads/request-url", {
+      method: "POST",
+      body: JSON.stringify({ name: file.name, size: file.size, content_type: file.type })
+    });
+    const uploadResponse = await authorizedFetch(uploadTicket.upload_url, {
+      method: "PUT",
+      headers: { "Content-Type": file.type },
+      body: await file.arrayBuffer()
+    });
+    if (!uploadResponse.ok) {
+      const errorBody = await uploadResponse.json().catch(function () { return {}; });
+      throw new Error(firstText(errorBody.error, "Logo upload failed."));
+    }
+    await apiJson("/api/settings/branding", {
+      method: "PATCH",
+      body: JSON.stringify({ logo_url: uploadTicket.object_path })
+    });
+    setFlash("settings", "success", "Logo uploaded and applied everywhere.");
+    input.value = "";
+    await Promise.all([loadSettings(), loadBranding()]);
+    renderSettings();
+  }
+
+  async function restoreDefaultBrandingLogo() {
+    await apiJson("/api/settings/branding", {
+      method: "PATCH",
+      body: JSON.stringify({ logo_url: DEFAULT_COMPANY_LOGO_URL })
+    });
+    setFlash("settings", "success", "Default company logo restored.");
+    await Promise.all([loadSettings(), loadBranding()]);
     renderSettings();
   }
 
