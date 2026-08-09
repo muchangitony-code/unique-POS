@@ -2,36 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-
-function stripPsqlMetaAndCopy(sqlText) {
-  const lines = sqlText.split(/\r?\n/);
-  const out = [];
-  let skippingCopy = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    if (skippingCopy) {
-      if (trimmed === "\\.") {
-        skippingCopy = false;
-      }
-      continue;
-    }
-
-    if (/^COPY\s+.+\s+FROM\s+stdin;$/i.test(trimmed)) {
-      skippingCopy = true;
-      continue;
-    }
-
-    if (trimmed.startsWith("\\")) {
-      continue;
-    }
-
-    out.push(line);
-  }
-
-  return out.join("\n");
-}
+const { stripPsqlMetaAndCopy } = require("./sql-utils.cjs");
 
 function filterMigrationStatements(sqlText) {
   const lines = sqlText.split(/\r?\n/);

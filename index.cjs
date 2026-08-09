@@ -75182,6 +75182,7 @@ if (process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT === "1") {
 var abortOnMigrationFailure = process.env.UNIQUEPOS_ABORT_ON_MIGRATION_FAILURE === "1";
 var startupMigrationRetryMsRaw = Number(process.env.UNIQUEPOS_STARTUP_MIGRATION_RETRY_MS || "30000");
 var startupMigrationRetryMs = Number.isFinite(startupMigrationRetryMsRaw) && startupMigrationRetryMsRaw > 0 ? startupMigrationRetryMsRaw : 3e4;
+var disableInternalStartupMigrations = process.env.UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS === "1";
 function startMigrationsWithRetry() {
   runStartupMigrations().then(() => {
     logger.info("Startup migrations complete");
@@ -75195,7 +75196,11 @@ function startMigrationsWithRetry() {
     setTimeout(startMigrationsWithRetry, startupMigrationRetryMs);
   });
 }
-startMigrationsWithRetry();
+if (disableInternalStartupMigrations) {
+  logger.info("Skipping bundled startup migrations; external bootstrap already completed.");
+} else {
+  startMigrationsWithRetry();
+}
 /*! Bundled license information:
 
 depd/index.js:

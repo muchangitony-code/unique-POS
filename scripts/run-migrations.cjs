@@ -4,6 +4,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { Pool } = require("pg");
 const { parseAndValidateDatabaseUrl, railwaySsl } = require("./database-url.cjs");
+const { splitSqlStatements } = require("./sql-utils.cjs");
+
+const MIGRATION_LOCK_ID = 2141383001;
 
 async function ensureMigrationsTable(client) {
   await client.query(`
@@ -20,100 +23,6 @@ function listMigrationFiles(migrationsDir) {
   return fs.readdirSync(migrationsDir)
     .filter((name) => name.endsWith(".sql"))
     .sort();
-}
-
-function splitSqlStatements(sqlText) {
-  const statements = [];
-  let current = "";
-  let inSingle = false;
-  let inDouble = false;
-  let inLineComment = false;
-  let inBlockComment = false;
-  let dollarTag = null;
-
-  for (let i = 0; i < sqlText.length; i += 1) {
-    const ch = sqlText[i];
-    const next = sqlText[i + 1];
-
-    if (inLineComment) {
-      current += ch;
-      if (ch === "\n") inLineComment = false;
-      continue;
-    }
-
-    if (inBlockComment) {
-      current += ch;
-      if (ch === "*" && next === "/") {
-        current += next;
-        i += 1;
-        inBlockComment = false;
-      }
-      continue;
-    }
-
-    if (dollarTag) {
-      current += ch;
-      if (ch === "$") {
-        const maybeTag = sqlText.slice(i - dollarTag.length + 1, i + 1);
-        if (maybeTag === dollarTag) {
-          dollarTag = null;
-        }
-      }
-      continue;
-    }
-
-    if (!inSingle && !inDouble) {
-      if (ch === "-" && next === "-") {
-        current += ch + next;
-        i += 1;
-        inLineComment = true;
-        continue;
-      }
-      if (ch === "/" && next === "*") {
-        current += ch + next;
-        i += 1;
-        inBlockComment = true;
-        continue;
-      }
-      if (ch === "$") {
-        const rest = sqlText.slice(i);
-        const match = rest.match(/^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/);
-        if (match) {
-          dollarTag = match[0];
-          current += dollarTag;
-          i += dollarTag.length - 1;
-          continue;
-        }
-      }
-    }
-
-    if (ch === "'" && !inDouble) {
-      const escaped = sqlText[i - 1] === "\\";
-      if (!escaped) inSingle = !inSingle;
-      current += ch;
-      continue;
-    }
-
-    if (ch === '"' && !inSingle) {
-      const escaped = sqlText[i - 1] === "\\";
-      if (!escaped) inDouble = !inDouble;
-      current += ch;
-      continue;
-    }
-
-    if (ch === ";" && !inSingle && !inDouble) {
-      const stmt = current.trim();
-      if (stmt) statements.push(stmt);
-      current = "";
-      continue;
-    }
-
-    current += ch;
-  }
-
-  const tail = current.trim();
-  if (tail) statements.push(tail);
-  return statements;
 }
 
 function isTransactionControlStatement(statement) {
@@ -207,6 +116,7 @@ async function applyMigrations(options = {}) {
 
   try {
     await ensureMigrationsTable(client);
+    await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_ID]);
 
     for (const file of files) {
       const { rows } = await client.query("SELECT 1 FROM schema_migrations WHERE name = $1", [file]);
@@ -218,6 +128,11 @@ async function applyMigrations(options = {}) {
 
     return { applied, migrationsDir, totalFiles: files.length };
   } finally {
+    try {
+      await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_ID]);
+    } catch (err) {
+      console.warn("[migrations] Failed to release advisory lock", err);
+    }
     client.release();
     await pool.end();
   }
