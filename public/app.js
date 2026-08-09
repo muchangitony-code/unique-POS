@@ -266,7 +266,14 @@
   }
 
   function renderDashboardStats() {
-    const stats = state.dashboardStats || {};
+    if (!state.dashboardStats) {
+      pos.statTodaySales.textContent   = "—";
+      pos.statMonthlySales.textContent = "—";
+      pos.statGrossProfit.textContent  = "—";
+      pos.statLowStock.textContent     = "—";
+      return;
+    }
+    const stats = state.dashboardStats;
     pos.statTodaySales.textContent   = formatNumber(stats.today_sales);
     pos.statMonthlySales.textContent = formatNumber(stats.monthly_sales);
     pos.statGrossProfit.textContent  = formatNumber(stats.gross_profit);
