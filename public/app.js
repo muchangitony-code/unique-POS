@@ -1,6 +1,6 @@
 (function () {
-  const TOKEN_STORAGE_KEYS = ["uniquepos.token", "uniquepos.session.token"];
-  const USER_STORAGE_KEYS = ["uniquepos.user", "uniquepos.session.user"];
+  const TOKEN_STORAGE_KEYS = ["uniquepos.token"];
+  const USER_STORAGE_KEYS = ["uniquepos.user"];
   const ROLE_DASHBOARD_PATHS = {
     super_admin: "/dashboard",
     administrator: "/dashboard",
@@ -246,7 +246,8 @@
       if (state.token) {
         await authorizedFetch("/api/auth/logout", { method: "POST" });
       }
-    } catch (_error) {
+    } catch (error) {
+      console.warn("[auth] Logout request failed; clearing local session anyway.", error);
     }
     clearSession();
     state.dashboardStats = null;
