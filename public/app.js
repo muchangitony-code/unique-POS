@@ -1,13 +1,24 @@
 (function () {
+  const TOKEN_STORAGE_KEYS = ["uniquepos.token", "uniquepos.session.token", "token"];
+  const USER_STORAGE_KEYS = ["uniquepos.user", "uniquepos.session.user", "user"];
+  const ROLE_DASHBOARD_PATHS = {
+    super_admin: "/dashboard",
+    administrator: "/dashboard",
+    manager: "/dashboard",
+    storekeeper: "/dashboard",
+    sales_cashier: "/pos"
+  };
   const state = {
-    token: localStorage.getItem("uniquepos.token") || "",
-    user: readStoredJson("uniquepos.user")
+    token: readStoredToken(),
+    user: readStoredUser(),
+    dashboardStats: null
   };
 
   const els = {
     apiStatus: document.getElementById("apiStatus"),
     brandName: document.getElementById("brandName"),
     brandSummary: document.getElementById("brandSummary"),
+    loginCard: document.getElementById("loginCard"),
     loginForm: document.getElementById("loginForm"),
     email: document.getElementById("email"),
     password: document.getElementById("password"),
@@ -16,7 +27,9 @@
     submitBtn: document.getElementById("submitBtn"),
     message: document.getElementById("message"),
     accountCard: document.getElementById("accountCard"),
+    dashboardTitle: document.getElementById("dashboardTitle"),
     accountDetails: document.getElementById("accountDetails"),
+    dashboardStats: document.getElementById("dashboardStats"),
     copyTokenBtn: document.getElementById("copyTokenBtn"),
     signOutBtn: document.getElementById("signOutBtn")
   };
@@ -25,8 +38,9 @@
 
   async function boot() {
     bindEvents();
-    renderSession();
     await Promise.all([loadHealth(), loadBranding()]);
+    await syncSessionFromToken();
+    await routeAfterAuthChange({ showExpiredMessage: true });
   }
 
   function bindEvents() {
@@ -110,14 +124,12 @@
         throw new Error("Login succeeded but no session token was returned.");
       }
 
-      state.token = data.token;
       state.user = data.user;
-      localStorage.setItem("uniquepos.token", state.token);
-      localStorage.setItem("uniquepos.user", JSON.stringify(state.user));
+      persistSession(data.token, data.user);
       els.loginForm.reset();
       els.totpWrap.classList.add("hidden");
-      setMessage("success", "Signed in successfully.");
-      renderSession();
+      setMessage("success", "Signed in successfully. Redirecting to dashboard…");
+      await routeAfterAuthChange();
     } catch (error) {
       setMessage("error", error.message || "Unable to sign in.");
     } finally {
@@ -125,19 +137,93 @@
     }
   }
 
-  function renderSession() {
+  async function routeAfterAuthChange(options) {
+    const showExpiredMessage = options && options.showExpiredMessage;
     const user = state.user;
-    if (!state.token || !user) {
-      els.accountCard.classList.add("hidden");
+    const isAuthenticated = Boolean(state.token && user);
+    if (!isAuthenticated) {
+      showLoginRoute();
+      if (showExpiredMessage && readStoredToken()) {
+        setMessage("error", "Your session has expired. Please sign in again.");
+      }
       return;
     }
+    redirectToDashboardForRole(user.role);
+    await loadDashboard();
+    renderSession();
+  }
+
+  function renderSession() {
+    const user = state.user;
+    els.loginCard.classList.add("hidden");
     els.accountCard.classList.remove("hidden");
+    if (els.dashboardTitle) {
+      els.dashboardTitle.textContent = "Dashboard • " + roleLabel(user.role);
+    }
     els.accountDetails.innerHTML = [
       detail("Name", user.name),
       detail("Email", user.email),
       detail("Role", formatValue(user.role)),
       detail("Branch", firstText(user.branch && user.branch.name, user.branch && user.branch.branch_name, user.branch_id, "Not assigned"))
     ].join("");
+    renderDashboardStats();
+  }
+
+  function showLoginRoute() {
+    if (!isLoginPath()) {
+      window.history.replaceState({}, "", "/");
+    }
+    els.loginCard.classList.remove("hidden");
+    els.accountCard.classList.add("hidden");
+    if (els.dashboardStats) {
+      els.dashboardStats.classList.add("hidden");
+    }
+  }
+
+  function redirectToDashboardForRole(role) {
+    const targetPath = getDashboardPathForRole(role);
+    if (window.location.pathname !== targetPath) {
+      window.history.replaceState({}, "", targetPath);
+    }
+  }
+
+  function getDashboardPathForRole(role) {
+    const normalized = String(role || "").toLowerCase();
+    return ROLE_DASHBOARD_PATHS[normalized] || "/dashboard";
+  }
+
+  function isLoginPath() {
+    return window.location.pathname === "/" || window.location.pathname === "/index.html";
+  }
+
+  async function loadDashboard() {
+    try {
+      const res = await authorizedFetch("/api/dashboard/stats");
+      if (!res.ok) {
+        throw new Error("Unable to load dashboard data.");
+      }
+      state.dashboardStats = await res.json();
+    } catch (error) {
+      state.dashboardStats = null;
+      setMessage("error", error.message || "Unable to load dashboard.");
+    }
+  }
+
+  function renderDashboardStats() {
+    if (!els.dashboardStats) return;
+    if (!state.dashboardStats) {
+      els.dashboardStats.classList.add("hidden");
+      els.dashboardStats.innerHTML = "";
+      return;
+    }
+    const stats = state.dashboardStats;
+    els.dashboardStats.innerHTML = [
+      detail("Today Sales", formatNumber(stats.today_sales)),
+      detail("Monthly Sales", formatNumber(stats.monthly_sales)),
+      detail("Gross Profit", formatNumber(stats.gross_profit)),
+      detail("Low Stock Count", formatNumber(stats.low_stock_count))
+    ].join("");
+    els.dashboardStats.classList.remove("hidden");
   }
 
   async function copyToken() {
@@ -150,14 +236,18 @@
     }
   }
 
-  function signOut() {
-    state.token = "";
-    state.user = null;
-    localStorage.removeItem("uniquepos.token");
-    localStorage.removeItem("uniquepos.user");
+  async function signOut() {
+    try {
+      if (state.token) {
+        await authorizedFetch("/api/auth/logout", { method: "POST" });
+      }
+    } catch (_error) {
+    }
+    clearSession();
+    state.dashboardStats = null;
     els.loginForm.reset();
     els.totpWrap.classList.add("hidden");
-    els.accountCard.classList.add("hidden");
+    showLoginRoute();
     setMessage("success", "Signed out.");
   }
 
@@ -193,6 +283,90 @@
       if (typeof value === "number") return String(value);
     }
     return "";
+  }
+
+  function roleLabel(role) {
+    return formatValue(role || "user");
+  }
+
+  function formatNumber(value) {
+    const num = Number(value || 0);
+    if (!Number.isFinite(num)) return "0";
+    return num.toLocaleString();
+  }
+
+  async function syncSessionFromToken() {
+    if (!state.token) {
+      state.user = null;
+      clearStoredUsers();
+      return;
+    }
+    try {
+      const res = await authorizedFetch("/api/auth/me");
+      if (!res.ok) {
+        throw new Error("Unauthorized");
+      }
+      state.user = await res.json();
+      persistSession(state.token, state.user);
+    } catch (_error) {
+      clearSession();
+    }
+  }
+
+  async function authorizedFetch(url, options) {
+    const nextOptions = options || {};
+    const headers = new Headers(nextOptions.headers || {});
+    if (state.token) {
+      headers.set("Authorization", "Bearer " + state.token);
+    }
+    if (nextOptions.body && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+    return fetch(url, Object.assign({}, nextOptions, { headers }));
+  }
+
+  function persistSession(token, user) {
+    state.token = token || "";
+    state.user = user || null;
+    TOKEN_STORAGE_KEYS.forEach(function (key) {
+      if (state.token) localStorage.setItem(key, state.token);
+      else localStorage.removeItem(key);
+    });
+    USER_STORAGE_KEYS.forEach(function (key) {
+      if (state.user) localStorage.setItem(key, JSON.stringify(state.user));
+      else localStorage.removeItem(key);
+    });
+  }
+
+  function clearSession() {
+    state.token = "";
+    state.user = null;
+    TOKEN_STORAGE_KEYS.forEach(function (key) {
+      localStorage.removeItem(key);
+    });
+    clearStoredUsers();
+  }
+
+  function clearStoredUsers() {
+    USER_STORAGE_KEYS.forEach(function (key) {
+      localStorage.removeItem(key);
+    });
+  }
+
+  function readStoredToken() {
+    for (let i = 0; i < TOKEN_STORAGE_KEYS.length; i += 1) {
+      const value = localStorage.getItem(TOKEN_STORAGE_KEYS[i]);
+      if (value) return value;
+    }
+    return "";
+  }
+
+  function readStoredUser() {
+    for (let i = 0; i < USER_STORAGE_KEYS.length; i += 1) {
+      const value = readStoredJson(USER_STORAGE_KEYS[i]);
+      if (value) return value;
+    }
+    return null;
   }
 
   function readStoredJson(key) {
