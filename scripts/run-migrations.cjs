@@ -112,12 +112,13 @@ function getStatementTarget(statement) {
   }
 
   const createTriggerMatch = normalized.match(
-    /^CREATE TRIGGER ([^\s]+) (?:BEFORE|AFTER|INSTEAD OF) .*? ON ([^\s(]+)/i
+    /^CREATE(?: (OR REPLACE))? TRIGGER ([^\s]+) (?:BEFORE|AFTER|INSTEAD OF) .*? ON ([^\s(]+)/i
   );
   if (createTriggerMatch) {
-    const tableIdentifier = parseQualifiedName(createTriggerMatch[2]);
-    const triggerName = createTriggerMatch[1].replace(/^"|"$/g, "");
-    return { kind: "trigger", ...tableIdentifier, triggerName };
+    const tableIdentifier = parseQualifiedName(createTriggerMatch[3]);
+    const triggerName = createTriggerMatch[2].replace(/^"|"$/g, "");
+    const isReplace = Boolean(createTriggerMatch[1]);
+    return { kind: "trigger", ...tableIdentifier, triggerName, isReplace };
   }
 
   const alterConstraintMatch = normalized.match(
