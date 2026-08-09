@@ -1,6 +1,6 @@
 (function () {
-  const TOKEN_STORAGE_KEYS = ["uniquepos.token", "uniquepos.session.token", "token"];
-  const USER_STORAGE_KEYS = ["uniquepos.user", "uniquepos.session.user", "user"];
+  const TOKEN_STORAGE_KEYS = ["uniquepos.token", "uniquepos.session.token"];
+  const USER_STORAGE_KEYS = ["uniquepos.user", "uniquepos.session.user"];
   const ROLE_DASHBOARD_PATHS = {
     super_admin: "/dashboard",
     administrator: "/dashboard",
@@ -38,9 +38,10 @@
 
   async function boot() {
     bindEvents();
+    const hadStoredToken = Boolean(state.token);
     await Promise.all([loadHealth(), loadBranding()]);
     await syncSessionFromToken();
-    await routeAfterAuthChange({ showExpiredMessage: true });
+    await routeAfterAuthChange({ showExpiredMessage: hadStoredToken });
   }
 
   function bindEvents() {
@@ -124,7 +125,6 @@
         throw new Error("Login succeeded but no session token was returned.");
       }
 
-      state.user = data.user;
       persistSession(data.token, data.user);
       els.loginForm.reset();
       els.totpWrap.classList.add("hidden");
@@ -143,12 +143,15 @@
     const isAuthenticated = Boolean(state.token && user);
     if (!isAuthenticated) {
       showLoginRoute();
-      if (showExpiredMessage && readStoredToken()) {
+      if (showExpiredMessage) {
         setMessage("error", "Your session has expired. Please sign in again.");
       }
       return;
     }
-    redirectToDashboardForRole(user.role);
+    const navigating = redirectToDashboardForRole(user.role);
+    if (navigating) {
+      return;
+    }
     await loadDashboard();
     renderSession();
   }
@@ -183,8 +186,10 @@
   function redirectToDashboardForRole(role) {
     const targetPath = getDashboardPathForRole(role);
     if (window.location.pathname !== targetPath) {
-      window.history.replaceState({}, "", targetPath);
+      window.location.assign(targetPath);
+      return true;
     }
+    return false;
   }
 
   function getDashboardPathForRole(role) {
