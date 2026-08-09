@@ -65,6 +65,17 @@ button.danger-link {
   color: #fecaca;
 }
 
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 11px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+}
+
 input,
 select,
 textarea {
@@ -159,6 +170,18 @@ label span {
 .brand-logo--sm {
   width: 28px;
   height: 28px;
+}
+
+.brand-logo--lg {
+  width: 96px;
+  height: 96px;
+  padding: 10px;
+}
+
+.brand-logo--xl {
+  width: 120px;
+  height: 120px;
+  padding: 12px;
 }
 
 .hero h1 {
@@ -382,6 +405,11 @@ label span {
   padding: 10px 12px;
 }
 
+.muted.small {
+  font-size: 0.9rem;
+  margin: 0;
+}
+
 .section-head {
   display: flex;
   justify-content: space-between;
@@ -529,6 +557,37 @@ label span {
   font-weight: 700;
 }
 
+.brand-card,
+.logo-upload-card {
+  overflow: hidden;
+}
+
+.brand-panel,
+.logo-upload-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.brand-panel__details,
+.logo-upload-card__body {
+  min-width: 0;
+  flex: 1;
+}
+
+.brand-panel__details h4 {
+  margin: 0 0 8px;
+  font-size: 1.2rem;
+}
+
+.brand-panel__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
 .pill-list {
   display: grid;
   gap: 10px;
@@ -556,6 +615,23 @@ label span {
 
 .gap-lg {
   gap: 18px;
+}
+
+.gap-sm {
+  gap: 10px;
+}
+
+.dropzone {
+  padding: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+  color: var(--muted);
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.dropzone--active {
+  border-color: var(--accent);
+  background: rgba(56, 189, 248, 0.08);
 }
 
 .subnav {
@@ -611,6 +687,12 @@ label span {
   .details-grid,
   .form-grid.two {
     grid-template-columns: 1fr;
+  }
+
+  .brand-panel,
+  .logo-upload-card {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .span-2 {

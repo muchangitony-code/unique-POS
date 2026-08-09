@@ -71463,7 +71463,7 @@ function fmt5(s) {
     currency: s.currency,
     currency_symbol: s.currencySymbol,
     vat_rate: Number(s.vatRate),
-    logo_url: s.logoUrl,
+    logo_url: normalizeLogoUrl(s.logoUrl),
     receipt_footer: s.receiptFooter,
     fiscal_year_start: s.fiscalYearStart,
     country: s.country,
@@ -71526,7 +71526,7 @@ function fmtBranding(s) {
     business_phone2: s.businessPhone2 ?? null,
     business_email: s.businessEmail ?? null,
     website: s.website ?? null,
-    logo_url: s.logoUrl ?? null,
+    logo_url: normalizeLogoUrl(s.logoUrl),
     primary_color: s.primaryColor ?? null,
     secondary_color: s.secondaryColor ?? null,
     tax_number: s.taxNumber ?? null,
@@ -71554,21 +71554,11 @@ var PAYMENT_FIELDS = [
   ["payment_instructions", "paymentInstructions"]
 ];
 router16.get("/settings", async (_req, res) => {
-  const [settings] = await db.select().from(businessSettingsTable);
-  if (!settings) {
-    const [s] = await db.insert(businessSettingsTable).values({}).returning();
-    res.json(fmt5(s));
-    return;
-  }
+  const settings = await ensureBusinessSettingsWithDefaults();
   res.json(fmt5(settings));
 });
 router16.get("/settings/branding", async (_req, res) => {
-  const [settings] = await db.select().from(businessSettingsTable);
-  if (!settings) {
-    const [s] = await db.insert(businessSettingsTable).values({}).returning();
-    res.json(fmtBranding(s));
-    return;
-  }
+  const settings = await ensureBusinessSettingsWithDefaults();
   res.json(fmtBranding(settings));
 });
 router16.patch("/settings", requireRole("administrator"), async (req, res) => {
@@ -71779,6 +71769,7 @@ var settings_default = router16;
 var import_express17 = __toESM(require_express2(), 1);
 var import_pdfkit = __toESM(require("pdfkit"), 1);
 var router17 = (0, import_express17.Router)();
+var DEFAULT_COMPANY_LOGO_URL = "/assets/unique-solar-kenya-logo.svg";
 function safeNum(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -71796,11 +71787,20 @@ function paperToPdfSize(paper) {
   if (paper === "80mm") return [226.8, 900];
   return "A4";
 }
-async function getDocSettings() {
+async function ensureBusinessSettingsWithDefaults() {
   const [settings] = await db.select().from(businessSettingsTable);
-  if (settings) return settings;
-  const [created] = await db.insert(businessSettingsTable).values({}).returning();
-  return created;
+  if (!settings) {
+    const [created] = await db.insert(businessSettingsTable).values({ logoUrl: DEFAULT_COMPANY_LOGO_URL }).returning();
+    return created;
+  }
+  if (!settings.logoUrl) {
+    const [updated] = await db.update(businessSettingsTable).set({ logoUrl: DEFAULT_COMPANY_LOGO_URL }).where(sql`${businessSettingsTable.id} = ${settings.id}`).returning();
+    return updated;
+  }
+  return settings;
+}
+async function getDocSettings() {
+  return await ensureBusinessSettingsWithDefaults();
 }
 async function getBranchName(branchId) {
   if (!branchId) return "Main Branch";
@@ -71815,10 +71815,44 @@ function dateText2(value) {
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString("en-KE", { timeZone: "Africa/Nairobi" });
 }
+function normalizeLogoUrl(logoUrl) {
+  const value = typeof logoUrl === "string" ? logoUrl.trim() : "";
+  return value || DEFAULT_COMPANY_LOGO_URL;
+}
+function absoluteLogoUrl(req, logoUrl) {
+  const resolved = normalizeLogoUrl(logoUrl);
+  if (/^https?:\/\//i.test(resolved)) return resolved;
+  const protocol = req.get("x-forwarded-proto") || req.protocol || "https";
+  return `${protocol}://${req.get("host")}${resolved.startsWith("/") ? "" : "/"}${resolved}`;
+}
+async function loadLogoBuffer(logoUrl) {
+  const resolved = normalizeLogoUrl(logoUrl);
+  if (resolved.startsWith("/objects/")) {
+    try {
+      const file2 = await objectStorageService.getObjectEntityFile(resolved);
+      const [buf] = await file2.download();
+      return buf;
+    } catch {
+      return null;
+    }
+  }
+  if (!resolved.startsWith("/")) return null;
+  const path3 = require("node:path");
+  const fs3 = require("node:fs/promises");
+  const publicRoot = path3.resolve(process.env.SERVE_CLIENT_DIR || path3.join(process.cwd(), "public"));
+  const abs = path3.resolve(publicRoot, `.${resolved}`);
+  if (abs !== publicRoot && !abs.startsWith(`${publicRoot}${path3.sep}`)) return null;
+  try {
+    return await fs3.readFile(abs);
+  } catch {
+    return null;
+  }
+}
 function buildDocumentHtml(opts) {
-  const { settings, documentType, documentNumber, partyName, partyEmail, partyPhone, branchName, rows, totals, notes, generatedAt, paper } = opts;
+  const { settings, documentType, documentNumber, partyName, partyEmail, partyPhone, branchName, rows, totals, notes, generatedAt, paper, logoSrc } = opts;
   const currency = settings.currency || "KES";
-  const logo = settings.logoUrl ? `<img src="${htmlEscape2(settings.logoUrl)}" alt="logo" style="max-height:56px;max-width:160px;object-fit:contain;" />` : "";
+  const logoUrl = logoSrc || normalizeLogoUrl(settings.logoUrl);
+  const logo = logoUrl ? `<img src="${htmlEscape2(logoUrl)}" alt="logo" style="max-height:56px;max-width:160px;object-fit:contain;" />` : "";
   const widthCss = paper === "58mm" ? "58mm" : paper === "80mm" ? "80mm" : "210mm";
   const companyName = htmlEscape2(settings.businessName || "UniquePOS");
   const companyAddress = htmlEscape2(settings.businessAddress || "");
@@ -72020,6 +72054,7 @@ async function resolveDocumentPayload(req, type, id) {
   return null;
 }
 async function renderPdfBuffer(payload, paper) {
+  const logoBuffer = await loadLogoBuffer(payload.settings.logoUrl);
   return await new Promise((resolve4, reject) => {
     const chunks = [];
     const doc = new import_pdfkit.default({ margin: 28, size: paperToPdfSize(paper) });
@@ -72027,11 +72062,22 @@ async function renderPdfBuffer(payload, paper) {
     doc.on("error", reject);
     doc.on("end", () => resolve4(Buffer.concat(chunks)));
     const currency = payload.settings.currency || "KES";
-    doc.fontSize(16).text(payload.settings.businessName || "UniquePOS", { align: "left" });
-    doc.fontSize(10).text(`Address: ${payload.settings.businessAddress || "-"}`);
-    doc.text(`Tel: ${[payload.settings.businessPhone, payload.settings.businessPhone2].filter(Boolean).join(" / ") || "-"}`);
-    doc.text(`Email: ${payload.settings.businessEmail || "-"}  Web: ${payload.settings.website || "-"}`);
-    doc.text(`KRA PIN: ${payload.settings.taxNumber || "-"}   VAT: ${payload.settings.vatNumber || "-"}`);
+    const headerY = doc.y;
+    const headerTextX = logoBuffer ? 112 : 28;
+    if (logoBuffer) {
+      try {
+        doc.image(logoBuffer, 28, headerY, { fit: [70, 70], align: "left" });
+      } catch {
+      }
+    }
+    doc.fontSize(16).text(payload.settings.businessName || "UniquePOS", headerTextX, headerY, { align: "left" });
+    doc.fontSize(10).text(`Address: ${payload.settings.businessAddress || "-"}`, headerTextX);
+    doc.text(`Tel: ${[payload.settings.businessPhone, payload.settings.businessPhone2].filter(Boolean).join(" / ") || "-"}`, headerTextX);
+    doc.text(`Email: ${payload.settings.businessEmail || "-"}  Web: ${payload.settings.website || "-"}`, headerTextX);
+    doc.text(`KRA PIN: ${payload.settings.taxNumber || "-"}   VAT: ${payload.settings.vatNumber || "-"}`, headerTextX);
+    if (logoBuffer) {
+      doc.y = Math.max(doc.y, headerY + 74);
+    }
     doc.moveDown(0.5);
     doc.fontSize(13).text(`${payload.documentType.toUpperCase()}  ${payload.documentNumber || ""}`, { align: "left" });
     doc.fontSize(10).text(`Branch: ${payload.branchName}  Generated: ${dateText2(/* @__PURE__ */ new Date())}`);
@@ -72067,6 +72113,7 @@ router17.get("/documents/:type/:id/preview", async (req, res) => {
   const paper = normalizePaper(req.query.paper, type === "receipt" ? "80mm" : "a4");
   const html = buildDocumentHtml({
     ...payload,
+    logoSrc: absoluteLogoUrl(req, payload.settings.logoUrl),
     paper,
     generatedAt: dateText2(/* @__PURE__ */ new Date())
   });
@@ -72121,7 +72168,9 @@ router17.post("/documents/:type/:id/email", async (req, res) => {
     from: payload.settings.smtpFrom ?? payload.settings.smtpUser ?? ""
   });
   const subject = `${payload.settings.businessName || "UniquePOS"} ${payload.documentType} ${payload.documentNumber || ""}`.trim();
+  const emailLogoUrl = absoluteLogoUrl(req, payload.settings.logoUrl);
   const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5;">
+  <p style="margin:0 0 16px;"><img src="${htmlEscape2(emailLogoUrl)}" alt="Company logo" style="max-height:80px;max-width:220px;object-fit:contain;" /></p>
   <h2 style="margin:0 0 10px;">${htmlEscape2(payload.documentType)} ${htmlEscape2(payload.documentNumber || "")}</h2>
   <p>Hello ${htmlEscape2(payload.partyName || "Customer")},</p>
   <p>Please find your ${htmlEscape2(payload.documentType.toLowerCase())} attached as PDF.</p>
@@ -72766,8 +72815,32 @@ var CONTENT_TYPES = {
   ".jpeg": "image/jpeg",
   ".gif": "image/gif",
   ".webp": "image/webp",
-  ".svg": "image/svg+xml"
+  ".svg": "image/svg+xml",
+  ".csv": "text/csv; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".pdf": "application/pdf",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 };
+var ALLOWED_UPLOAD_EXTENSIONS = new Map([
+  ["image/png", ".png"],
+  ["image/jpeg", ".jpg"],
+  ["image/webp", ".webp"],
+  ["image/gif", ".gif"],
+  ["image/svg+xml", ".svg"],
+  ["text/csv", ".csv"],
+  ["text/plain", ".txt"],
+  ["application/pdf", ".pdf"],
+  ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"]
+]);
+function resolveUploadExtension(name, contentType) {
+  const fromType = ALLOWED_UPLOAD_EXTENSIONS.get(String(contentType || "").toLowerCase()) || "";
+  if (fromType) return fromType;
+  const rawExt = path2.extname(String(name || "")).toLowerCase();
+  for (const ext of ALLOWED_UPLOAD_EXTENSIONS.values()) {
+    if (rawExt === ext) return ext;
+  }
+  throw new Error("Unsupported upload file type");
+}
 var ObjectNotFoundError = class _ObjectNotFoundError extends Error {
   constructor() {
     super("Object not found");
@@ -72794,8 +72867,9 @@ var ObjectStorageService = class {
    * Returns a relative URL the browser PUTs the file bytes to. The matching
    * handler is `PUT /storage/upload/:id` (routes/storage.local.ts).
    */
-  async getObjectEntityUploadURL() {
-    const objectId = (0, import_crypto3.randomUUID)();
+  async getObjectEntityUploadURL(extension = "") {
+    const safeExtension = typeof extension === "string" && /^\.[a-z0-9]+$/.test(extension) ? extension.toLowerCase() : "";
+    const objectId = `${(0, import_crypto3.randomUUID)()}${safeExtension}`;
     const exp = String(Date.now() + UPLOAD_TTL_MS);
     const sig = signUpload(objectId, exp);
     return `/api/storage/upload/${objectId}?exp=${exp}&sig=${sig}`;
@@ -72990,16 +73064,7 @@ router20.get("/audit-log/export-pdf", async (req, res) => {
   const companyName = biz?.businessName ?? "UniquePOS";
   const companyPhone = biz?.businessPhone ?? "";
   const companyEmail = biz?.businessEmail ?? "";
-  let logoBuffer = null;
-  if (biz?.logoUrl && biz.logoUrl.startsWith("/objects/")) {
-    try {
-      const file2 = await objectStorageService.getObjectEntityFile(biz.logoUrl);
-      const [buf] = await file2.download();
-      logoBuffer = buf;
-    } catch {
-      logoBuffer = null;
-    }
-  }
+  const logoBuffer = await loadLogoBuffer(biz?.logoUrl);
   const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   const rangeLabel = from || to ? `${from || "beginning"} to ${to || today}` : `All records up to ${today}`;
   const doc = new import_pdfkit.default({ margin: 40, size: "A4" });
@@ -73193,12 +73258,13 @@ router22.post(
       return;
     }
     try {
-      const uploadURL = await objectStorageService2.getObjectEntityUploadURL();
+      const uploadURL = await objectStorageService2.getObjectEntityUploadURL(resolveUploadExtension(name, content_type));
       const objectPath = objectStorageService2.normalizeObjectEntityPath(uploadURL);
       res.json({ upload_url: uploadURL, object_path: objectPath });
     } catch (error40) {
       req.log?.error?.({ err: error40 }, "Error generating upload URL");
-      res.status(500).json({ error: "Failed to generate upload URL" });
+      const message = error40 instanceof Error ? error40.message : "Failed to generate upload URL";
+      res.status(message === "Unsupported upload file type" ? 400 : 500).json({ error: message });
     }
   }
 );
@@ -73437,6 +73503,15 @@ router24.get("/security/login-history", async (req, res) => {
   });
 });
 var security_default = router24;
+var { createProductBulkRouter } = require("./product-bulk.cjs");
+var product_bulk_default = createProductBulkRouter({
+  Router: import_express25.Router,
+  pool,
+  logAudit,
+  makeBarcode,
+  requireRole,
+  resolveWriteBranchId
+});
 
 // artifacts/api-server/src/routes/index.ts
 var router25 = (0, import_express25.Router)();
@@ -73468,6 +73543,7 @@ router25.use(backups_default);
 router25.use(dashboard_default);
 router25.use(categories_default);
 router25.use(brands_default);
+router25.use(product_bulk_default);
 router25.use(products_default);
 router25.use(inventory_default);
 router25.use(purchases_default);

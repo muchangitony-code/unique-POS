@@ -1,6 +1,26 @@
 (function () {
   const TOKEN_STORAGE_KEY = "uniquepos.token";
   const USER_STORAGE_KEY = "uniquepos.user";
+  const DEFAULT_COMPANY_LOGO_URL = "/assets/unique-solar-kenya-logo.svg";
+  const BRAND_LOGO_UPLOAD_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"];
+  const BRAND_LOGO_UPLOAD_LIMIT = 2 * 1024 * 1024;
+  const PRODUCT_IMPORT_FIELDS = {
+    product_code: "Product Code / SKU",
+    barcode: "Barcode",
+    product_name: "Product Name",
+    category: "Category",
+    brand: "Brand",
+    unit: "Unit",
+    cost_price: "Cost Price",
+    selling_price: "Selling Price",
+    vat_rate: "VAT",
+    min_stock: "Reorder Level",
+    current_stock: "Opening Stock",
+    supplier: "Supplier",
+    location: "Location",
+    description: "Description",
+    image_url: "Image URL"
+  };
   const MODULE_TITLES = {
     dashboard: "Dashboard",
     products: "Products",
@@ -57,7 +77,10 @@
       salesComposer: { type: "sale", rows: 1 },
       purchaseComposerRows: 1,
       salesTab: "sales",
-      reportsRange: defaultDateRange()
+      reportsRange: defaultDateRange(),
+      selectedProducts: {},
+      productImport: { job: null, headers: [], mapping: {}, preview: [], total: 0 },
+      productImportFile: null
     }
   };
 
@@ -162,7 +185,7 @@
       state.branding = branding || {};
       const brandName = firstText(branding.business_name, branding.businessName, "UniquePOS");
       const summary = firstText(branding.tagline, branding.description, "Sign in to access your POS workspace, or confirm the service is online before finishing setup.");
-      const logoUrl = firstText(branding.logo_url, branding.logoUrl, "");
+      const logoUrl = resolveBrandLogoUrl(branding);
       document.title = brandName;
       login.brandName.textContent = brandName;
       login.brandSummary.textContent = summary;
@@ -174,13 +197,44 @@
 
   function applyBrandLogo(node, logoUrl) {
     if (!node) return;
-    if (!logoUrl) {
+    const candidate = String(logoUrl || "").trim();
+    let safeLogoUrl = "";
+    if (candidate) {
+      try {
+        if (candidate.startsWith("/")) {
+          const parsed = new URL(candidate, window.location.origin);
+          safeLogoUrl = parsed.pathname + parsed.search + parsed.hash;
+        } else if (/^https?:\/\//i.test(candidate)) {
+          const parsed = new URL(candidate);
+          if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+            safeLogoUrl = parsed.href;
+          }
+        }
+      } catch (_error) {}
+    }
+    if (!safeLogoUrl) {
       node.classList.add("hidden");
       node.removeAttribute("src");
       return;
     }
-    node.src = logoUrl;
+    node.src = safeLogoUrl;
     node.classList.remove("hidden");
+  }
+
+  function resolveBrandLogoUrl(branding) {
+    return sanitizeImageUrl(firstText(branding && branding.logo_url, branding && branding.logoUrl, DEFAULT_COMPANY_LOGO_URL)) || DEFAULT_COMPANY_LOGO_URL;
+  }
+
+  function mapFieldLabel(field) {
+    return PRODUCT_IMPORT_FIELDS[field] || field;
+  }
+
+  function sanitizeImageUrl(value) {
+    const candidate = String(value || "").trim();
+    if (!candidate) return "";
+    if (candidate.startsWith("/")) return candidate;
+    if (/^https?:\/\//i.test(candidate)) return candidate;
+    return "";
   }
 
   async function onLogin(event) {
@@ -344,6 +398,7 @@
       }), "No top-selling products yet."),
       '</div>',
       '<div class="module-grid two">',
+      renderBrandingCard(),
       renderTableCard("Daily sales trend", ["Date", "Sales", "Transactions"], (data.salesChart || []).map(function (item) {
         return [escapeHtml(formatDate(item.date)), money(item.total || 0), escapeHtml(String(Number(item.count || 0)))];
       }), "No chart data available."),
@@ -355,6 +410,23 @@
         '</dl></section>',
       '</div>'
     ].join("");
+    applyBrandLogo(document.getElementById("dashboardBrandLogo"), resolveBrandLogoUrl(state.branding));
+  }
+
+  function renderBrandingCard() {
+    const branding = state.branding || {};
+    const logoUrl = resolveBrandLogoUrl(branding);
+    return '<section class="card brand-card"><div class="section-head"><h3>Business branding</h3></div><div class="brand-panel">' +
+      '<img id="dashboardBrandLogo" class="brand-logo brand-logo--lg hidden" alt="Company logo" />' +
+      '<div class="brand-panel__details">' +
+        '<h4>' + escapeHtml(firstText(branding.business_name, branding.businessName, "UniquePOS")) + '</h4>' +
+        '<p class="muted">' + escapeHtml(firstText(branding.tagline, "Official business branding applied across documents and exports.")) + '</p>' +
+        '<div class="brand-panel__meta">' +
+          '<span>' + escapeHtml(firstText(branding.business_phone, branding.businessPhone, "—")) + '</span>' +
+          '<span>' + escapeHtml(firstText(branding.business_email, branding.businessEmail, "—")) + '</span>' +
+        '</div>' +
+      '</div>' +
+    '</div></section>';
   }
 
   async function loadProducts() {
@@ -363,15 +435,20 @@
       apiJson("/api/categories"),
       apiJson("/api/brands"),
       apiJson("/api/suppliers?limit=100"),
-      apiJson("/api/branches/options")
+      apiJson("/api/branches/options"),
+      apiJson("/api/products/imports").catch(function () { return { data: [] }; }),
+      apiJson("/api/products/duplicates").catch(function () { return { data: [] }; })
     ]);
     state.moduleData.products = {
       products: normalizeList(results[0]),
       categories: normalizeList(results[1]),
       brands: normalizeList(results[2]),
       suppliers: normalizeList(results[3]),
-      branches: normalizeList(results[4])
+      branches: normalizeList(results[4]),
+      importJobs: normalizeList(results[5]),
+      duplicates: normalizeList(results[6])
     };
+    syncSelectedProducts(state.moduleData.products.products);
   }
 
   function renderProducts() {
@@ -390,6 +467,7 @@
           textField("Product name", "product_name", edit.product_name, true) +
           textField("Barcode", "barcode", edit.barcode) +
           textField("Unit", "unit", edit.unit, false, "pcs") +
+          textField("Image URL", "image_url", edit.image_url) +
           textAreaField("Description", "description", edit.description) +
           selectField("Category", "category_id", data.categories, edit.category_id) +
           selectField("Brand", "brand_id", data.brands, edit.brand_id) +
@@ -401,14 +479,21 @@
           numberField("Minimum stock", "min_stock", valueOrDefault(edit.min_stock, 0), "1") +
           '<div class="form-actions span-2"><button type="submit">' + (edit.id ? "Update product" : "Create product") + '</button><button type="button" class="secondary" id="productResetBtn">Clear</button></div>' +
         '</form></section>',
+      renderProductBulkToolsCard(data),
+      '</div>',
+      '<div class="module-grid two">',
       '<section class="card"><div class="section-head"><h3>Reference data</h3></div>' +
         '<div class="stack gap-lg">' +
           '<div><h4>Categories</h4><form id="categoryForm" class="inline-form">' + hiddenInput("category_id", categoryEdit.id) + '<input name="name" placeholder="Category name" value="' + escapeAttr(categoryEdit.name) + '" required /><button type="submit">' + (categoryEdit.id ? "Update" : "Add") + '</button><button type="button" class="secondary" id="categoryResetBtn">Clear</button></form>' + renderSimpleList(data.categories, "category") + '</div>' +
           '<div><h4>Brands</h4><form id="brandForm" class="inline-form">' + hiddenInput("brand_id", brandEdit.id) + '<input name="name" placeholder="Brand name" value="' + escapeAttr(brandEdit.name) + '" required /><button type="submit">' + (brandEdit.id ? "Update" : "Add") + '</button><button type="button" class="secondary" id="brandResetBtn">Clear</button></form>' + renderSimpleList(data.brands, "brand") + '</div>' +
         '</div></section>',
-      '</div>',
-      renderTableCard("Product catalogue", ["Code", "Name", "Category", "Brand", "Stock", "Price", "Actions"], (data.products || []).map(function (product) {
+      renderProductImportHistoryCard(data) +
+      '</div>' +
+      renderProductImportPreviewCard() +
+      renderProductDuplicatesCard(data) +
+      renderTableCard("Product catalogue", ["", "Code", "Name", "Category", "Brand", "Stock", "Price", "Actions"], (data.products || []).map(function (product) {
         return [
+          '<input type="checkbox" class="js-product-select" data-id="' + escapeAttr(product.id) + '"' + (state.ui.selectedProducts[String(product.id)] ? ' checked' : '') + ' />',
           escapeHtml(firstText(product.product_code, "—")),
           escapeHtml(firstText(product.product_name, "—")),
           escapeHtml(firstText(product.category_name, "—")),
@@ -418,7 +503,8 @@
           actionButtons([
             { cls: "js-edit-product", label: "Edit", id: product.id },
             { cls: "js-delete-product", label: "Delete", id: product.id, tone: "danger" },
-            !product.barcode ? { cls: "js-barcode-product", label: "Barcode", id: product.id, tone: "secondary" } : null
+            !product.barcode ? { cls: "js-barcode-product", label: "Barcode", id: product.id, tone: "secondary" } : null,
+            product.barcode ? { cls: "js-label-product", label: "Label PDF", id: product.id, tone: "secondary" } : null
           ])
         ];
       }), "No products available.")
@@ -442,6 +528,9 @@
       ".js-barcode-product": function (event) {
         generateBarcode(event.currentTarget.dataset.id);
       },
+      ".js-label-product": function (event) {
+        window.open("/api/products/barcode-labels.pdf?ids=" + encodeURIComponent(String(event.currentTarget.dataset.id)), "_blank", "noopener");
+      },
       ".js-edit-category": function (event) {
         state.ui.categoryEdit = findById(data.categories, event.currentTarget.dataset.id) || null;
         renderProducts();
@@ -455,8 +544,128 @@
       },
       ".js-delete-brand": function (event) {
         deleteReference("brand", event.currentTarget.dataset.id);
+      },
+      ".js-import-open": function (event) {
+        viewProductImport(event.currentTarget.dataset.id);
+      },
+      ".js-import-undo": function (event) {
+        undoProductImport(event.currentTarget.dataset.id);
+      },
+      ".js-import-errors": function (event) {
+        window.open("/api/products/imports/" + encodeURIComponent(event.currentTarget.dataset.id) + "/errors.csv", "_blank", "noopener");
       }
     });
+    body.querySelectorAll(".js-product-select").forEach(function (input) {
+      input.addEventListener("change", function () {
+        state.ui.selectedProducts[String(input.dataset.id)] = input.checked;
+      });
+    });
+    bindClick("productImportParseBtn", handleProductImportParse);
+    bindClick("productImportRemapBtn", handleProductImportRemap);
+    bindClick("productImportStartBtn", handleProductImportStart);
+    bindClick("productBulkPriceBtn", handleBulkPriceUpdate);
+    bindClick("productBulkStockBtn", handleBulkStockUpdate);
+    bindClick("productBulkCategoryBtn", handleBulkCategoryReassign);
+    bindClick("productBulkImagesBtn", handleBulkImageUpdate);
+    bindClick("productDuplicateRefreshBtn", refreshProductDuplicates);
+    bindClick("productBarcodeLabelsBtn", openSelectedBarcodeLabels);
+    bindProductImportFileHandlers();
+  }
+
+  function renderProductBulkToolsCard(data) {
+    const selectedCount = selectedProductIds().length;
+    return '<section class="card"><div class="section-head"><h3>Bulk import & tools</h3></div><div class="stack gap-lg">' +
+      '<div class="stack gap-sm">' +
+        '<h4>Bulk product import</h4>' +
+        '<div class="dropzone" id="productImportDropzone">Drop Excel, CSV, or PDF here, or use the file picker below.</div>' +
+        '<input id="productImportFile" type="file" accept=\".xlsx,.csv,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\" />' +
+        '<textarea id="productImportPaste" placeholder=\"Paste rows directly from Microsoft Excel or Google Sheets\"></textarea>' +
+        '<div class="form-actions"><button type="button" id="productImportParseBtn">Prepare import preview</button><a class="button-link" href=\"/api/products/imports/templates/csv\">CSV template</a><a class="button-link" href=\"/api/products/imports/templates/xlsx\">Excel template</a></div>' +
+        '<p class="muted small">The importer auto-detects Product Code, Barcode, Product Name, Category, Brand, Unit, pricing, VAT, stock, supplier, location, description, and image URLs.</p>' +
+      '</div>' +
+      '<div class="stack gap-sm">' +
+        '<h4>Selected products: ' + escapeHtml(String(selectedCount)) + '</h4>' +
+        '<div class="inline-form">' +
+          '<label><span>Price update</span><select id="productBulkPriceMode"><option value=\"percentage\">Percentage</option><option value=\"amount\">Amount</option></select></label>' +
+          '<label><span>Target</span><select id="productBulkPriceTarget"><option value=\"selling_price\">Selling price</option><option value=\"cost_price\">Cost price</option><option value=\"both\">Both</option></select></label>' +
+          '<label><span>Value</span><input id="productBulkPriceValue" type=\"number\" step=\"0.01\" /></label>' +
+          '<button type=\"button\" id=\"productBulkPriceBtn\">Apply price update</button>' +
+        '</div>' +
+        '<div class="inline-form">' +
+          '<label><span>Stock mode</span><select id=\"productBulkStockMode\"><option value=\"add\">Add</option><option value=\"subtract\">Subtract</option><option value=\"set\">Set exact</option></select></label>' +
+          '<label><span>Quantity</span><input id=\"productBulkStockValue\" type=\"number\" step=\"1\" /></label>' +
+          '<label><span>Reason</span><input id=\"productBulkStockReason\" type=\"text\" placeholder=\"Bulk correction\" /></label>' +
+          '<button type=\"button\" id=\"productBulkStockBtn\">Adjust stock</button>' +
+        '</div>' +
+        '<div class=\"inline-form\">' +
+          '<label><span>Reassign category</span><select id=\"productBulkCategoryId\"><option value=\"\">Select…</option>' + optionTags(data.categories || [], null) + '</select></label>' +
+          '<label><span>Or new category</span><input id=\"productBulkCategoryName\" type=\"text\" placeholder=\"Create if missing\" /></label>' +
+          '<button type=\"button\" id=\"productBulkCategoryBtn\">Update category</button>' +
+        '</div>' +
+        '<div class=\"stack gap-sm\">' +
+          '<label><span>Bulk image URL updates</span><textarea id=\"productBulkImagesText\" placeholder=\"product_code,image_url\\nSKU-001,https://example.com/image.jpg\"></textarea></label>' +
+          '<div class=\"form-actions\"><button type=\"button\" id=\"productBulkImagesBtn\">Apply image URLs</button><button type=\"button\" class=\"secondary\" id=\"productBarcodeLabelsBtn\">Barcode labels PDF</button><a class=\"button-link\" href=\"/api/products/export.xlsx\">Export Excel</a><a class=\"button-link\" href=\"/api/products/export.pdf\">Export PDF</a><button type=\"button\" class=\"secondary\" id=\"productDuplicateRefreshBtn\">Refresh duplicates</button></div>' +
+        '</div>' +
+      '</div>' +
+    '</div></section>';
+  }
+
+  function renderProductImportPreviewCard() {
+    const info = state.ui.productImport || {};
+    if (!info.job) return "";
+    const headers = info.headers || [];
+    const mapping = info.mapping || {};
+    const previewRows = info.preview || [];
+    return '<section class="card"><div class="section-head"><h3>Import preview #' + escapeHtml(String(info.job.id)) + '</h3></div>' +
+      '<div class="stack gap-lg">' +
+        '<div class="module-grid three">' + Object.keys(PRODUCT_IMPORT_FIELDS).map(function (field) {
+          return '<label><span>' + escapeHtml(mapFieldLabel(field)) + '</span><select class="js-import-map" data-field="' + escapeAttr(field) + '"><option value="">Ignore</option>' + headers.map(function (header) {
+            return '<option value="' + escapeAttr(header) + '"' + (mapping[field] === header ? ' selected' : '') + '>' + escapeHtml(header) + '</option>';
+          }).join("") + '</select></label>';
+        }).join("") + '</div>' +
+        '<div class="inline-form">' +
+          '<label><span>Duplicate handling</span><select id="productImportDuplicateMode"><option value="update">Update existing</option><option value="skip">Skip</option><option value="duplicate">Create duplicate</option></select></label>' +
+          checkField("Create missing categories, brands, and suppliers automatically", "productImportAutoCreate", true) +
+          '<div class="form-actions"><button type="button" id="productImportRemapBtn">Revalidate mapping</button><button type="button" id="productImportStartBtn">Start background import</button></div>' +
+        '</div>' +
+        renderTable(["Row", "Action", "Status", "Errors", "Product"], previewRows.slice(0, 25).map(function (row) {
+          return [
+            escapeHtml(String(row.row_number)),
+            escapeHtml(firstText(row.action, "create")),
+            escapeHtml(firstText(row.status, "preview")),
+            escapeHtml((row.validation_errors || []).join(" | ") || "—"),
+            escapeHtml(firstText(row.normalized_data && row.normalized_data.product_name, row.raw_data && row.raw_data["Product Name"], "—"))
+          ];
+        }), "No preview rows available.") +
+      '</div></section>';
+  }
+
+  function renderProductImportHistoryCard(data) {
+    return renderTableCard("Import history", ["ID", "Source", "Status", "Rows", "Processed", "Actions"], (data.importJobs || []).slice(0, 10).map(function (job) {
+      return [
+        escapeHtml(String(job.id)),
+        escapeHtml(firstText(job.source_name, job.file_name, job.source_type, "—")),
+        renderBadge(firstText(job.status, "draft")),
+        escapeHtml(String(Number(job.total_rows || 0))),
+        escapeHtml(String(Number(job.processed_rows || 0))),
+        actionButtons([
+          { cls: "js-import-open", label: "Open", id: job.id, tone: "secondary" },
+          job.status === "completed" && !job.undone_at ? { cls: "js-import-undo", label: "Undo", id: job.id, tone: "danger" } : null,
+          Number(job.error_count || 0) > 0 ? { cls: "js-import-errors", label: "Errors CSV", id: job.id, tone: "secondary" } : null
+        ])
+      ];
+    }), "No import history yet.");
+  }
+
+  function renderProductDuplicatesCard(data) {
+    return renderTableCard("Duplicate detection", ["Type", "Value", "Count", "Product IDs"], (data.duplicates || []).slice(0, 10).map(function (row) {
+      return [
+        escapeHtml(firstText(row.duplicate_type, "—")),
+        escapeHtml(firstText(row.duplicate_value, "—")),
+        escapeHtml(String(Number(row.duplicate_count || 0))),
+        escapeHtml(Array.isArray(row.product_ids) ? row.product_ids.join(", ") : "—")
+      ];
+    }), "No duplicate products detected.");
   }
 
   async function handleProductSave(event) {
@@ -475,6 +684,7 @@
       cost_price: optionalNumber(form, "cost_price"),
       selling_price: optionalNumber(form, "selling_price"),
       vat_rate: optionalNumber(form, "vat_rate"),
+      image_url: optionalString(form, "image_url"),
       current_stock: numberOrZero(form, "current_stock"),
       min_stock: numberOrZero(form, "min_stock")
     });
@@ -532,6 +742,271 @@
     setFlash("products", "success", "Barcode generated.");
     await loadProducts();
     renderProducts();
+  }
+
+  function syncSelectedProducts(products) {
+    const next = {};
+    (products || []).forEach(function (product) {
+      const key = String(product.id);
+      next[key] = Boolean(state.ui.selectedProducts[key]);
+    });
+    state.ui.selectedProducts = next;
+  }
+
+  function selectedProductIds() {
+    return Object.keys(state.ui.selectedProducts).filter(function (id) { return state.ui.selectedProducts[id]; }).map(function (id) { return Number(id); });
+  }
+
+  function bindProductImportFileHandlers() {
+    const fileInput = document.getElementById("productImportFile");
+    const dropzone = document.getElementById("productImportDropzone");
+    if (fileInput) {
+      fileInput.addEventListener("change", function () {
+        state.ui.productImportFile = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+      });
+    }
+    if (dropzone) {
+      ["dragenter", "dragover"].forEach(function (eventName) {
+        dropzone.addEventListener(eventName, function (event) {
+          event.preventDefault();
+          dropzone.classList.add("dropzone--active");
+        });
+      });
+      ["dragleave", "drop"].forEach(function (eventName) {
+        dropzone.addEventListener(eventName, function (event) {
+          event.preventDefault();
+          dropzone.classList.remove("dropzone--active");
+        });
+      });
+      dropzone.addEventListener("drop", function (event) {
+        const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+        if (file) {
+          state.ui.productImportFile = file;
+          if (fileInput) {
+            try { fileInput.files = event.dataTransfer.files; } catch (_error) {}
+          }
+        }
+      });
+    }
+  }
+
+  async function uploadManagedFile(file) {
+    const uploadTicket = await apiJson("/api/storage/uploads/request-url", {
+      method: "POST",
+      body: JSON.stringify({ name: file.name, size: file.size, content_type: file.type || "application/octet-stream" })
+    });
+    const uploadResponse = await authorizedFetch(uploadTicket.upload_url, {
+      method: "PUT",
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+      body: await file.arrayBuffer()
+    });
+    if (!uploadResponse.ok) {
+      const errorBody = await uploadResponse.json().catch(function () { return {}; });
+      throw new Error(firstText(errorBody.error, "File upload failed."));
+    }
+    return uploadTicket.object_path;
+  }
+
+  async function handleProductImportParse() {
+    const pasteText = valueById("productImportPaste");
+    const file = state.ui.productImportFile;
+    let objectPath = "";
+    let fileName = "";
+    let sourceType = "paste";
+    if (file) {
+      objectPath = await uploadManagedFile(file);
+      fileName = file.name;
+      sourceType = /\.pdf$/i.test(file.name) ? "pdf" : /\.csv$/i.test(file.name) ? "csv" : "xlsx";
+    } else if (!pasteText) {
+      throw new Error("Choose an import file or paste spreadsheet rows first.");
+    }
+    const result = await apiJson("/api/products/imports/parse", {
+      method: "POST",
+      body: JSON.stringify({
+        source_type: sourceType,
+        source_name: fileName || "Pasted spreadsheet data",
+        file_name: fileName || null,
+        object_path: objectPath || null,
+        paste_text: pasteText || null
+      })
+    });
+    state.ui.productImport = {
+      job: result.job,
+      headers: result.headers || [],
+      mapping: result.mapping || {},
+      preview: normalizeList(result.preview || result.rows || []),
+      total: Number(result.job && result.job.total_rows || 0)
+    };
+    setFlash("products", "success", "Import preview prepared. Review the mapping, then start the background import.");
+    await loadProducts();
+    renderProducts();
+  }
+
+  async function viewProductImport(id) {
+    const result = await apiJson("/api/products/imports/" + id + "?limit=100");
+    state.ui.productImport = {
+      job: result.job,
+      headers: Object.keys(((result.rows || [])[0] || {}).raw_data || {}),
+      mapping: result.job && result.job.column_mapping || {},
+      preview: normalizeList(result.rows),
+      total: Number(result.total || 0)
+    };
+    if (result.job && ["queued", "processing"].includes(result.job.status)) {
+      scheduleProductImportRefresh(id);
+    } else {
+      stopProductImportRefresh();
+    }
+    renderProducts();
+  }
+
+  async function handleProductImportRemap() {
+    const info = state.ui.productImport;
+    if (!info.job) throw new Error("Prepare an import preview first.");
+    const mapping = {};
+    document.querySelectorAll(".js-import-map").forEach(function (select) {
+      if (select.value) mapping[select.dataset.field] = select.value;
+    });
+    const result = await apiJson("/api/products/imports/" + info.job.id + "/remap", {
+      method: "POST",
+      body: JSON.stringify({ mapping: mapping })
+    });
+    state.ui.productImport = {
+      job: result.job,
+      headers: info.headers,
+      mapping: result.mapping || mapping,
+      preview: normalizeList(result.preview),
+      total: Number(result.job && result.job.total_rows || 0)
+    };
+    setFlash("products", "success", "Import mapping revalidated.");
+    renderProducts();
+  }
+
+  async function handleProductImportStart() {
+    const info = state.ui.productImport;
+    if (!info.job) throw new Error("Prepare an import preview first.");
+    const duplicateMode = document.getElementById("productImportDuplicateMode");
+    const autoCreate = document.querySelector('input[name="productImportAutoCreate"]');
+    const result = await apiJson("/api/products/imports/" + info.job.id + "/start", {
+      method: "POST",
+      body: JSON.stringify({
+        on_duplicate: duplicateMode ? duplicateMode.value : "update",
+        auto_create_references: autoCreate ? autoCreate.checked : true
+      })
+    });
+    state.ui.productImport.job = result.job;
+    scheduleProductImportRefresh(info.job.id);
+    setFlash("products", "success", "Background import started.");
+    await loadProducts();
+    renderProducts();
+  }
+
+  function scheduleProductImportRefresh(id) {
+    stopProductImportRefresh();
+    window.__uniqueposProductImportPoll = window.setInterval(function () {
+      apiJson("/api/products/imports/" + id + "?limit=100").then(function (result) {
+        state.ui.productImport = {
+          job: result.job,
+          headers: Object.keys(((result.rows || [])[0] || {}).raw_data || state.ui.productImport.headers || {}),
+          mapping: result.job && result.job.column_mapping || state.ui.productImport.mapping || {},
+          preview: normalizeList(result.rows),
+          total: Number(result.total || 0)
+        };
+        if (result.job && !["queued", "processing"].includes(result.job.status)) {
+          stopProductImportRefresh();
+          loadProducts().then(renderProducts);
+          return;
+        }
+        renderProducts();
+      }).catch(stopProductImportRefresh);
+    }, 3000);
+  }
+
+  function stopProductImportRefresh() {
+    if (window.__uniqueposProductImportPoll) {
+      window.clearInterval(window.__uniqueposProductImportPoll);
+      window.__uniqueposProductImportPoll = 0;
+    }
+  }
+
+  async function undoProductImport(id) {
+    if (!window.confirm("Undo this completed import? Only the most recent completed import can be undone.")) return;
+    await apiJson("/api/products/imports/" + id + "/undo", { method: "POST", body: JSON.stringify({}) });
+    setFlash("products", "success", "Bulk import undone.");
+    await loadProducts();
+    renderProducts();
+  }
+
+  async function handleBulkPriceUpdate() {
+    const ids = selectedProductIds();
+    await apiJson("/api/products/bulk/price-updates", {
+      method: "POST",
+      body: JSON.stringify({
+        product_ids: ids,
+        mode: document.getElementById("productBulkPriceMode").value,
+        target: document.getElementById("productBulkPriceTarget").value,
+        value: Number(document.getElementById("productBulkPriceValue").value)
+      })
+    });
+    setFlash("products", "success", "Bulk price update applied.");
+    await loadProducts();
+    renderProducts();
+  }
+
+  async function handleBulkStockUpdate() {
+    const ids = selectedProductIds();
+    await apiJson("/api/products/bulk/stock-adjustments", {
+      method: "POST",
+      body: JSON.stringify({
+        product_ids: ids,
+        mode: document.getElementById("productBulkStockMode").value,
+        quantity: Number(document.getElementById("productBulkStockValue").value),
+        reason: document.getElementById("productBulkStockReason").value
+      })
+    });
+    setFlash("products", "success", "Bulk stock adjustment applied.");
+    await loadProducts();
+    renderProducts();
+  }
+
+  async function handleBulkCategoryReassign() {
+    const ids = selectedProductIds();
+    await apiJson("/api/products/bulk/category-reassign", {
+      method: "POST",
+      body: JSON.stringify({
+        product_ids: ids,
+        category_id: numberById("productBulkCategoryId"),
+        category_name: valueById("productBulkCategoryName")
+      })
+    });
+    setFlash("products", "success", "Bulk category reassignment applied.");
+    await loadProducts();
+    renderProducts();
+  }
+
+  async function handleBulkImageUpdate() {
+    const lines = valueById("productBulkImagesText").split(/\r?\n/).map(function (line) { return line.trim(); }).filter(Boolean);
+    const updates = lines.map(function (line) {
+      const parts = line.split(",");
+      return { product_code: trimText(parts[0]), image_url: trimText(parts.slice(1).join(",")) };
+    }).filter(function (item) { return item.product_code && item.image_url; });
+    await apiJson("/api/products/bulk/image-urls", {
+      method: "POST",
+      body: JSON.stringify({ updates: updates })
+    });
+    setFlash("products", "success", "Bulk image URL update applied.");
+    await loadProducts();
+    renderProducts();
+  }
+
+  async function refreshProductDuplicates() {
+    await loadProducts();
+    renderProducts();
+  }
+
+  function openSelectedBarcodeLabels() {
+    const ids = selectedProductIds();
+    if (!ids.length) throw new Error("Select at least one product first.");
+    window.open("/api/products/barcode-labels.pdf?ids=" + encodeURIComponent(ids.join(",")), "_blank", "noopener");
   }
 
   async function deleteReference(kind, id) {
@@ -1516,7 +1991,15 @@
       '<section class="card"><div class="section-head"><h3>Branding</h3></div><form id="brandingForm" class="form-grid two">' +
         textField("Tagline", "tagline", s.tagline) +
         textField("Website", "website", s.website) +
-        textField("Logo URL", "logo_url", s.logo_url) +
+        textField("Logo URL", "logo_url", resolveBrandLogoUrl(s)) +
+        '<label class="span-2"><span>Company logo upload</span><div class="logo-upload-card">' +
+          '<img id="brandingLogoPreview" class="brand-logo brand-logo--xl hidden" alt="Company logo preview" />' +
+          '<div class="logo-upload-card__body">' +
+            '<input id="brandingLogoFile" type="file" accept="' + BRAND_LOGO_UPLOAD_TYPES.join(",") + '" />' +
+            '<div class="form-actions"><button type="button" class="secondary" id="brandingLogoUploadBtn">Upload logo</button><button type="button" class="secondary" id="brandingLogoRestoreBtn">Restore default</button></div>' +
+            '<p class="muted small">Uploaded logos are stored permanently and become the active company logo everywhere immediately after upload.</p>' +
+          '</div>' +
+        '</div></label>' +
         textField("Alternative phone", "business_phone2", s.business_phone2) +
         textField("Primary color", "primary_color", s.primary_color, false, "#0f172a") +
         textField("Secondary color", "secondary_color", s.secondary_color, false, "#38bdf8") +
@@ -1562,6 +2045,9 @@
       await saveSettingsGroup(event, "/api/settings/branding", "Branding settings saved.");
       await loadBranding();
     });
+    bindClick("brandingLogoUploadBtn", uploadBrandingLogo);
+    bindClick("brandingLogoRestoreBtn", restoreDefaultBrandingLogo);
+    bindBrandLogoPreview();
     bindForm("paymentSettingsForm", function (event) { saveSettingsGroup(event, "/api/settings/payment", "Payment settings saved."); });
     bindForm("securitySettingsForm", function (event) { saveSettingsGroup(event, "/api/settings/security", "Security settings saved."); });
   }
@@ -1575,6 +2061,56 @@
     });
     setFlash("settings", "success", successMessage);
     await loadSettings();
+    renderSettings();
+  }
+
+  function bindBrandLogoPreview() {
+    const logoField = document.querySelector('#brandingForm [name="logo_url"]');
+    const preview = document.getElementById("brandingLogoPreview");
+    if (!logoField || !preview) return;
+    const sync = function () {
+      applyBrandLogo(preview, firstText(logoField.value, DEFAULT_COMPANY_LOGO_URL));
+    };
+    logoField.addEventListener("input", sync);
+    sync();
+  }
+
+  async function uploadBrandingLogo() {
+    const input = document.getElementById("brandingLogoFile");
+    if (!input || !input.files || !input.files[0]) throw new Error("Choose a logo file to upload.");
+    const file = input.files[0];
+    if (!BRAND_LOGO_UPLOAD_TYPES.includes(file.type)) throw new Error("Choose a PNG, JPG, WEBP, GIF, or SVG logo.");
+    if (file.size > BRAND_LOGO_UPLOAD_LIMIT) throw new Error("Logo files must be 2MB or smaller.");
+    const uploadTicket = await apiJson("/api/storage/uploads/request-url", {
+      method: "POST",
+      body: JSON.stringify({ name: file.name, size: file.size, content_type: file.type })
+    });
+    const uploadResponse = await authorizedFetch(uploadTicket.upload_url, {
+      method: "PUT",
+      headers: { "Content-Type": file.type },
+      body: await file.arrayBuffer()
+    });
+    if (!uploadResponse.ok) {
+      const errorBody = await uploadResponse.json().catch(function () { return {}; });
+      throw new Error(firstText(errorBody.error, "Logo upload failed."));
+    }
+    await apiJson("/api/settings/branding", {
+      method: "PATCH",
+      body: JSON.stringify({ logo_url: uploadTicket.object_path })
+    });
+    setFlash("settings", "success", "Logo uploaded and applied everywhere.");
+    input.value = "";
+    await Promise.all([loadSettings(), loadBranding()]);
+    renderSettings();
+  }
+
+  async function restoreDefaultBrandingLogo() {
+    await apiJson("/api/settings/branding", {
+      method: "PATCH",
+      body: JSON.stringify({ logo_url: DEFAULT_COMPANY_LOGO_URL })
+    });
+    setFlash("settings", "success", "Default company logo restored.");
+    await Promise.all([loadSettings(), loadBranding()]);
     renderSettings();
   }
 
@@ -2049,6 +2585,18 @@
 
   function optionalNumber(form, name) {
     const value = trimmed(form, name);
+    if (!value) return null;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+  }
+
+  function valueById(id) {
+    const element = document.getElementById(id);
+    return element ? String(element.value || "").trim() : "";
+  }
+
+  function numberById(id) {
+    const value = valueById(id);
     if (!value) return null;
     const num = Number(value);
     return Number.isFinite(num) ? num : null;
