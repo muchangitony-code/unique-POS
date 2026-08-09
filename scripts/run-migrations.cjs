@@ -26,12 +26,34 @@ function listMigrationFiles(migrationsDir) {
 }
 
 function isTransactionControlStatement(statement) {
-  const s = statement.trim().toUpperCase();
+  const s = stripLeadingSqlComments(statement).trim().toUpperCase();
   return s === "BEGIN" || s === "COMMIT" || s === "ROLLBACK";
 }
 
+function stripLeadingSqlComments(statement) {
+  let text = statement.trimStart();
+
+  for (;;) {
+    if (text.startsWith("--")) {
+      const newlineIndex = text.indexOf("\n");
+      text = (newlineIndex === -1 ? "" : text.slice(newlineIndex + 1)).trimStart();
+      continue;
+    }
+
+    if (text.startsWith("/*")) {
+      const endCommentIndex = text.indexOf("*/");
+      text = (endCommentIndex === -1 ? "" : text.slice(endCommentIndex + 2)).trimStart();
+      continue;
+    }
+
+    break;
+  }
+
+  return text;
+}
+
 function normalizeStatementWhitespace(statement) {
-  return statement.trim().replace(/\s+/g, " ");
+  return stripLeadingSqlComments(statement).trim().replace(/\s+/g, " ");
 }
 
 function parseQualifiedName(name, defaultSchema = "public") {
@@ -58,10 +80,45 @@ function getStatementTarget(statement) {
     return { kind: "table", ...identifier };
   }
 
-  const createIndexMatch = normalized.match(/^CREATE (?:UNIQUE )?INDEX(?: IF NOT EXISTS)? ([^\s]+) ON /i);
+  const createIndexMatch = normalized.match(
+    /^CREATE (?:UNIQUE )?INDEX(?: CONCURRENTLY)?(?: IF NOT EXISTS)? ([^\s]+) ON /i
+  );
   if (createIndexMatch) {
     const identifier = parseQualifiedName(createIndexMatch[1]);
     return { kind: "index", ...identifier };
+  }
+
+  const createSequenceMatch = normalized.match(/^CREATE SEQUENCE(?: IF NOT EXISTS)? ([^\s;]+)/i);
+  if (createSequenceMatch) {
+    const identifier = parseQualifiedName(createSequenceMatch[1]);
+    return { kind: "sequence", ...identifier };
+  }
+
+  const createViewMatch = normalized.match(
+    /^CREATE(?: (OR REPLACE))? VIEW(?: IF NOT EXISTS)? ([^\s(]+)/i
+  );
+  if (createViewMatch) {
+    const identifier = parseQualifiedName(createViewMatch[2]);
+    const isReplace = Boolean(createViewMatch[1]);
+    return { kind: "view", ...identifier, isReplace };
+  }
+
+  const createMaterializedViewMatch = normalized.match(
+    /^CREATE MATERIALIZED VIEW(?: IF NOT EXISTS)? ([^\s(]+)/i
+  );
+  if (createMaterializedViewMatch) {
+    const identifier = parseQualifiedName(createMaterializedViewMatch[1]);
+    return { kind: "materialized_view", ...identifier };
+  }
+
+  const createTriggerMatch = normalized.match(
+    /^CREATE(?: (OR REPLACE))? TRIGGER ([^\s]+) (?:BEFORE|AFTER|INSTEAD OF) .*? ON ([^\s(]+)/i
+  );
+  if (createTriggerMatch) {
+    const tableIdentifier = parseQualifiedName(createTriggerMatch[3]);
+    const triggerName = createTriggerMatch[2].replace(/^"|"$/g, "");
+    const isReplace = Boolean(createTriggerMatch[1]);
+    return { kind: "trigger", ...tableIdentifier, triggerName, isReplace };
   }
 
   const alterConstraintMatch = normalized.match(
@@ -99,7 +156,13 @@ async function objectAlreadyExists(client, target) {
     return rows[0]?.exists === true;
   }
 
-  if (target.kind === "table" || target.kind === "index") {
+  if (
+    target.kind === "table" ||
+    target.kind === "index" ||
+    target.kind === "sequence" ||
+    target.kind === "view" ||
+    target.kind === "materialized_view"
+  ) {
     const { rows } = await client.query(
       "SELECT to_regclass($1) IS NOT NULL AS exists",
       [`${target.schema}.${target.name}`]
@@ -133,11 +196,30 @@ async function objectAlreadyExists(client, target) {
     return rows[0]?.exists === true;
   }
 
+  if (target.kind === "trigger") {
+    const { rows } = await client.query(
+      `
+        SELECT EXISTS (
+          SELECT 1
+          FROM pg_trigger trg
+          JOIN pg_class tbl ON tbl.oid = trg.tgrelid
+          JOIN pg_namespace n ON n.oid = tbl.relnamespace
+          WHERE n.nspname = $1
+            AND tbl.relname = $2
+            AND trg.tgname = $3
+            AND trg.tgisinternal = FALSE
+        ) AS exists
+      `,
+      [target.schema, target.name, target.triggerName]
+    );
+    return rows[0]?.exists === true;
+  }
+
   return false;
 }
 
 function isIdempotentCreateOrAlterStatement(statement) {
-  const s = statement.trim().toUpperCase();
+  const s = stripLeadingSqlComments(statement).trim().toUpperCase();
   if (
     s.startsWith("CREATE TYPE") ||
     s.startsWith("CREATE TABLE") ||
@@ -157,7 +239,7 @@ function isIdempotentCreateOrAlterStatement(statement) {
 }
 
 function shouldIgnoreIdempotentError(err, statement) {
-  const duplicateCodes = new Set(["42710", "42P07", "42701", "42723", "42P06"]);
+  const duplicateCodes = new Set(["42710", "42P07", "42701", "42723", "42P06", "42P16"]);
   if (!isIdempotentCreateOrAlterStatement(statement)) return false;
   if (duplicateCodes.has(err?.code)) return true;
   return /already exists/i.test(err?.message || "");
@@ -171,7 +253,7 @@ async function applyMigrationFile(client, filePath, fileName) {
   try {
     for (const statement of statements) {
       const target = getStatementTarget(statement);
-      if (await objectAlreadyExists(client, target)) {
+      if (await objectAlreadyExists(client, target) && !target.isReplace) {
         const targetName = target.kind === "constraint" ? target.constraintName : target.name;
         console.log(`[migrations] Skipping existing ${target.kind} ${targetName} in ${fileName}`);
         continue;
