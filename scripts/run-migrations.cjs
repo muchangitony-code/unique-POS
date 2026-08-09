@@ -94,10 +94,11 @@ function getStatementTarget(statement) {
     return { kind: "sequence", ...identifier };
   }
 
-  const createViewMatch = normalized.match(/^CREATE VIEW(?: IF NOT EXISTS)? ([^\s(]+)/i);
+  const createViewMatch = normalized.match(/^CREATE(?: OR REPLACE)? VIEW(?: IF NOT EXISTS)? ([^\s(]+)/i);
   if (createViewMatch) {
     const identifier = parseQualifiedName(createViewMatch[1]);
-    return { kind: "view", ...identifier };
+    const isReplace = /^CREATE OR REPLACE VIEW/i.test(normalized);
+    return { kind: "view", ...identifier, isReplace };
   }
 
   const createMaterializedViewMatch = normalized.match(
@@ -108,7 +109,7 @@ function getStatementTarget(statement) {
     return { kind: "materialized_view", ...identifier };
   }
 
-  const createTriggerMatch = normalized.match(/^CREATE TRIGGER ([^\s]+) .* ON ([^\s(]+)/i);
+  const createTriggerMatch = normalized.match(/^CREATE TRIGGER ([^\s]+) .*? ON ([^\s(]+)/i);
   if (createTriggerMatch) {
     const tableIdentifier = parseQualifiedName(createTriggerMatch[2]);
     const triggerName = createTriggerMatch[1].replace(/^"|"$/g, "");
@@ -247,7 +248,7 @@ async function applyMigrationFile(client, filePath, fileName) {
   try {
     for (const statement of statements) {
       const target = getStatementTarget(statement);
-      if (await objectAlreadyExists(client, target)) {
+      if (await objectAlreadyExists(client, target) && !target.isReplace) {
         const targetName = target.kind === "constraint" ? target.constraintName : target.name;
         console.log(`[migrations] Skipping existing ${target.kind} ${targetName} in ${fileName}`);
         continue;
