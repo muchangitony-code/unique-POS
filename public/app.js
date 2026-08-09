@@ -197,7 +197,21 @@
 
   function applyBrandLogo(node, logoUrl) {
     if (!node) return;
-    const safeLogoUrl = sanitizeImageUrl(logoUrl);
+    const candidate = String(logoUrl || "").trim();
+    let safeLogoUrl = "";
+    if (candidate) {
+      try {
+        if (candidate.startsWith("/")) {
+          const parsed = new URL(candidate, window.location.origin);
+          safeLogoUrl = parsed.pathname + parsed.search + parsed.hash;
+        } else if (/^https?:\/\//i.test(candidate)) {
+          const parsed = new URL(candidate);
+          if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+            safeLogoUrl = parsed.href;
+          }
+        }
+      } catch (_error) {}
+    }
     if (!safeLogoUrl) {
       node.classList.add("hidden");
       node.removeAttribute("src");
