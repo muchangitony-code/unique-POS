@@ -148,6 +148,26 @@ async function ensureMainBranch(client) {
 
 async function bootstrapDatabaseIfNeeded(options = {}) {
   const { databaseUrl } = parseAndValidateDatabaseUrl("bootstrap-db");
+  const pool = new Pool({ connectionString: databaseUrl, ssl: railwaySsl() });
+  const preflightClient = await pool.connect();
+
+  let missingBefore;
+  try {
+    missingBefore = await fetchMissingTables(preflightClient, REQUIRED_TABLES);
+  } finally {
+    preflightClient.release();
+  }
+
+  if (missingBefore.length === 0) {
+    await pool.end();
+    return {
+      migrationsApplied: [],
+      adminBootstrapped: false,
+      branchEnsured: false,
+      settingsEnsured: false,
+      skipped: true
+    };
+  }
 
   const bootstrapAdminEnabled = isEnabled(process.env.UNIQUEPOS_BOOTSTRAP_ADMIN, true);
   const rotateExistingAdminPassword = isEnabled(process.env.UNIQUEPOS_BOOTSTRAP_ADMIN_ROTATE_PASSWORD, false);
@@ -155,21 +175,21 @@ async function bootstrapDatabaseIfNeeded(options = {}) {
   const adminPassword = process.env.UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD || DEFAULT_ADMIN_PASSWORD;
   if (bootstrapAdminEnabled && adminPassword === DEFAULT_ADMIN_PASSWORD) {
     if (nodeEnv === "production") {
+      await pool.end();
       throw new Error("UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD must be set in production.");
     }
     console.warn("[bootstrap-db] Using the default bootstrap admin password; override UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD before production deployment.");
   }
 
-  // Migrations commit independently; the seeding below must stay idempotent so a
-  // failed retry never requires manual cleanup or rerunning old migrations.
-  const migrationResult = await applyMigrations({
-    migrationsDir: options.migrationsDir
-  });
-
-  const pool = new Pool({ connectionString: databaseUrl, ssl: railwaySsl() });
-  const client = await pool.connect();
-
+  let client;
   try {
+    // Migrations commit independently; the seeding below must stay idempotent so a
+    // failed retry never requires manual cleanup or rerunning old migrations.
+    const migrationResult = await applyMigrations({
+      migrationsDir: options.migrationsDir
+    });
+
+    client = await pool.connect();
     const missingAfter = await fetchMissingTables(client, REQUIRED_TABLES);
     if (missingAfter.length > 0) {
       throw new Error(`Database schema is incomplete after migrations. Missing tables: ${missingAfter.join(", ")}`);
@@ -200,12 +220,16 @@ async function bootstrapDatabaseIfNeeded(options = {}) {
     };
   } catch (err) {
     try {
-      await client.query("ROLLBACK");
+      if (client) {
+        await client.query("ROLLBACK");
+      }
     } catch {
     }
     throw err;
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
     await pool.end();
   }
 }

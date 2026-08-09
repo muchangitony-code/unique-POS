@@ -30,6 +30,112 @@ function isTransactionControlStatement(statement) {
   return s === "BEGIN" || s === "COMMIT" || s === "ROLLBACK";
 }
 
+function normalizeStatementWhitespace(statement) {
+  return statement.trim().replace(/\s+/g, " ");
+}
+
+function parseQualifiedName(name, defaultSchema = "public") {
+  const cleaned = name.trim().replace(/;$/, "");
+  const parts = cleaned.split(".").map((part) => part.trim().replace(/^"|"$/g, ""));
+  if (parts.length === 1) {
+    return { schema: defaultSchema, name: parts[0] };
+  }
+  return { schema: parts[parts.length - 2], name: parts[parts.length - 1] };
+}
+
+function getStatementTarget(statement) {
+  const normalized = normalizeStatementWhitespace(statement);
+
+  const createTypeMatch = normalized.match(/CREATE TYPE(?: IF NOT EXISTS)? ([^\s(]+) AS ENUM/i);
+  if (createTypeMatch) {
+    const identifier = parseQualifiedName(createTypeMatch[1]);
+    return { kind: "enum", ...identifier };
+  }
+
+  const createTableMatch = normalized.match(/^CREATE TABLE(?: IF NOT EXISTS)? ([^\s(]+)/i);
+  if (createTableMatch) {
+    const identifier = parseQualifiedName(createTableMatch[1]);
+    return { kind: "table", ...identifier };
+  }
+
+  const createIndexMatch = normalized.match(/^CREATE (?:UNIQUE )?INDEX(?: IF NOT EXISTS)? ([^\s]+) ON /i);
+  if (createIndexMatch) {
+    const identifier = parseQualifiedName(createIndexMatch[1]);
+    return { kind: "index", ...identifier };
+  }
+
+  const alterConstraintMatch = normalized.match(
+    /^ALTER TABLE(?: ONLY)? ([^\s]+) ADD CONSTRAINT ([^\s]+)/i
+  );
+  if (alterConstraintMatch) {
+    const tableIdentifier = parseQualifiedName(alterConstraintMatch[1]);
+    const constraintName = alterConstraintMatch[2].replace(/^"|"$/g, "");
+    return { kind: "constraint", ...tableIdentifier, constraintName };
+  }
+
+  const createExtensionMatch = normalized.match(/^CREATE EXTENSION(?: IF NOT EXISTS)? ([^\s;]+)/i);
+  if (createExtensionMatch) {
+    return { kind: "extension", name: createExtensionMatch[1].replace(/^"|"$/g, "") };
+  }
+
+  return null;
+}
+
+async function objectAlreadyExists(client, target) {
+  if (!target) return false;
+
+  if (target.kind === "enum") {
+    const { rows } = await client.query(
+      `
+        SELECT EXISTS (
+          SELECT 1
+          FROM pg_type t
+          JOIN pg_namespace n ON n.oid = t.typnamespace
+          WHERE n.nspname = $1 AND t.typname = $2 AND t.typtype = 'e'
+        ) AS exists
+      `,
+      [target.schema, target.name]
+    );
+    return rows[0]?.exists === true;
+  }
+
+  if (target.kind === "table" || target.kind === "index") {
+    const { rows } = await client.query(
+      "SELECT to_regclass($1) IS NOT NULL AS exists",
+      [`${target.schema}.${target.name}`]
+    );
+    return rows[0]?.exists === true;
+  }
+
+  if (target.kind === "constraint") {
+    const { rows } = await client.query(
+      `
+        SELECT EXISTS (
+          SELECT 1
+          FROM pg_constraint c
+          JOIN pg_class tbl ON tbl.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = tbl.relnamespace
+          WHERE n.nspname = $1
+            AND tbl.relname = $2
+            AND c.conname = $3
+        ) AS exists
+      `,
+      [target.schema, target.name, target.constraintName]
+    );
+    return rows[0]?.exists === true;
+  }
+
+  if (target.kind === "extension") {
+    const { rows } = await client.query(
+      "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = $1) AS exists",
+      [target.name]
+    );
+    return rows[0]?.exists === true;
+  }
+
+  return false;
+}
+
 function isIdempotentCreateOrAlterStatement(statement) {
   const s = statement.trim().toUpperCase();
   if (
@@ -64,6 +170,12 @@ async function applyMigrationFile(client, filePath, fileName) {
   await client.query("BEGIN");
   try {
     for (const statement of statements) {
+      const target = getStatementTarget(statement);
+      if (await objectAlreadyExists(client, target)) {
+        console.log(`[migrations] Skipping existing ${target.kind} ${target.name} in ${fileName}`);
+        continue;
+      }
+
       if (isIdempotentCreateOrAlterStatement(statement)) {
         // Use a savepoint so a duplicate-object error does not abort the
         // surrounding transaction (PostgreSQL aborts the whole transaction on
