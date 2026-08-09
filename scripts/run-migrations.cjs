@@ -94,10 +94,12 @@ function getStatementTarget(statement) {
     return { kind: "sequence", ...identifier };
   }
 
-  const createViewMatch = normalized.match(/^CREATE(?: OR REPLACE)? VIEW(?: IF NOT EXISTS)? ([^\s(]+)/i);
+  const createViewMatch = normalized.match(
+    /^CREATE(?: (OR REPLACE))? VIEW(?: IF NOT EXISTS)? ([^\s(]+)/i
+  );
   if (createViewMatch) {
-    const identifier = parseQualifiedName(createViewMatch[1]);
-    const isReplace = /^CREATE OR REPLACE VIEW/i.test(normalized);
+    const identifier = parseQualifiedName(createViewMatch[2]);
+    const isReplace = Boolean(createViewMatch[1]);
     return { kind: "view", ...identifier, isReplace };
   }
 
@@ -109,7 +111,9 @@ function getStatementTarget(statement) {
     return { kind: "materialized_view", ...identifier };
   }
 
-  const createTriggerMatch = normalized.match(/^CREATE TRIGGER ([^\s]+) .*? ON ([^\s(]+)/i);
+  const createTriggerMatch = normalized.match(
+    /^CREATE TRIGGER ([^\s]+) (?:BEFORE|AFTER|INSTEAD OF) .*? ON ([^\s(]+)/i
+  );
   if (createTriggerMatch) {
     const tableIdentifier = parseQualifiedName(createTriggerMatch[2]);
     const triggerName = createTriggerMatch[1].replace(/^"|"$/g, "");
