@@ -14,108 +14,132 @@ BEGIN;
 -- Name: expense_payment_method; Type: TYPE; Schema: public; Owner: -
 --
 
-CREATE TYPE public.expense_payment_method AS ENUM (
-    'cash',
-    'mpesa',
-    'bank_transfer',
-    'card'
-);
+DO $$ BEGIN
+  CREATE TYPE public.expense_payment_method AS ENUM (
+      'cash',
+      'mpesa',
+      'bank_transfer',
+      'card'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 
 --
 -- Name: invoice_status; Type: TYPE; Schema: public; Owner: -
 --
 
-CREATE TYPE public.invoice_status AS ENUM (
-    'draft',
-    'sent',
-    'partial',
-    'paid',
-    'overdue',
-    'cancelled'
-);
+DO $$ BEGIN
+  CREATE TYPE public.invoice_status AS ENUM (
+      'draft',
+      'sent',
+      'partial',
+      'paid',
+      'overdue',
+      'cancelled'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 
 --
 -- Name: movement_type; Type: TYPE; Schema: public; Owner: -
 --
 
-CREATE TYPE public.movement_type AS ENUM (
-    'receive',
-    'adjustment',
-    'transfer_in',
-    'transfer_out',
-    'sale',
-    'purchase_return'
-);
+DO $$ BEGIN
+  CREATE TYPE public.movement_type AS ENUM (
+      'receive',
+      'adjustment',
+      'transfer_in',
+      'transfer_out',
+      'sale',
+      'purchase_return'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 
 --
 -- Name: payment_method; Type: TYPE; Schema: public; Owner: -
 --
 
-CREATE TYPE public.payment_method AS ENUM (
-    'cash',
-    'mpesa',
-    'bank_transfer',
-    'card',
-    'credit',
-    'split'
-);
+DO $$ BEGIN
+  CREATE TYPE public.payment_method AS ENUM (
+      'cash',
+      'mpesa',
+      'bank_transfer',
+      'card',
+      'credit',
+      'split'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 
 --
 -- Name: purchase_status; Type: TYPE; Schema: public; Owner: -
 --
 
-CREATE TYPE public.purchase_status AS ENUM (
-    'draft',
-    'ordered',
-    'received',
-    'partial',
-    'cancelled'
-);
+DO $$ BEGIN
+  CREATE TYPE public.purchase_status AS ENUM (
+      'draft',
+      'ordered',
+      'received',
+      'partial',
+      'cancelled'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 
 --
 -- Name: quotation_status; Type: TYPE; Schema: public; Owner: -
 --
 
-CREATE TYPE public.quotation_status AS ENUM (
-    'draft',
-    'sent',
-    'accepted',
-    'rejected',
-    'expired',
-    'converted'
-);
+DO $$ BEGIN
+  CREATE TYPE public.quotation_status AS ENUM (
+      'draft',
+      'sent',
+      'accepted',
+      'rejected',
+      'expired',
+      'converted'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 
 --
 -- Name: sale_status; Type: TYPE; Schema: public; Owner: -
 --
 
-CREATE TYPE public.sale_status AS ENUM (
-    'completed',
-    'refunded',
-    'void'
-);
+DO $$ BEGIN
+  CREATE TYPE public.sale_status AS ENUM (
+      'completed',
+      'refunded',
+      'void'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 
 --
 -- Name: user_role; Type: TYPE; Schema: public; Owner: -
 --
 
-CREATE TYPE public.user_role AS ENUM (
-    'super_admin',
-    'business_owner',
-    'branch_manager',
-    'cashier',
-    'storekeeper',
-    'accountant',
-    'sales_rep',
-    'technician'
-);
+DO $$ BEGIN
+  CREATE TYPE public.user_role AS ENUM (
+      'super_admin',
+      'business_owner',
+      'branch_manager',
+      'cashier',
+      'storekeeper',
+      'accountant',
+      'sales_rep',
+      'technician'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 
 
