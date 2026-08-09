@@ -42204,7 +42204,7 @@ var require_jsonwebtoken = __commonJS({
 
 // artifacts/api-server/src/app.ts
 var import_path = __toESM(require("path"), 1);
-var import_express26 = __toESM(require_express2(), 1);
+var import_express_backups = __toESM(require_express2(), 1);
 var import_cors = __toESM(require_lib3(), 1);
 var import_pino_http = __toESM(require_logger(), 1);
 
@@ -71775,14 +71775,385 @@ router16.patch("/settings/security", requireSuperAdmin, async (req, res) => {
 });
 var settings_default = router16;
 
-// artifacts/api-server/src/routes/reports.ts
+// artifacts/api-server/src/routes/documents.ts
 var import_express17 = __toESM(require_express2(), 1);
+var import_pdfkit = __toESM(require("pdfkit"), 1);
 var router17 = (0, import_express17.Router)();
+function safeNum(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+function fmtCurrency2(value, currency = "KES") {
+  return safeNum(value).toLocaleString("en-KE", { style: "currency", currency, maximumFractionDigits: 2 });
+}
+function normalizePaper(raw, fallback = "a4") {
+  const paper = String(raw || fallback).toLowerCase();
+  if (paper === "58mm" || paper === "80mm" || paper === "a4") return paper;
+  return fallback;
+}
+function paperToPdfSize(paper) {
+  if (paper === "58mm") return [164.4, 900];
+  if (paper === "80mm") return [226.8, 900];
+  return "A4";
+}
+async function getDocSettings() {
+  const [settings] = await db.select().from(businessSettingsTable);
+  if (settings) return settings;
+  const [created] = await db.insert(businessSettingsTable).values({}).returning();
+  return created;
+}
+async function getBranchName(branchId) {
+  if (!branchId) return "Main Branch";
+  const [branch] = await db.select().from(branchesTable).where(eq(branchesTable.id, branchId));
+  return branch?.name ?? `Branch ${branchId}`;
+}
+function htmlEscape2(v) {
+  return String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function dateText2(value) {
+  if (!value) return "—";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString("en-KE", { timeZone: "Africa/Nairobi" });
+}
+function buildDocumentHtml(opts) {
+  const { settings, documentType, documentNumber, partyName, partyEmail, partyPhone, branchName, rows, totals, notes, generatedAt, paper } = opts;
+  const currency = settings.currency || "KES";
+  const logo = settings.logoUrl ? `<img src="${htmlEscape2(settings.logoUrl)}" alt="logo" style="max-height:56px;max-width:160px;object-fit:contain;" />` : "";
+  const widthCss = paper === "58mm" ? "58mm" : paper === "80mm" ? "80mm" : "210mm";
+  const companyName = htmlEscape2(settings.businessName || "UniquePOS");
+  const companyAddress = htmlEscape2(settings.businessAddress || "");
+  const companyPhone = htmlEscape2([settings.businessPhone, settings.businessPhone2].filter(Boolean).join(" / "));
+  const companyEmail = htmlEscape2(settings.businessEmail || "");
+  const website = htmlEscape2(settings.website || "");
+  const taxPin = htmlEscape2(settings.taxNumber || "");
+  const vat = htmlEscape2(settings.vatNumber || "");
+  const footer = htmlEscape2(settings.documentFooter || settings.receiptFooter || "Thank you for your business.");
+  const tableRows = (rows || []).map(
+    (row, idx) => `<tr><td>${idx + 1}</td><td>${htmlEscape2(row.description)}</td><td style="text-align:right;">${safeNum(row.quantity).toLocaleString()}</td><td style="text-align:right;">${fmtCurrency2(row.unitPrice, currency)}</td><td style="text-align:right;">${fmtCurrency2(row.total, currency)}</td></tr>`
+  ).join("");
+  return `<!doctype html><html><head><meta charset="utf-8"/><title>${companyName} - ${htmlEscape2(documentType)} ${htmlEscape2(documentNumber || "")}</title><style>
+  @page { size: ${paper === "a4" ? "A4" : widthCss} auto; margin: 10mm; }
+  body { font-family: Arial, sans-serif; color: #0f172a; }
+  .doc { width: min(${widthCss}, 100%); margin: 0 auto; }
+  .head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; border-bottom:1px solid #cbd5e1; padding-bottom:8px; }
+  .small { color:#475569; font-size:12px; line-height:1.45; }
+  .meta { margin:12px 0; font-size:13px; }
+  table { width:100%; border-collapse: collapse; font-size:12px; }
+  th,td { border:1px solid #cbd5e1; padding:6px; vertical-align:top; }
+  th { background:#f8fafc; text-align:left; }
+  .totals { margin-top:10px; font-size:13px; }
+  .footer { margin-top:14px; border-top:1px dashed #94a3b8; padding-top:8px; font-size:12px; color:#334155; white-space:pre-wrap; }
+  .actions { margin: 14px 0; }
+  @media print { .actions { display:none; } }
+  </style></head><body><div class="doc">
+  <div class="actions"><button onclick="window.print()">Print</button></div>
+  <div class="head"><div>${logo}<h2 style="margin:6px 0 0;">${companyName}</h2><div class="small">${companyAddress}<br/>Tel: ${companyPhone}<br/>Email: ${companyEmail}<br/>Web: ${website}<br/>KRA PIN: ${taxPin}<br/>VAT: ${vat}<br/>Branch: ${htmlEscape2(branchName || "MAIN")}</div></div>
+  <div><h3 style="margin:0;text-transform:uppercase;">${htmlEscape2(documentType)}</h3><div class="small">No: ${htmlEscape2(documentNumber || "—")}<br/>Generated: ${htmlEscape2(generatedAt)}<br/>Party: ${htmlEscape2(partyName || "Walk-in")}<br/>Phone: ${htmlEscape2(partyPhone || "—")}<br/>Email: ${htmlEscape2(partyEmail || "—")}</div></div></div>
+  <div class="meta">${htmlEscape2(notes || "")}</div>
+  <table><thead><tr><th>#</th><th>Description</th><th>Qty</th><th>Unit</th><th>Total</th></tr></thead><tbody>${tableRows || '<tr><td colspan="5">No line items</td></tr>'}</tbody></table>
+  <div class="totals"><strong>Subtotal:</strong> ${fmtCurrency2(totals.subtotal, currency)} &nbsp; <strong>Tax:</strong> ${fmtCurrency2(totals.tax, currency)} &nbsp; <strong>Discount:</strong> ${fmtCurrency2(totals.discount, currency)} &nbsp; <strong>Grand Total:</strong> ${fmtCurrency2(totals.total, currency)}</div>
+  <div class="footer">${footer}</div></div></body></html>`;
+}
+async function resolveDocumentPayload(req, type, id) {
+  const settings = await getDocSettings();
+  const requestedType = type;
+  const mappedType = type === "payment_receipt" ? "receipt" : type === "delivery_note" ? "invoice" : type === "credit_note" ? "invoice" : type;
+  type = mappedType;
+  if (type === "invoice") {
+    const [invoice] = await db.select().from(invoicesTable).where(eq(invoicesTable.id, id));
+    if (!invoice || !isBranchInScope(req, invoice.branchId)) return null;
+    const items = await db.select().from(invoiceItemsTable).where(eq(invoiceItemsTable.invoiceId, invoice.id));
+    const [customer] = invoice.customerId ? await db.select().from(customersTable).where(eq(customersTable.id, invoice.customerId)) : [null];
+    const invoiceTotals = {
+      subtotal: invoice.subtotal,
+      tax: invoice.taxAmount,
+      discount: invoice.discountAmount,
+      total: requestedType === "credit_note" ? -safeNum(invoice.total) : invoice.total
+    };
+    return {
+      settings,
+      documentType: requestedType === "delivery_note" ? "Delivery Note" : requestedType === "credit_note" ? "Credit Note" : "Invoice",
+      documentNumber: invoice.invoiceNumber,
+      branchName: await getBranchName(invoice.branchId),
+      partyName: customer?.name ?? "Walk-in",
+      partyEmail: customer?.email ?? "",
+      partyPhone: customer?.phone ?? "",
+      notes: invoice.notes || settings.invoicePaymentTerms || "",
+      rows: items.map((i) => ({ description: i.description || `Product #${i.productId}`, quantity: i.quantity, unitPrice: i.unitPrice, total: i.total })),
+      totals: invoiceTotals
+    };
+  }
+  if (type === "quotation") {
+    const [quotation] = await db.select().from(quotationsTable).where(eq(quotationsTable.id, id));
+    if (!quotation || !isBranchInScope(req, quotation.branchId)) return null;
+    const items = await db.select().from(quotationItemsTable).where(eq(quotationItemsTable.quotationId, quotation.id));
+    const [customer] = quotation.customerId ? await db.select().from(customersTable).where(eq(customersTable.id, quotation.customerId)) : [null];
+    return {
+      settings,
+      documentType: "Quotation",
+      documentNumber: quotation.quotationNumber,
+      branchName: await getBranchName(quotation.branchId),
+      partyName: customer?.name ?? "Walk-in",
+      partyEmail: customer?.email ?? "",
+      partyPhone: customer?.phone ?? "",
+      notes: [quotation.notes, quotation.paymentTerms].filter(Boolean).join("\n"),
+      rows: items.map((i) => ({ description: i.description || `Product #${i.productId}`, quantity: i.quantity, unitPrice: i.unitPrice, total: i.total })),
+      totals: { subtotal: quotation.subtotal, tax: quotation.taxAmount, discount: quotation.discountAmount, total: quotation.total }
+    };
+  }
+  if (type === "receipt") {
+    const [sale] = await db.select().from(salesTable).where(eq(salesTable.id, id));
+    if (!sale || !isBranchInScope(req, sale.branchId)) return null;
+    const items = await db.select().from(saleItemsTable).where(eq(saleItemsTable.saleId, sale.id));
+    const [customer] = sale.customerId ? await db.select().from(customersTable).where(eq(customersTable.id, sale.customerId)) : [null];
+    return {
+      settings,
+      documentType: "Receipt",
+      documentNumber: sale.receiptNumber,
+      branchName: await getBranchName(sale.branchId),
+      partyName: customer?.name ?? "Walk-in",
+      partyEmail: customer?.email ?? "",
+      partyPhone: customer?.phone ?? "",
+      notes: `Payment method: ${sale.paymentMethod || "cash"}`,
+      rows: items.map((i) => ({ description: `Product #${i.productId}`, quantity: i.quantity, unitPrice: i.unitPrice, total: i.total })),
+      totals: { subtotal: sale.subtotal, tax: sale.taxAmount ?? 0, discount: sale.discountAmount, total: sale.total }
+    };
+  }
+  if (type === "customer_statement") {
+    const [customer] = await db.select().from(customersTable).where(eq(customersTable.id, id));
+    if (!customer || !isBranchInScope(req, customer.branchId)) return null;
+    const invoices = await db.select().from(invoicesTable).where(eq(invoicesTable.customerId, id)).orderBy(sql`${invoicesTable.createdAt} desc`).limit(200);
+    return {
+      settings,
+      documentType: "Customer Statement",
+      documentNumber: `CST-${customer.id}`,
+      branchName: await getBranchName(customer.branchId),
+      partyName: customer.name,
+      partyEmail: customer.email ?? "",
+      partyPhone: customer.phone ?? "",
+      notes: "Outstanding invoices and balances.",
+      rows: invoices.map((i) => ({ description: `${i.invoiceNumber} (${dateText2(i.createdAt)})`, quantity: 1, unitPrice: i.total, total: i.balanceDue })),
+      totals: {
+        subtotal: invoices.reduce((sum, i) => sum + safeNum(i.total), 0),
+        tax: 0,
+        discount: 0,
+        total: invoices.reduce((sum, i) => sum + safeNum(i.balanceDue), 0)
+      }
+    };
+  }
+  if (type === "supplier_statement") {
+    const [supplier] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, id));
+    if (!supplier || !isBranchInScope(req, supplier.branchId)) return null;
+    const purchases = await db.select().from(purchasesTable).where(eq(purchasesTable.supplierId, id)).orderBy(sql`${purchasesTable.createdAt} desc`).limit(200);
+    return {
+      settings,
+      documentType: "Supplier Statement",
+      documentNumber: `SST-${supplier.id}`,
+      branchName: await getBranchName(supplier.branchId),
+      partyName: supplier.name,
+      partyEmail: supplier.email ?? "",
+      partyPhone: supplier.phone ?? "",
+      notes: "Purchase order history and balances.",
+      rows: purchases.map((p) => ({ description: `${p.purchaseNumber} (${dateText2(p.createdAt)})`, quantity: 1, unitPrice: p.total, total: p.total })),
+      totals: {
+        subtotal: purchases.reduce((sum, p) => sum + safeNum(p.total), 0),
+        tax: purchases.reduce((sum, p) => sum + safeNum(p.taxAmount), 0),
+        discount: 0,
+        total: purchases.reduce((sum, p) => sum + safeNum(p.total), 0)
+      }
+    };
+  }
+  if (type === "purchase_order" || type === "goods_received_note") {
+    const [purchase] = await db.select().from(purchasesTable).where(eq(purchasesTable.id, id));
+    if (!purchase || !isBranchInScope(req, purchase.branchId)) return null;
+    const [supplier] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, purchase.supplierId));
+    const items = await db.select().from(purchaseItemsTable).where(eq(purchaseItemsTable.purchaseId, purchase.id));
+    return {
+      settings,
+      documentType: type === "purchase_order" ? "Purchase Order" : "Goods Received Note",
+      documentNumber: purchase.purchaseNumber,
+      branchName: await getBranchName(purchase.branchId),
+      partyName: supplier?.name ?? "Supplier",
+      partyEmail: supplier?.email ?? "",
+      partyPhone: supplier?.phone ?? "",
+      notes: [purchase.notes, type === "goods_received_note" ? `Received date: ${purchase.receivedDate || "Pending"}` : `Expected date: ${purchase.expectedDate || "—"}`].filter(Boolean).join("\n"),
+      rows: items.map((i) => ({ description: `Product #${i.productId}`, quantity: i.quantity, unitPrice: i.unitCost, total: i.total })),
+      totals: { subtotal: purchase.subtotal, tax: purchase.taxAmount, discount: 0, total: purchase.total }
+    };
+  }
+  if (type === "stock_transfer_note") {
+    const [transfer] = await db.select().from(stockTransfersTable).where(eq(stockTransfersTable.id, id));
+    if (!transfer || (!isBranchInScope(req, transfer.sourceBranchId) && !isBranchInScope(req, transfer.destinationBranchId))) return null;
+    const [product] = await db.select().from(productsTable).where(eq(productsTable.id, transfer.productId));
+    return {
+      settings,
+      documentType: "Stock Transfer Note",
+      documentNumber: transfer.transferNumber,
+      branchName: `${await getBranchName(transfer.sourceBranchId)} → ${await getBranchName(transfer.destinationBranchId)}`,
+      partyName: "Internal Transfer",
+      partyEmail: "",
+      partyPhone: "",
+      notes: [transfer.notes, transfer.status ? `Status: ${transfer.status}` : ""].filter(Boolean).join("\n"),
+      rows: [{ description: product?.productName || `Product #${transfer.productId}`, quantity: transfer.quantity, unitPrice: 0, total: 0 }],
+      totals: { subtotal: 0, tax: 0, discount: 0, total: 0 }
+    };
+  }
+  if (type === "stock_adjustment_report") {
+    const movements = await db.select().from(stockMovementsTable).where(and(eq(stockMovementsTable.type, "adjust"), branchCondition(stockMovementsTable.branchId, req))).orderBy(sql`${stockMovementsTable.createdAt} desc`).limit(200);
+    const productIds = movements.map((m) => m.productId).filter(Boolean);
+    const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(inArray(productsTable.id, productIds)) : [];
+    const map2 = new Map(products.map((p) => [p.id, p.name]));
+    const branchName = movements[0] ? await getBranchName(movements[0].branchId) : "All branches";
+    return {
+      settings,
+      documentType: "Stock Adjustment Report",
+      documentNumber: `SAR-${new Date().toISOString().slice(0, 10)}`,
+      branchName,
+      partyName: "Internal",
+      partyEmail: "",
+      partyPhone: "",
+      notes: "Latest stock adjustments",
+      rows: movements.map((m) => ({ description: `${map2.get(m.productId) || `Product #${m.productId}`} (${dateText2(m.createdAt)})`, quantity: m.quantity, unitPrice: 0, total: 0 })),
+      totals: { subtotal: 0, tax: 0, discount: 0, total: 0 }
+    };
+  }
+  return null;
+}
+async function renderPdfBuffer(payload, paper) {
+  return await new Promise((resolve4, reject) => {
+    const chunks = [];
+    const doc = new import_pdfkit.default({ margin: 28, size: paperToPdfSize(paper) });
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("error", reject);
+    doc.on("end", () => resolve4(Buffer.concat(chunks)));
+    const currency = payload.settings.currency || "KES";
+    doc.fontSize(16).text(payload.settings.businessName || "UniquePOS", { align: "left" });
+    doc.fontSize(10).text(`Address: ${payload.settings.businessAddress || "-"}`);
+    doc.text(`Tel: ${[payload.settings.businessPhone, payload.settings.businessPhone2].filter(Boolean).join(" / ") || "-"}`);
+    doc.text(`Email: ${payload.settings.businessEmail || "-"}  Web: ${payload.settings.website || "-"}`);
+    doc.text(`KRA PIN: ${payload.settings.taxNumber || "-"}   VAT: ${payload.settings.vatNumber || "-"}`);
+    doc.moveDown(0.5);
+    doc.fontSize(13).text(`${payload.documentType.toUpperCase()}  ${payload.documentNumber || ""}`, { align: "left" });
+    doc.fontSize(10).text(`Branch: ${payload.branchName}  Generated: ${dateText2(/* @__PURE__ */ new Date())}`);
+    doc.text(`Party: ${payload.partyName || "Walk-in"}  Phone: ${payload.partyPhone || "-"}  Email: ${payload.partyEmail || "-"}`);
+    doc.moveDown(0.3);
+    (payload.rows || []).forEach((row, index) => {
+      doc.fontSize(9).text(`${index + 1}. ${row.description} | Qty ${safeNum(row.quantity)} | Unit ${fmtCurrency2(row.unitPrice, currency)} | Total ${fmtCurrency2(row.total, currency)}`);
+    });
+    doc.moveDown(0.5);
+    doc.fontSize(10).text(`Subtotal: ${fmtCurrency2(payload.totals.subtotal, currency)}`);
+    doc.text(`Tax: ${fmtCurrency2(payload.totals.tax, currency)}`);
+    doc.text(`Discount: ${fmtCurrency2(payload.totals.discount, currency)}`);
+    doc.fontSize(11).text(`Grand Total: ${fmtCurrency2(payload.totals.total, currency)}`);
+    doc.moveDown(0.4);
+    if (payload.notes) doc.fontSize(9).text(`Notes: ${payload.notes}`);
+    doc.moveDown(0.4);
+    doc.fontSize(9).text(payload.settings.documentFooter || payload.settings.receiptFooter || "Thank you for your business.");
+    doc.end();
+  });
+}
+router17.get("/documents/:type/:id/preview", async (req, res) => {
+  const type = String(req.params.type || "").toLowerCase();
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    res.status(400).json({ error: "invalid document id" });
+    return;
+  }
+  const payload = await resolveDocumentPayload(req, type, id);
+  if (!payload) {
+    res.status(404).json({ error: "document not found" });
+    return;
+  }
+  const paper = normalizePaper(req.query.paper, type === "receipt" ? "80mm" : "a4");
+  const html = buildDocumentHtml({
+    ...payload,
+    paper,
+    generatedAt: dateText2(/* @__PURE__ */ new Date())
+  });
+  res.json({ html });
+});
+router17.get("/documents/:type/:id/pdf", async (req, res) => {
+  const type = String(req.params.type || "").toLowerCase();
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    res.status(400).json({ error: "invalid document id" });
+    return;
+  }
+  const payload = await resolveDocumentPayload(req, type, id);
+  if (!payload) {
+    res.status(404).json({ error: "document not found" });
+    return;
+  }
+  const paper = normalizePaper(req.query.paper, type === "receipt" ? "80mm" : "a4");
+  const pdf = await renderPdfBuffer(payload, paper);
+  const fileBase = `${type}-${payload.documentNumber || id}`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${fileBase}.pdf"`);
+  res.send(pdf);
+});
+router17.post("/documents/:type/:id/email", async (req, res) => {
+  const type = String(req.params.type || "").toLowerCase();
+  const id = Number(req.params.id);
+  const to = String(req.body?.to || "").trim();
+  if (!Number.isFinite(id) || id <= 0) {
+    res.status(400).json({ error: "invalid document id" });
+    return;
+  }
+  if (!to) {
+    res.status(400).json({ error: "recipient email is required" });
+    return;
+  }
+  const payload = await resolveDocumentPayload(req, type, id);
+  if (!payload) {
+    res.status(404).json({ error: "document not found" });
+    return;
+  }
+  const smtpHost = payload.settings.smtpHost;
+  if (!smtpHost) {
+    res.status(400).json({ error: "SMTP host is not configured in settings" });
+    return;
+  }
+  const pdf = await renderPdfBuffer(payload, type === "receipt" ? "80mm" : "a4");
+  const transport = createTransport({
+    host: smtpHost,
+    port: payload.settings.smtpPort ?? 587,
+    user: payload.settings.smtpUser ?? "",
+    from: payload.settings.smtpFrom ?? payload.settings.smtpUser ?? ""
+  });
+  const subject = `${payload.settings.businessName || "UniquePOS"} ${payload.documentType} ${payload.documentNumber || ""}`.trim();
+  const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5;">
+  <h2 style="margin:0 0 10px;">${htmlEscape2(payload.documentType)} ${htmlEscape2(payload.documentNumber || "")}</h2>
+  <p>Hello ${htmlEscape2(payload.partyName || "Customer")},</p>
+  <p>Please find your ${htmlEscape2(payload.documentType.toLowerCase())} attached as PDF.</p>
+  <p>Total: <strong>${fmtCurrency2(payload.totals.total, payload.settings.currency || "KES")}</strong></p>
+  <p>${htmlEscape2(payload.settings.businessName || "UniquePOS")}<br/>${htmlEscape2(payload.settings.businessPhone || "")}</p>
+  </body></html>`;
+  const fileBase = `${type}-${payload.documentNumber || id}`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+  await transport.sendMail({
+    from: payload.settings.smtpFrom || payload.settings.smtpUser,
+    to,
+    subject,
+    html,
+    text: `${payload.documentType} ${payload.documentNumber || ""}\nTotal: ${fmtCurrency2(payload.totals.total, payload.settings.currency || "KES")}`,
+    attachments: [{ filename: `${fileBase}.pdf`, content: pdf, contentType: "application/pdf" }]
+  });
+  await logAudit(req, {
+    action: "document.email_sent",
+    entityType: "document",
+    description: `Emailed ${type} ${payload.documentNumber || id} to ${to}`
+  });
+  res.json({ ok: true });
+});
+var documents_default = router17;
+
+// artifacts/api-server/src/routes/reports.ts
+var import_express18 = __toESM(require_express2(), 1);
+var router18 = (0, import_express18.Router)();
 function combine2(...conds) {
   const list = conds.filter((c) => c !== void 0);
   return list.length ? and(...list) : void 0;
 }
-router17.get("/reports/sales-summary", async (req, res) => {
+router18.get("/reports/sales-summary", async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) {
     res.status(400).json({ error: "from and to dates required" });
@@ -71816,7 +72187,7 @@ router17.get("/reports/sales-summary", async (req, res) => {
     daily_breakdown: daily.map((d) => ({ date: d.date, total: Number(d.total), count: Number(d.count) }))
   });
 });
-router17.get("/reports/profit-loss", async (req, res) => {
+router18.get("/reports/profit-loss", async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) {
     res.status(400).json({ error: "from and to dates required" });
@@ -71850,7 +72221,7 @@ router17.get("/reports/profit-loss", async (req, res) => {
     expense_breakdown: expenseByCategory.map((e) => ({ category: e.category, amount: Number(e.amount) }))
   });
 });
-router17.get("/reports/inventory-valuation", async (req, res) => {
+router18.get("/reports/inventory-valuation", async (req, res) => {
   const products = await db.select().from(productsTable).orderBy(productsTable.productName);
   const categories = await db.select().from(categoriesTable);
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c.name]));
@@ -71880,7 +72251,7 @@ router17.get("/reports/inventory-valuation", async (req, res) => {
   });
   res.json({ total_cost_value: totalCostValue, total_selling_value: totalSellingValue, potential_profit: totalSellingValue - totalCostValue, items });
 });
-router17.get("/reports/branch-comparison", requireSuperAdmin, async (req, res) => {
+router18.get("/reports/branch-comparison", requireSuperAdmin, async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) {
     res.status(400).json({ error: "from and to dates required" });
@@ -71942,12 +72313,12 @@ router17.get("/reports/branch-comparison", requireSuperAdmin, async (req, res) =
   });
   res.json({ branches: rows });
 });
-var reports_default = router17;
+var reports_default = router18;
 
 // artifacts/api-server/src/routes/admin.ts
-var import_express18 = __toESM(require_express2(), 1);
-var router18 = (0, import_express18.Router)();
-router18.post("/admin/reset-transactional-data", async (req, res) => {
+var import_express19 = __toESM(require_express2(), 1);
+var router19 = (0, import_express19.Router)();
+router19.post("/admin/reset-transactional-data", async (req, res) => {
   const user = req.user;
   if (!user || user.role !== "super_admin") {
     res.status(403).json({ error: "super_admin role required" });
@@ -71991,10 +72362,10 @@ router18.post("/admin/reset-transactional-data", async (req, res) => {
     res.status(500).json({ error: "Reset failed", detail: message });
   }
 });
-var admin_default = router18;
+var admin_default = router19;
 
 // artifacts/api-server/src/routes/backups.ts
-var import_express19 = __toESM(require_express2(), 1);
+var import_express26 = __toESM(require_express2(), 1);
 
 // artifacts/api-server/src/lib/backup.local.ts
 var import_child_process = require("child_process");
@@ -72143,7 +72514,7 @@ async function getBackupStream(filename) {
 }
 
 // artifacts/api-server/src/routes/backups.ts
-var router19 = (0, import_express19.Router)();
+var router_backups = (0, import_express_backups.Router)();
 var ADMIN_ROLES = /* @__PURE__ */ new Set(["super_admin", "business_owner"]);
 function sanitizeFilename(raw) {
   return raw.replace(/[^a-zA-Z0-9._-]/g, "");
@@ -72165,7 +72536,7 @@ function nowEAT() {
     timeStyle: "short"
   });
 }
-router19.get("/admin/backups/status", async (req, res) => {
+router_backups.get("/admin/backups/status", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -72185,7 +72556,7 @@ router19.get("/admin/backups/status", async (req, res) => {
     res.status(500).json({ error: "Failed to get backup status" });
   }
 });
-router19.get("/admin/backups", async (req, res) => {
+router_backups.get("/admin/backups", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -72198,7 +72569,7 @@ router19.get("/admin/backups", async (req, res) => {
     res.status(500).json({ error: "Failed to list backups" });
   }
 });
-router19.post("/admin/backups/run", async (req, res) => {
+router_backups.post("/admin/backups/run", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -72260,7 +72631,7 @@ router19.post("/admin/backups/run", async (req, res) => {
     }
   }
 });
-router19.post("/admin/backups/test-email", async (req, res) => {
+router_backups.post("/admin/backups/test-email", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -72298,7 +72669,7 @@ router19.post("/admin/backups/test-email", async (req, res) => {
     res.status(500).json({ error: "Failed to send test email", detail: message });
   }
 });
-router19.post("/admin/backups/:filename/restore", async (req, res) => {
+router_backups.post("/admin/backups/:filename/restore", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -72327,7 +72698,7 @@ router19.post("/admin/backups/:filename/restore", async (req, res) => {
     res.status(500).json({ error: "Restore failed", detail: message });
   }
 });
-router19.get("/admin/backups/:filename/download", async (req, res) => {
+router_backups.get("/admin/backups/:filename/download", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -72355,7 +72726,7 @@ router19.get("/admin/backups/:filename/download", async (req, res) => {
     res.status(404).json({ error: message });
   }
 });
-var backups_default = router19;
+var backups_default = router_backups;
 
 // artifacts/api-server/src/routes/audit-log.ts
 var import_express20 = __toESM(require_express2(), 1);
@@ -73078,6 +73449,7 @@ router25.use("/expenses", requireRole("administrator"));
 router25.use("/audit-log", requireRole("administrator"));
 router25.use("/security", requireRole("administrator"));
 router25.use("/reports", requireRole("administrator", "manager"));
+router25.use("/documents", requireRole("administrator", "manager", "sales_cashier", "storekeeper", "accountant"));
 router25.use("/products", requireRole("administrator", "manager", "storekeeper"));
 router25.use("/inventory", requireRole("administrator", "manager", "storekeeper"));
 router25.use("/purchases", requireRole("administrator", "manager", "storekeeper"));
@@ -73107,6 +73479,7 @@ router25.use(expenses_default);
 router25.use(pos_default);
 router25.use(users_default);
 router25.use(settings_default);
+router25.use(documents_default);
 router25.use(reports_default);
 router25.use(branches_default);
 router25.use(security_default);
