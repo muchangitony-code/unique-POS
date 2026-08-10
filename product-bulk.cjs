@@ -207,6 +207,7 @@ function createProductBulkRouter(deps) {
   }
 
   function looksLikeDelimitedText(buffer) {
+    if (!Buffer.isBuffer(buffer)) return false;
     const sample = buffer.subarray(0, Math.min(buffer.length, 4096)).toString("utf8").trim();
     if (!sample) return false;
     const lines = sample.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 10);
@@ -444,18 +445,19 @@ function createProductBulkRouter(deps) {
     const nextMarker = Buffer.from(`\r\n--${boundary}`);
     const fields = {};
     let file = null;
-    let cursor = body.indexOf(firstMarker);
-    while (cursor !== -1) {
-      let partStart = cursor + firstMarker.length;
-      if (body[partStart] === 45 && body[partStart + 1] === 45) break;
-      if (body[partStart] === 13 && body[partStart + 1] === 10) partStart += 2;
+    const firstBoundaryIndex = body.indexOf(firstMarker);
+    if (firstBoundaryIndex === -1) throw importValidationError("Invalid multipart upload. Could not locate file boundary.");
+    let cursor = firstBoundaryIndex + firstMarker.length;
+    while (cursor < body.length) {
+      if (body[cursor] === 45 && body[cursor + 1] === 45) break;
+      if (body[cursor] === 13 && body[cursor + 1] === 10) cursor += 2;
+      const partStart = cursor;
       const nextBoundary = body.indexOf(nextMarker, partStart);
       if (nextBoundary === -1) break;
-      const nextCursor = nextBoundary + nextMarker.length - firstMarker.length;
       const partBuffer = body.subarray(partStart, nextBoundary);
       const headerEnd = partBuffer.indexOf(Buffer.from("\r\n\r\n"));
       if (headerEnd < 0) {
-        cursor = nextCursor;
+        cursor = nextBoundary + nextMarker.length;
         continue;
       }
       const headerText = partBuffer.subarray(0, headerEnd).toString("utf8");
@@ -472,7 +474,7 @@ function createProductBulkRouter(deps) {
       const disposition = headers["content-disposition"] || "";
       const nameMatch = disposition.match(/name="([^"]+)"/i);
       if (!nameMatch) {
-        cursor = nextCursor;
+        cursor = nextBoundary + nextMarker.length;
         continue;
       }
       const fieldName = nameMatch[1];
@@ -480,7 +482,7 @@ function createProductBulkRouter(deps) {
       if (fileNameMatch) {
         const fileName = trimText(fileNameMatch[1]);
         if (!fileName) {
-          cursor = nextCursor;
+          cursor = nextBoundary + nextMarker.length;
           continue;
         }
         file = {
@@ -492,7 +494,7 @@ function createProductBulkRouter(deps) {
       } else {
         fields[fieldName] = trimText(dataBuffer.toString("utf8"));
       }
-      cursor = nextCursor;
+      cursor = nextBoundary + nextMarker.length;
     }
     if (!file) throw importValidationError("No file was uploaded. Attach a CSV, Excel, or PDF file and try again.");
     return { fields, file };
@@ -1089,7 +1091,7 @@ function createProductBulkRouter(deps) {
         preview: draft.rows.slice(0, 100)
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to parse uploaded import file.";
+      const message = error instanceof Error ? error.message : String(error);
       console.error("[products.imports.upload] Failed to parse upload", {
         error: message,
         contentType: req.headers["content-type"] || null
