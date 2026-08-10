@@ -95,6 +95,7 @@ function createProductBulkRouter(deps) {
   };
   let ensureSchemaPromise = null;
   const activeJobs = new Map();
+  const IMPORT_ERROR_STATUS = 400;
 
   router.use("/products/imports", (req, res, next) => {
     const role = req.user?.role;
@@ -178,6 +179,12 @@ function createProductBulkRouter(deps) {
     return String(value == null ? "" : value).trim();
   }
 
+  function importValidationError(message) {
+    const error = new Error(message);
+    error.statusCode = IMPORT_ERROR_STATUS;
+    return error;
+  }
+
   function extensionFromName(fileName) {
     return path.extname(trimText(fileName)).toLowerCase();
   }
@@ -216,16 +223,16 @@ function createProductBulkRouter(deps) {
       "application/octet-stream"
     ]);
     const pdfMimes = new Set(["application/pdf"]);
-    if (extension === ".csv" || hint === "csv" || csvMimes.has(mime) && looksLikeDelimitedText(buffer)) {
+    if (extension === ".csv" || hint === "csv" || (csvMimes.has(mime) && looksLikeDelimitedText(buffer))) {
       return { sourceType: "csv", extension: extension || ".csv", mimeType: mime || "text/csv" };
     }
-    if (extension === ".xlsx" || extension === ".xls" || hint === "xlsx" || hint === "xls" || xlsxMimes.has(mime) && (isZipBuffer(buffer) || isOleBuffer(buffer))) {
+    if (extension === ".xlsx" || extension === ".xls" || hint === "xlsx" || hint === "xls" || (xlsxMimes.has(mime) && (isZipBuffer(buffer) || isOleBuffer(buffer)))) {
       return { sourceType: "xlsx", extension: extension || (isOleBuffer(buffer) ? ".xls" : ".xlsx"), mimeType: mime || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
     }
     if (extension === ".pdf" || hint === "pdf" || pdfMimes.has(mime) || isPdfBuffer(buffer)) {
       return { sourceType: "pdf", extension: extension || ".pdf", mimeType: mime || "application/pdf" };
     }
-    throw new Error("Unsupported import file. Upload CSV (.csv), Excel (.xlsx or .xls), or text-based PDF (.pdf).");
+    throw importValidationError("Unsupported import file. Upload CSV (.csv), Excel (.xlsx or .xls), or text-based PDF (.pdf).");
   }
 
   function normalizedNameKey(value) {
@@ -375,19 +382,19 @@ function createProductBulkRouter(deps) {
         return rowsFromMatrix(rows);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Unable to read Excel file. Please upload a valid .xlsx or .xls file. ${message}`);
+        throw importValidationError(`Unable to read Excel file. Please upload a valid .xlsx or .xls file. ${message}`);
       }
     }
     if (extension === ".pdf" || source_type === "pdf") {
       const parsed = await pdfParse(buffer);
       const lines = String(parsed.text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
       if (!lines.length) {
-        throw new Error("No selectable text was detected in the PDF. Upload a text-based PDF or use CSV/Excel instead.");
+        throw importValidationError("No selectable text was detected in the PDF. Upload a text-based PDF or use CSV/Excel instead.");
       }
       const matrix = lines.map((line) => line.includes("\t") ? line.split("\t") : line.split(/\s{2,}/g));
       return rowsFromMatrix(matrix);
     }
-    throw new Error("Unsupported import file. Upload CSV (.csv), Excel (.xlsx or .xls), or text-based PDF (.pdf).");
+    throw importValidationError("Unsupported import file. Upload CSV (.csv), Excel (.xlsx or .xls), or text-based PDF (.pdf).");
   }
 
   function collectRawBody(req, limitBytes) {
@@ -401,7 +408,7 @@ function createProductBulkRouter(deps) {
         size += chunk.length;
         if (size > max) {
           aborted = true;
-          reject(new Error("Upload too large. Maximum file size is 10 MB."));
+          reject(importValidationError("Upload too large. Maximum file size is 10 MB."));
           req.destroy();
           return;
         }
@@ -415,26 +422,36 @@ function createProductBulkRouter(deps) {
   async function parseMultipartUpload(req) {
     const contentType = trimText(req.headers["content-type"] || "");
     if (!/^multipart\/form-data/i.test(contentType)) {
-      throw new Error("Upload must use multipart/form-data.");
+      throw importValidationError("Upload must use multipart/form-data.");
     }
     const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
     const boundary = trimText(boundaryMatch?.[1] || boundaryMatch?.[2]);
-    if (!boundary) throw new Error("Invalid multipart upload. Missing boundary.");
+    if (!boundary) throw importValidationError("Invalid multipart upload. Missing boundary.");
     const body = await collectRawBody(req, 10 * 1024 * 1024);
-    if (!body.length) throw new Error("No file data received. Please select a file and try again.");
-    const marker = `--${boundary}`;
+    if (!body.length) throw importValidationError("No file data received. Please select a file and try again.");
+    const firstMarker = Buffer.from(`--${boundary}`);
+    const nextMarker = Buffer.from(`\r\n--${boundary}`);
     const fields = {};
     let file = null;
-    for (const rawPart of body.toString("latin1").split(marker)) {
-      if (!rawPart || rawPart === "--\r\n" || rawPart === "--") continue;
-      let part = rawPart;
-      if (part.startsWith("\r\n")) part = part.slice(2);
-      if (part.endsWith("\r\n")) part = part.slice(0, -2);
-      if (part.endsWith("--")) part = part.slice(0, -2);
-      const headerEnd = part.indexOf("\r\n\r\n");
-      if (headerEnd < 0) continue;
-      const headerText = part.slice(0, headerEnd);
-      const dataText = part.slice(headerEnd + 4);
+    let cursor = body.indexOf(firstMarker);
+    while (cursor !== -1) {
+      let partStart = cursor + firstMarker.length;
+      if (body[partStart] === 45 && body[partStart + 1] === 45) break;
+      if (body[partStart] === 13 && body[partStart + 1] === 10) partStart += 2;
+      const nextBoundary = body.indexOf(nextMarker, partStart);
+      if (nextBoundary === -1) break;
+      const nextCursor = nextBoundary + 2;
+      const partBuffer = body.subarray(partStart, nextBoundary);
+      const headerEnd = partBuffer.indexOf(Buffer.from("\r\n\r\n"));
+      if (headerEnd < 0) {
+        cursor = nextCursor;
+        continue;
+      }
+      const headerText = partBuffer.subarray(0, headerEnd).toString("utf8");
+      let dataBuffer = partBuffer.subarray(headerEnd + 4);
+      if (dataBuffer.length >= 2 && dataBuffer[dataBuffer.length - 2] === 13 && dataBuffer[dataBuffer.length - 1] === 10) {
+        dataBuffer = dataBuffer.subarray(0, dataBuffer.length - 2);
+      }
       const headers = {};
       headerText.split("\r\n").forEach((line) => {
         const index = line.indexOf(":");
@@ -443,13 +460,18 @@ function createProductBulkRouter(deps) {
       });
       const disposition = headers["content-disposition"] || "";
       const nameMatch = disposition.match(/name="([^"]+)"/i);
-      if (!nameMatch) continue;
+      if (!nameMatch) {
+        cursor = nextCursor;
+        continue;
+      }
       const fieldName = nameMatch[1];
       const fileNameMatch = disposition.match(/filename="([^"]*)"/i);
-      const dataBuffer = Buffer.from(dataText, "latin1");
       if (fileNameMatch) {
         const fileName = trimText(fileNameMatch[1]);
-        if (!fileName) continue;
+        if (!fileName) {
+          cursor = nextCursor;
+          continue;
+        }
         file = {
           fieldName,
           fileName: path.basename(fileName),
@@ -459,8 +481,9 @@ function createProductBulkRouter(deps) {
       } else {
         fields[fieldName] = trimText(dataBuffer.toString("utf8"));
       }
+      cursor = nextCursor;
     }
-    if (!file) throw new Error("No file was uploaded. Attach a CSV, Excel, or PDF file and try again.");
+    if (!file) throw importValidationError("No file was uploaded. Attach a CSV, Excel, or PDF file and try again.");
     return { fields, file };
   }
 
@@ -626,6 +649,7 @@ function createProductBulkRouter(deps) {
       duplicate_count: Number(job.duplicate_count || 0),
       error_count: Number(job.error_count || 0),
       imported_count: Number(job.created_count || 0) + Number(job.updated_count || 0),
+      failed_count: Number(job.error_count || 0),
       failed_rows: Number(job.error_count || 0),
       created_by_id: job.created_by_id,
       created_by_name: job.created_by_name,
@@ -1062,7 +1086,7 @@ function createProductBulkRouter(deps) {
         error: message,
         contentType: req.headers["content-type"] || null
       });
-      const status = /^Unsupported import file|^Upload must use multipart\/form-data|^Invalid multipart upload|^No file|^No selectable text|^Unable to read Excel file|^No tabular data|^Upload too large/i.test(message) ? 400 : 500;
+      const status = Number(error?.statusCode || 500);
       res.status(status).json({ error: message });
     }
   });
