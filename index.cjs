@@ -70056,8 +70056,10 @@ router6.get("/products", async (req, res) => {
   const l = Math.min(200, parseInt(limit, 10));
   const conditions = [];
   if (search) conditions.push(ilike(productsTable.productName, `%${search}%`));
-  if (category_id) conditions.push(eq(productsTable.categoryId, parseInt(category_id, 10)));
-  if (brand_id) conditions.push(eq(productsTable.brandId, parseInt(brand_id, 10)));
+  const catId = category_id ? parseInt(category_id, 10) : NaN;
+  if (!Number.isNaN(catId)) conditions.push(eq(productsTable.categoryId, catId));
+  const brandId = brand_id ? parseInt(brand_id, 10) : NaN;
+  if (!Number.isNaN(brandId)) conditions.push(eq(productsTable.brandId, brandId));
   const where = conditions.length ? and(...conditions) : void 0;
   const allProducts = await db.select().from(productsTable).where(where).orderBy(productsTable.productName);
   const scope = getBranchScope(req);
@@ -70078,7 +70080,7 @@ router6.get("/products", async (req, res) => {
   const offset = (p - 1) * l;
   res.json({ data: formatted.slice(offset, offset + l), total, page: p, limit: l });
 });
-router6.post("/products", async (req, res) => {
+router6.post("/products", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
   const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, current_stock, min_stock, image_url, unit } = req.body;
   if (!product_code || !product_name) {
     res.status(400).json({ error: "product_code and product_name required" });
@@ -70191,7 +70193,7 @@ router6.get("/products/:id", async (req, res) => {
   const map2 = await loadStockMap({ branchId: scope.branchId, all: scope.mode === "all" });
   res.json(formatProduct(p, void 0, void 0, void 0, stockFor(map2, p)));
 });
-router6.patch("/products/:id", async (req, res) => {
+router6.patch("/products/:id", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
   const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, current_stock, min_stock, image_url, unit } = req.body;
   const [before] = await db.select().from(productsTable).where(eq(productsTable.id, id));
@@ -70227,7 +70229,7 @@ router6.patch("/products/:id", async (req, res) => {
   await logAudit(req, { action: "product.updated", entityType: "product", entityId: p.id, description: `Updated product "${p.productName}" (${p.productCode})`, metadata: { before: beforeSnap, after: afterSnap } });
   res.json(afterSnap);
 });
-router6.delete("/products/:id", async (req, res) => {
+router6.delete("/products/:id", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
   const [p] = await db.select().from(productsTable).where(eq(productsTable.id, id));
   await db.delete(productsTable).where(eq(productsTable.id, id));
@@ -70626,7 +70628,8 @@ router7.get("/inventory/stock-count", async (req, res) => {
     return;
   }
   const prodConditions = [];
-  if (category_id) prodConditions.push(eq(productsTable.categoryId, parseInt(category_id, 10)));
+  const stockCatId = category_id ? parseInt(category_id, 10) : NaN;
+  if (!Number.isNaN(stockCatId)) prodConditions.push(eq(productsTable.categoryId, stockCatId));
   const products = await db.select().from(productsTable).where(prodConditions.length ? and(...prodConditions) : void 0).orderBy(productsTable.productName);
   const stockRows = scope.mode === "single" ? await db.select().from(productStockTable).where(eq(productStockTable.branchId, scope.branchId)) : await db.select().from(productStockTable);
   const stockMap = /* @__PURE__ */ new Map();
@@ -73525,12 +73528,12 @@ router25.use("/audit-log", requireRole("administrator"));
 router25.use("/security", requireRole("administrator"));
 router25.use("/reports", requireRole("administrator", "manager"));
 router25.use("/documents", requireRole("administrator", "manager", "sales_cashier", "storekeeper", "accountant"));
-router25.use("/products", requireRole("administrator", "manager", "storekeeper"));
+router25.use("/products", requireRole("administrator", "manager", "storekeeper", "sales_cashier"));
 router25.use("/inventory", requireRole("administrator", "manager", "storekeeper"));
 router25.use("/purchases", requireRole("administrator", "manager", "storekeeper"));
 router25.use("/suppliers", requireRole("administrator", "manager", "storekeeper"));
-router25.use("/brands", requireRole("administrator", "manager", "storekeeper"));
-router25.use("/categories", requireRole("administrator", "manager", "storekeeper"));
+router25.use("/brands", requireRole("administrator", "manager", "storekeeper", "sales_cashier"));
+router25.use("/categories", requireRole("administrator", "manager", "storekeeper", "sales_cashier"));
 router25.use("/customers", requireRole("administrator", "manager", "sales_cashier"));
 router25.use("/quotations", requireRole("administrator", "manager", "sales_cashier"));
 router25.use("/invoices", requireRole("administrator", "manager", "sales_cashier"));
