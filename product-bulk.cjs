@@ -207,7 +207,7 @@ function createProductBulkRouter(deps) {
   }
 
   function looksLikeDelimitedText(buffer) {
-    const sample = String(buffer.subarray(0, Math.min(buffer.length, 4096))).trim();
+    const sample = buffer.subarray(0, Math.min(buffer.length, 4096)).toString("utf8").trim();
     if (!sample) return false;
     return sample.includes(",") || sample.includes("\t");
   }
@@ -649,7 +649,6 @@ function createProductBulkRouter(deps) {
       duplicate_count: Number(job.duplicate_count || 0),
       error_count: Number(job.error_count || 0),
       imported_count: Number(job.created_count || 0) + Number(job.updated_count || 0),
-      failed_count: Number(job.error_count || 0),
       failed_rows: Number(job.error_count || 0),
       created_by_id: job.created_by_id,
       created_by_name: job.created_by_name,
