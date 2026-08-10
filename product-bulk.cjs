@@ -224,7 +224,7 @@ function createProductBulkRouter(deps) {
     const extension = extensionFromName(fileName);
     const mime = normalizeMimeType(mimeType);
     const hint = trimText(sourceTypeHint).toLowerCase();
-    const csvMimes = new Set(["text/csv", "application/csv", "text/plain", "application/vnd.ms-excel"]);
+    const csvMimes = new Set(["text/csv", "application/csv", "text/plain"]);
     const xlsxMimes = new Set([
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "application/vnd.ms-excel",
@@ -451,7 +451,7 @@ function createProductBulkRouter(deps) {
       if (body[partStart] === 13 && body[partStart + 1] === 10) partStart += 2;
       const nextBoundary = body.indexOf(nextMarker, partStart);
       if (nextBoundary === -1) break;
-      const nextCursor = nextBoundary + 2;
+      const nextCursor = nextBoundary + nextMarker.length - firstMarker.length;
       const partBuffer = body.subarray(partStart, nextBoundary);
       const headerEnd = partBuffer.indexOf(Buffer.from("\r\n\r\n"));
       if (headerEnd < 0) {
@@ -659,8 +659,6 @@ function createProductBulkRouter(deps) {
       updated_count: Number(job.updated_count || 0),
       duplicate_count: Number(job.duplicate_count || 0),
       error_count: Number(job.error_count || 0),
-      imported_count: Number(job.created_count || 0) + Number(job.updated_count || 0),
-      failed_rows: Number(job.error_count || 0),
       created_by_id: job.created_by_id,
       created_by_name: job.created_by_name,
       last_error: job.last_error,
