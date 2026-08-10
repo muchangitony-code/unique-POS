@@ -66,6 +66,8 @@
     ["suppliers", "Suppliers", "fa-solid fa-truck-field"],
     ["purchases", "Purchases", "fa-solid fa-file-invoice-dollar"],
     ["inventory", "Inventory", "fa-solid fa-warehouse"],
+    ["bulk-import", "Bulk Import", "fa-solid fa-file-import"],
+    ["import-history", "Import History", "fa-solid fa-clock-rotate-left"],
     ["invoices", "Invoices", "fa-solid fa-file-lines"],
     ["quotations", "Quotations", "fa-solid fa-file-signature"],
     ["reports", "Reports", "fa-solid fa-chart-column"],
@@ -83,6 +85,8 @@
     suppliers: ["Suppliers", "Supplier contacts and procurement relationships."],
     purchases: ["Purchases", "Purchase records, receiving and supplier obligations."],
     inventory: ["Inventory", "Stock count, movement history and replenishment control."],
+    "bulk-import": ["Bulk Import", "Upload CSV, Excel, or PDF supplier files and import products in bulk."],
+    "import-history": ["Import History", "View all past import jobs, download error reports and track results."],
     invoices: ["Invoices", "Manage A4 tax invoices, payments and receivables."],
     quotations: ["Quotations", "Track proposals and convert approved quotes to invoices."],
     reports: ["Reports", "Sales, profit and inventory value performance views."],
@@ -303,7 +307,7 @@
       case "bulk-import-refresh-history":
       await loadBulkImportHistory();
       if (!els.modalOverlay.classList.contains("hidden")) renderBulkImportModal();
-      if (state.activeRoute === "products") renderCurrentRoute();
+      if (state.activeRoute === "products" || state.activeRoute === "bulk-import" || state.activeRoute === "import-history") renderCurrentRoute();
       return;
       case "bulk-import-open-job":
       await openBulkImportJob(button.dataset.jobId);
@@ -528,7 +532,11 @@
   }
 
   function renderSidebar() {
-    els.sidebarNav.innerHTML = NAV_ITEMS.map(function (item) {
+    els.sidebarNav.innerHTML = NAV_ITEMS.filter(function (item) {
+      const route = item[0];
+      if ((route === "bulk-import" || route === "import-history") && !canBulkImportProducts()) return false;
+      return true;
+    }).map(function (item) {
       const route = item[0];
       const label = item[1];
       const icon = item[2];
@@ -609,6 +617,10 @@
         return loadPurchasesData();
       case "inventory":
         return loadInventoryData();
+      case "bulk-import":
+        return loadBulkImportData();
+      case "import-history":
+        return loadImportHistoryData();
       case "invoices":
         return loadInvoicesData();
       case "quotations":
@@ -709,6 +721,14 @@
     };
   }
 
+  async function loadBulkImportData() {
+    await loadBulkImportHistory().catch(function () { return []; });
+  }
+
+  async function loadImportHistoryData() {
+    await loadBulkImportHistory().catch(function () { return []; });
+  }
+
   async function loadInvoicesData() {
     const invoices = await apiJson("/api/invoices?limit=120").catch(function () { return { data: [] }; });
     state.cache.invoices = { invoices: normalizeList(invoices) };
@@ -781,6 +801,12 @@
         break;
       case "inventory":
         renderInventory();
+        break;
+      case "bulk-import":
+        renderBulkImportPage();
+        break;
+      case "import-history":
+        renderImportHistoryPage();
         break;
       case "invoices":
         renderInvoices();
@@ -1109,7 +1135,7 @@
     state.importer.loading = true;
     state.importer.sourceName = file.name || "Selected file";
     state.importer.lastFileName = file.name || "";
-    renderBulkImportModal();
+    refreshBulkImportView();
     try {
       const res = await authorizedFetch("/api/products/imports/upload-and-parse?filename=" + encodeURIComponent(file.name || "import-file"), {
         method: "POST",
@@ -1128,22 +1154,23 @@
       state.importer.selectedRow = null;
       state.importer.duplicateMode = "update";
       await loadBulkImportHistory();
-      renderBulkImportModal();
+      refreshBulkImportView();
       showToast("Import file parsed successfully. Review the preview before importing.", "success");
     } catch (error) {
       showToast(error.message || "Unable to upload import file.", "error");
     } finally {
       state.importer.loading = false;
-      renderBulkImportModal();
+      refreshBulkImportView();
     }
   }
 
   async function applyBulkImportMapping() {
     if (!state.importer.job) return;
     const nextMapping = {};
+    const container = getBulkImportContainer();
     IMPORT_FIELDS.forEach(function (fieldInfo) {
       const field = fieldInfo[0];
-      const select = els.modalBody.querySelector('[data-import-mapping="' + field + '"]');
+      const select = container.querySelector('[data-import-mapping="' + field + '"]');
       if (select && select.value) nextMapping[field] = select.value;
     });
     state.importer.mapping = nextMapping;
@@ -1155,7 +1182,7 @@
       state.importer.job = data.job || state.importer.job;
       state.importer.preview = normalizeList(data.preview);
       state.importer.selectedRow = null;
-      renderBulkImportModal();
+      refreshBulkImportView();
       showToast("Column mapping updated.", "success");
     } catch (error) {
       showToast(error.message || "Unable to remap columns.", "error");
@@ -1166,7 +1193,7 @@
     const row = (state.importer.preview || []).find(function (item) { return String(item.id) === String(rowId); });
     if (!row) return;
     state.importer.selectedRow = row;
-    renderBulkImportModal();
+    refreshBulkImportView();
   }
 
   async function saveBulkImportRow(rowId) {
@@ -1174,14 +1201,15 @@
     const row = state.importer.selectedRow;
     if (!row || String(row.id) !== String(rowId)) return;
     const payload = {};
+    const container = getBulkImportContainer();
     IMPORT_FIELDS.forEach(function (fieldInfo) {
       const field = fieldInfo[0];
-      const input = els.modalBody.querySelector('[name="import-edit-' + field + '"]');
+      const input = container.querySelector('[name="import-edit-' + field + '"]');
       if (!input) return;
       payload[field] = IMPORT_NUMERIC_FIELDS[field] ? input.value : input.value.trim();
     });
     state.importer.savingRow = true;
-    renderBulkImportModal();
+    refreshBulkImportView();
     try {
       const data = await apiJson("/api/products/imports/" + encodeURIComponent(state.importer.job.id) + "/rows/" + encodeURIComponent(rowId), {
         method: "PATCH",
@@ -1196,19 +1224,20 @@
         state.importer.job.invalid_rows = firstNumber(data.job_error_count, state.importer.job.invalid_rows, 0);
         state.importer.job.error_count = firstNumber(data.job_error_count, state.importer.job.error_count, 0);
       }
-      renderBulkImportModal();
+      refreshBulkImportView();
       showToast("Import row updated.", "success");
     } catch (error) {
       showToast(error.message || "Unable to save import row.", "error");
     } finally {
       state.importer.savingRow = false;
-      renderBulkImportModal();
+      refreshBulkImportView();
     }
   }
 
   async function startBulkImport() {
     if (!state.importer.job) return;
-    const duplicateMode = els.modalBody.querySelector("#bulkImportDuplicateMode");
+    const container = getBulkImportContainer();
+    const duplicateMode = container.querySelector("#bulkImportDuplicateMode");
     state.importer.duplicateMode = duplicateMode ? duplicateMode.value : "update";
     try {
       const data = await apiJson("/api/products/imports/" + encodeURIComponent(state.importer.job.id) + "/start", {
@@ -1216,7 +1245,7 @@
         body: JSON.stringify({ on_duplicate: state.importer.duplicateMode })
       });
       state.importer.job = data.job || state.importer.job;
-      renderBulkImportModal();
+      refreshBulkImportView();
       startBulkImportPolling(state.importer.job.id);
       showToast("Bulk import started in the background.", "success");
     } catch (error) {
@@ -1227,6 +1256,26 @@
   async function openBulkImportJob(jobId) {
     if (!jobId) {
       openBulkImportModal();
+      return;
+    }
+    // If already on the bulk-import page, just load the job into the page view.
+    if (state.activeRoute === "bulk-import" || state.activeRoute === "import-history") {
+      try {
+        const data = await apiJson("/api/products/imports/" + encodeURIComponent(jobId) + "?limit=100");
+        state.importer.job = data.job || null;
+        state.importer.preview = normalizeList(data.rows);
+        state.importer.headers = state.importer.preview[0] && state.importer.preview[0].raw_data ? Object.keys(state.importer.preview[0].raw_data) : state.importer.headers;
+        state.importer.selectedRow = null;
+        state.importer.sourceName = firstText(data.job && data.job.file_name, data.job && data.job.source_name, state.importer.sourceName);
+        if (data.job && data.job.column_mapping) state.importer.mapping = data.job.column_mapping;
+        if (state.activeRoute === "bulk-import") {
+          renderBulkImportPage();
+        } else {
+          location.hash = "bulk-import";
+        }
+      } catch (error) {
+        showToast(error.message || "Unable to load import job.", "error");
+      }
       return;
     }
     if (els.modalOverlay.classList.contains("hidden")) openBulkImportModal();
@@ -1263,7 +1312,7 @@
         }) || null;
       }
       await loadBulkImportHistory();
-      renderBulkImportModal();
+      refreshBulkImportView();
       if (bulkImportJobIsActive(state.importer.job)) {
         startBulkImportPolling(jobId);
       } else if (firstText(state.activeRoute) === "products") {
@@ -1302,6 +1351,115 @@
     if (!jobId) return;
     await downloadAuthorizedFile("/api/products/imports/" + encodeURIComponent(jobId) + "/errors.csv", "product-import-" + jobId + "-errors.csv");
   }
+
+  // Returns the DOM container where bulk import UI should be queried (modal body or page root).
+  function getBulkImportContainer() {
+    if (!els.modalOverlay.classList.contains("hidden")) return els.modalBody;
+    if (state.activeRoute === "bulk-import" || state.activeRoute === "import-history") return els.viewRoot;
+    return els.modalBody;
+  }
+
+  // Re-render whichever bulk import surface is currently visible.
+  function refreshBulkImportView() {
+    if (!els.modalOverlay.classList.contains("hidden")) renderBulkImportModal();
+    if (state.activeRoute === "bulk-import") renderBulkImportPage();
+    else if (state.activeRoute === "import-history") renderImportHistoryPage();
+  }
+
+  // Full-page Bulk Import view (mirrors renderBulkImportModal but renders to els.viewRoot).
+  function renderBulkImportPage() {
+    if (!canBulkImportProducts()) {
+      els.viewRoot.innerHTML = '<section class="card section-card page-empty"><i class="fa-solid fa-lock"></i><h3>Access Restricted</h3><p>Only Super Admin and authorized Inventory Managers can use Bulk Import.</p></section>';
+      return;
+    }
+    const job = state.importer.job;
+    const preview = state.importer.preview || [];
+    const selected = state.importer.selectedRow;
+    const progress = job ? Math.min(100, Math.round((firstNumber(job.processed_rows, 0) / Math.max(1, firstNumber(job.total_rows, preview.length, 1))) * 100)) : 0;
+    const summary = job && job.summary ? job.summary : {};
+    const headers = state.importer.headers || [];
+    const history = state.importer.history || [];
+    els.viewRoot.innerHTML = [
+      '<div class="module-toolbar"><div class="inline-group">' +
+        '<button class="btn btn-outline" data-action="bulk-import-download-template" data-url="/api/products/imports/templates/xlsx" data-name="product-import-template.xlsx"><i class="fa-solid fa-file-excel"></i>Excel Template</button>' +
+        '<button class="btn btn-outline" data-action="bulk-import-download-template" data-url="/api/products/imports/templates/csv" data-name="product-import-template.csv"><i class="fa-solid fa-file-csv"></i>CSV Template</button>' +
+        '<button class="btn btn-outline" data-route="import-history"><i class="fa-solid fa-clock-rotate-left"></i>Import History</button>' +
+        '<button class="btn btn-outline" data-route="inventory"><i class="fa-solid fa-warehouse"></i>Inventory</button>' +
+      '</div></div>',
+      '<div class="bulk-import-layout">',
+      '<section class="card section-card bulk-import-panel">' +
+        '<div class="section-head"><div><h3>1. Upload source file</h3><p>Drag and drop Excel, CSV, or PDF documents. OCR-style PDF extraction depends on readable text already present in the file.</p></div></div>' +
+        '<div class="bulk-import-dropzone" id="bulkImportDropzone">' +
+          '<i class="fa-solid fa-file-arrow-up"></i>' +
+          '<strong>' + escapeHtml(state.importer.loading ? "Uploading and parsing…" : "Drop a file here or browse") + '</strong>' +
+          '<p>' + escapeHtml(firstText(state.importer.sourceName, state.importer.lastFileName, "Supported: .xlsx, .csv, .pdf")) + '</p>' +
+          '<div class="inline-group"><button class="btn btn-primary" type="button" data-action="bulk-import-pick-file"><i class="fa-solid fa-folder-open"></i>Select File</button></div>' +
+        '</div>' +
+        (job ? '<div class="bulk-import-progress"><div class="bulk-import-progress__meta"><span>' + escapeHtml(firstText(job.file_name, job.source_name, "Import draft")) + '</span>' + renderBadge(firstText(job.status, "draft")) + '</div><div class="bulk-import-progress__bar"><span style="width:' + escapeAttr(String(progress)) + '%"></span></div><div class="bulk-import-progress__stats"><span>Processed ' + escapeHtml(String(firstNumber(job.processed_rows, 0))) + ' / ' + escapeHtml(String(firstNumber(job.total_rows, preview.length))) + '</span><span>Valid ' + escapeHtml(String(firstNumber(job.valid_rows, summary.valid_rows, 0))) + '</span><span>Errors ' + escapeHtml(String(firstNumber(job.error_count, summary.error_count, 0))) + '</span></div></div>' : '') +
+      '</section>',
+      '<section class="card section-card bulk-import-panel">' +
+        '<div class="section-head"><div><h3>2. Mapping and duplicate handling</h3><p>Review detected headers, adjust mappings where needed, and choose how duplicates are treated.</p></div></div>' +
+        (headers.length ? '<div class="form-grid three">' + IMPORT_FIELDS.map(function (fieldInfo) {
+          const field = fieldInfo[0];
+          const label = fieldInfo[1];
+          return '<label><span>' + escapeHtml(label) + '</span><select data-import-mapping="' + escapeAttr(field) + '"><option value="">Ignore this field</option>' + headers.map(function (header) {
+            const selectedAttr = state.importer.mapping[field] === header ? ' selected' : '';
+            return '<option value="' + escapeAttr(header) + '"' + selectedAttr + '>' + escapeHtml(header) + '</option>';
+          }).join("") + '</select></label>';
+        }).join("") + '</div>' : '<div class="empty-state"><i class="fa-solid fa-table"></i>Upload a file to review detected headers and preview rows.</div>') +
+        '<div class="form-grid two" style="margin-top:16px"><label><span>When duplicates are found</span><select id="bulkImportDuplicateMode"><option value="update"' + (state.importer.duplicateMode === "update" ? ' selected' : '') + '>Update existing product</option><option value="skip"' + (state.importer.duplicateMode === "skip" ? ' selected' : '') + '>Skip duplicate row</option><option value="duplicate"' + (state.importer.duplicateMode === "duplicate" ? ' selected' : '') + '>Create new duplicate product</option></select></label><label><span>Import controls</span><div class="inline-group"><button class="btn btn-outline" type="button" data-action="bulk-import-apply-mapping"' + (!job ? ' disabled' : '') + '><i class="fa-solid fa-shuffle"></i>Apply Mapping</button><button class="btn btn-secondary" type="button" data-action="bulk-import-start"' + (!job || bulkImportJobIsActive(job) ? ' disabled' : '') + '><i class="fa-solid fa-play"></i>Start Import</button></div></label></div>' +
+        (job ? '<div class="stats-inline" style="margin-top:16px">' +
+          renderDocumentChip("Imported", firstNumber(job.created_count, 0)) +
+          renderDocumentChip("Updated", firstNumber(job.updated_count, 0)) +
+          renderDocumentChip("Skipped", firstNumber(job.skipped_rows, 0)) +
+          renderDocumentChip("Failed", firstNumber(job.error_count, summary.error_count, 0)) +
+          '</div>' : '') +
+      '</section>',
+      '<section class="card section-card bulk-import-panel">' +
+        '<div class="section-head"><div><h3>3. Preview and edit records</h3><p>Invalid rows stay highlighted so valid records can still import. Click any row to fix extracted values before starting.</p></div>' +
+        '<div class="inline-group">' + (job && firstNumber(job.error_count, summary.error_count, 0) > 0 ? '<button class="btn btn-outline" type="button" data-action="bulk-import-download-errors" data-job-id="' + escapeAttr(String(job.id)) + '"><i class="fa-solid fa-file-circle-xmark"></i>Error Report</button>' : '') + '</div></div>' +
+        (preview.length ? '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Row</th><th>Status</th><th>Product</th><th>SKU / Barcode</th><th>Category</th><th>Prices</th><th>Errors</th><th>Actions</th></tr></thead><tbody>' + preview.map(function (row) {
+          const normalized = row.normalized_data || {};
+          const errors = row.validation_errors || [];
+          return '<tr class="' + (errors.length ? 'bulk-import-row--error' : '') + '"><td>' + escapeHtml(String(row.row_number)) + '</td><td>' + renderBadge(firstText(row.status, errors.length ? "invalid" : row.action || "draft")) + '</td><td><strong>' + escapeHtml(firstText(normalized.product_name, "—")) + '</strong><div class="table-caption">' + escapeHtml(firstText(normalized.description, "")) + '</div></td><td>' + escapeHtml(firstText(normalized.product_code, normalized.barcode, "—")) + '</td><td>' + escapeHtml(firstText(normalized.category, "—")) + '</td><td><div>' + money(firstNumber(normalized.selling_price, 0)) + '</div><div class="table-caption">Cost: ' + money(firstNumber(normalized.cost_price, 0)) + '</div></td><td>' + (errors.length ? '<ul class="bulk-import-errors">' + errors.map(function (error) { return '<li>' + escapeHtml(error) + '</li>'; }).join("") + '</ul>' : '<span class="muted">Ready</span>') + '</td><td><button class="btn btn-outline" type="button" data-action="bulk-import-edit-row" data-row-id="' + escapeAttr(String(row.id)) + '"><i class="fa-solid fa-pen"></i>Edit</button></td></tr>';
+        }).join("") + '</tbody></table></div>' : '<div class="empty-state"><i class="fa-solid fa-list-check"></i>No preview rows yet.</div>') +
+        (selected ? renderBulkImportEditForm(selected) : '') +
+      '</section>',
+      '</div>'
+    ].join("");
+    bindBulkImportDropzone();
+    if (job && bulkImportJobIsActive(job)) startBulkImportPolling(job.id);
+  }
+
+  // Full-page Import History view.
+  function renderImportHistoryPage() {
+    if (!canBulkImportProducts()) {
+      els.viewRoot.innerHTML = '<section class="card section-card page-empty"><i class="fa-solid fa-lock"></i><h3>Access Restricted</h3><p>Only Super Admin and authorized Inventory Managers can view Import History.</p></section>';
+      return;
+    }
+    const history = state.importer.history || [];
+    els.viewRoot.innerHTML = [
+      '<div class="module-toolbar"><div class="inline-group">' +
+        '<button class="btn btn-primary" data-route="bulk-import"><i class="fa-solid fa-file-import"></i>New Import</button>' +
+        '<button class="btn btn-outline" data-action="bulk-import-refresh-history"><i class="fa-solid fa-rotate"></i>Refresh</button>' +
+        '<button class="btn btn-outline" data-route="inventory"><i class="fa-solid fa-warehouse"></i>Inventory</button>' +
+      '</div></div>',
+      renderOverviewTiles([
+        ["Total Imports", numberText(history.length)],
+        ["Completed", numberText(history.filter(function (item) { return firstText(item.status) === "completed"; }).length)],
+        ["Total Imported", numberText(sumBy(history, function (item) { return firstNumber(item.created_count, 0); }))],
+        ["Total Errors", numberText(sumBy(history, function (item) { return firstNumber(item.error_count, 0); }))]
+      ]),
+      '<section class="card section-card">' +
+        '<div class="section-head"><div><h3>Import History</h3><p>All bulk import jobs — click View to re-open a job on the Bulk Import page.</p></div></div>' +
+        (history.length ? '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>File</th><th>Status</th><th>Imported</th><th>Updated</th><th>Skipped</th><th>Failed</th><th>Actions</th></tr></thead><tbody>' + history.map(function (item) {
+          const downloadable = firstNumber(item.error_count, 0) > 0;
+          return '<tr><td>' + escapeHtml(formatDateTime(item.created_at)) + '</td><td>' + escapeHtml(firstText(item.file_name, item.source_name, "Upload")) + '</td><td>' + renderBadge(firstText(item.status, "draft")) + '</td><td>' + escapeHtml(String(firstNumber(item.created_count, 0))) + '</td><td>' + escapeHtml(String(firstNumber(item.updated_count, 0))) + '</td><td>' + escapeHtml(String(firstNumber(item.skipped_rows, 0))) + '</td><td>' + escapeHtml(String(firstNumber(item.error_count, 0))) + '</td><td><div class="table-actions"><button class="btn btn-outline" type="button" data-action="bulk-import-open-job" data-job-id="' + escapeAttr(String(item.id)) + '"><i class="fa-solid fa-eye"></i>View</button>' + (downloadable ? '<button class="btn btn-outline" type="button" data-action="bulk-import-download-errors" data-job-id="' + escapeAttr(String(item.id)) + '"><i class="fa-solid fa-file-circle-xmark"></i>Errors</button>' : '') + '</div></td></tr>';
+        }).join("") + '</tbody></table></div>' : '<div class="empty-state"><i class="fa-regular fa-clock"></i>No imports recorded yet.</div>') +
+      '</section>'
+    ].join("");
+  }
+
 
   function renderCustomers() {
     const customers = applySearch((state.cache.customers || {}).customers || [], state.search, ["name", "phone", "email", "company"]);
