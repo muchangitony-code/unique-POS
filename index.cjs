@@ -71869,6 +71869,7 @@ var import_express17 = __toESM(require_express2(), 1);
 var import_pdfkit = __toESM(require("pdfkit"), 1);
 var router17 = (0, import_express17.Router)();
 var DEFAULT_COMPANY_LOGO_URL = "/assets/unique-solar-kenya-logo.svg";
+var PDF_EOF_MARKER = Buffer.from("%%EOF");
 function safeNum(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -71979,7 +71980,7 @@ function assertPdfBuffer(pdf) {
   if (pdf.subarray(0, 4).toString("utf8") !== "%PDF") {
     throw new Error("PDF generation returned invalid output.");
   }
-  if (!pdf.includes(Buffer.from("%%EOF"))) {
+  if (!pdf.includes(PDF_EOF_MARKER)) {
     throw new Error("PDF generation returned a truncated file.");
   }
   return pdf;

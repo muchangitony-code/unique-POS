@@ -1509,9 +1509,11 @@
     try {
       const pdfDocument = await ensureDocumentPdf(docType, id, paper);
       const frame = document.createElement("iframe");
+      let printStarted = false;
       frame.className = "hidden";
       frame.src = pdfDocument.objectUrl;
       frame.onload = function () {
+        printStarted = true;
         window.setTimeout(function () {
           try {
             if (frame.contentWindow) {
@@ -1523,7 +1525,15 @@
           }
         }, 400);
       };
+      frame.onerror = function () {
+        showToast("Unable to load the PDF for printing.", "error");
+      };
       document.body.appendChild(frame);
+      window.setTimeout(function () {
+        if (!printStarted) {
+          showToast("Print preview is taking too long to load. Try the Download PDF button instead.", "error");
+        }
+      }, 5000);
       window.setTimeout(function () {
         frame.remove();
         if (!state.modalDocument || state.modalDocument.objectUrl !== pdfDocument.objectUrl) {
@@ -1584,7 +1594,7 @@
           URL.revokeObjectURL(pdfDocument.objectUrl);
         }, 1000);
       }
-      showToast("File sharing is not available in this browser. PDF downloaded instead.", "success");
+      showToast("File sharing is not available in this browser. PDF downloaded instead.", "warning");
     } catch (error) {
       showToast(error.message || "Unable to share document.", "error");
     }
