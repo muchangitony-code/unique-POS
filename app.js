@@ -27,11 +27,24 @@ if (fs.existsSync(envPath)) {
 // On-disk defaults (resolved next to this file).
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
 const _defaultClientDir = path.join(__dirname, "public");
-if (!process.env.SERVE_CLIENT_DIR) {
+const _configuredClientDir = process.env.SERVE_CLIENT_DIR ? path.resolve(process.env.SERVE_CLIENT_DIR) : "";
+const _configuredClientIndex = _configuredClientDir ? path.join(_configuredClientDir, "index.html") : "";
+const _defaultClientIndex = path.join(_defaultClientDir, "index.html");
+if (_configuredClientDir && !fs.existsSync(_configuredClientIndex)) {
+  // Fall back to the bundled frontend when SERVE_CLIENT_DIR points to a stale
+  // or missing directory (for example after deployment environment drift).
+  if (fs.existsSync(_defaultClientIndex)) {
+    process.env.SERVE_CLIENT_DIR = _defaultClientDir;
+    console.warn(`[startup] SERVE_CLIENT_DIR "${_configuredClientDir}" missing index.html; falling back to "${_defaultClientDir}".`);
+  } else {
+    delete process.env.SERVE_CLIENT_DIR;
+    console.warn(`[startup] SERVE_CLIENT_DIR "${_configuredClientDir}" missing index.html and no bundled frontend found; starting API-only.`);
+  }
+} else if (!_configuredClientDir) {
   // Only set SERVE_CLIENT_DIR when the public/ folder actually exists so the
   // server starts cleanly as an API-only deployment when the built frontend
   // has not been committed to the repository.
-  if (fs.existsSync(_defaultClientDir)) {
+  if (fs.existsSync(_defaultClientIndex)) {
     process.env.SERVE_CLIENT_DIR = _defaultClientDir;
   }
 }
