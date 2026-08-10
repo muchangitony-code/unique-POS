@@ -1508,12 +1508,28 @@
     const docType = documentType(type);
     try {
       const pdfDocument = await ensureDocumentPdf(docType, id, paper);
-      const win = window.open(pdfDocument.objectUrl, "_blank", "noopener");
-      if (!win) {
-        showToast("Popup blocked. Allow popups to print.", "error");
-        return;
-      }
-      win.focus();
+      const frame = document.createElement("iframe");
+      frame.className = "hidden";
+      frame.src = pdfDocument.objectUrl;
+      frame.onload = function () {
+        window.setTimeout(function () {
+          try {
+            if (frame.contentWindow) {
+              frame.contentWindow.focus();
+              frame.contentWindow.print();
+            }
+          } catch (printError) {
+            showToast("Open the preview and use your browser print dialog if printing stays blocked.", "error");
+          }
+        }, 400);
+      };
+      document.body.appendChild(frame);
+      window.setTimeout(function () {
+        frame.remove();
+        if (!state.modalDocument || state.modalDocument.objectUrl !== pdfDocument.objectUrl) {
+          URL.revokeObjectURL(pdfDocument.objectUrl);
+        }
+      }, 6e4);
     } catch (error) {
       showToast(error.message || "Unable to print document.", "error");
     }
@@ -1744,7 +1760,11 @@
         const header = firstText(res && res.headers && res.headers.get("Content-Disposition"), "");
         const match = header.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
         if (!match || !match[1]) return fallback;
-        return decodeURIComponent(String(match[1]).replace(/"/g, "").trim()) || fallback;
+        try {
+          return decodeURIComponent(String(match[1]).replace(/"/g, "").trim()) || fallback;
+        } catch (error) {
+          return String(match[1]).replace(/"/g, "").trim() || fallback;
+        }
       }
 
       function buildDocumentPdfEndpoint(type, id, paper) {
@@ -1754,6 +1774,11 @@
       async function fetchDocumentPdf(type, id, paper) {
         const url = buildDocumentPdfEndpoint(type, id, paper);
         const res = await authorizedFetch(url, { headers: { Accept: "application/pdf" } });
+        if (res.status === 401) {
+          clearSession();
+          showLogin();
+          throw new Error("Your session expired. Please sign in again.");
+        }
         if (!res.ok) {
           const errorBody = await res.json().catch(function () { return {}; });
           throw new Error(firstText(errorBody.error, errorBody.message, res.statusText, "Unable to generate PDF"));

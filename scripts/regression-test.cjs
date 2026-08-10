@@ -43,37 +43,38 @@ function request(method, url, body, headers) {
           resolve({ status: res.statusCode, body: json });
         });
       }
-      function requestBinary(method, url, headers) {
-        return new Promise((resolve, reject) => {
-          const parsed = new URL(url);
-          const lib = parsed.protocol === "https:" ? https : http;
-          const req = lib.request(
-            {
-              hostname: parsed.hostname,
-              port: parsed.port,
-              path: parsed.pathname + parsed.search,
-              method,
-              headers: headers || {}
-            },
-            (res) => {
-              const chunks = [];
-              res.on("data", (c) => chunks.push(c));
-              res.on("end", () => {
-                resolve({
-                  status: res.statusCode,
-                  body: Buffer.concat(chunks),
-                  headers: res.headers || {}
-                });
-              });
-            }
-          );
-          req.on("error", reject);
-          req.end();
+    );
+    req.on("error", reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+function requestBinary(method, url, headers) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const lib = parsed.protocol === "https:" ? https : http;
+    const req = lib.request(
+      {
+        hostname: parsed.hostname,
+        port: parsed.port,
+        path: parsed.pathname + parsed.search,
+        method,
+        headers: headers || {}
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode,
+            body: Buffer.concat(chunks),
+            headers: res.headers || {}
+          });
         });
       }
     );
     req.on("error", reject);
-    if (payload) req.write(payload);
     req.end();
   });
 }
