@@ -69803,22 +69803,22 @@ async function loadStockMap(opts) {
   }
   return map2;
 }
-async function getBranchStockRow(branchId, productId) {
-  const [row] = await db.select().from(productStockTable).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
+async function getBranchStockRow(branchId, productId, executor = db) {
+  const [row] = await executor.select().from(productStockTable).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
   return row ?? null;
 }
 async function getBranchCurrentStock(branchId, productId) {
   const row = await getBranchStockRow(branchId, productId);
   return row?.currentStock ?? 0;
 }
-async function adjustBranchStock(branchId, productId, computeAfter) {
-  const row = await getBranchStockRow(branchId, productId);
+async function adjustBranchStock(branchId, productId, computeAfter, executor = db) {
+  const row = await getBranchStockRow(branchId, productId, executor);
   const before = row?.currentStock ?? 0;
   const after = computeAfter(before);
   if (row) {
-    await db.update(productStockTable).set({ currentStock: after }).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
+    await executor.update(productStockTable).set({ currentStock: after }).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
   } else {
-    await db.insert(productStockTable).values({ branchId, productId, currentStock: after, minStock: 0 });
+    await executor.insert(productStockTable).values({ branchId, productId, currentStock: after, minStock: 0 });
   }
   return { before, after };
 }
@@ -70275,6 +70275,7 @@ var import_express7 = __toESM(require_express2(), 1);
 var PREFIX = {
   quotation: "QTN",
   invoice: "INV",
+  receipt: "RCP",
   transfer: "TRF"
 };
 async function nextDocumentNumber(docType, when = /* @__PURE__ */ new Date()) {
@@ -71374,7 +71375,6 @@ router14.post("/pos/sale", async (req, res) => {
       return;
     }
   }
-  const receiptNumber = `RCP-${Date.now()}`;
   const cashierName = req.user?.name ?? null;
   let subtotal = 0;
   let taxAmount = 0;
@@ -71386,67 +71386,76 @@ router14.post("/pos/sale", async (req, res) => {
   const shippingAmt = Number(shipping_amount || 0);
   const total = Math.max(0, subtotal - Number(discount_amount) + taxAmount + shippingAmt);
   const change = Math.max(0, Number(amount_paid) - total);
-  const [sale] = await db.insert(salesTable).values({
-    receiptNumber,
-    branchId,
-    customerId: customer_id ?? null,
-    subtotal: subtotal.toString(),
-    discountAmount: discount_amount.toString(),
-    taxAmount: taxAmount.toString(),
-    total: total.toString(),
-    amountPaid: amount_paid.toString(),
-    change: change.toString(),
-    paymentMethod: payment_method,
-    cashierName
-  }).returning();
-  for (const item of items) {
-    const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
-    const lineVat = lineBase * (Number(item.vat_rate ?? 0) / 100);
-    const lineTotal = lineBase + lineVat;
-    await db.insert(saleItemsTable).values({ saleId: sale.id, productId: item.product_id, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: (item.discount ?? 0).toString(), vatRate: (item.vat_rate ?? 16).toString(), total: lineTotal.toString() });
-    const { before, after } = await adjustBranchStock(branchId, item.product_id, (b) => Math.max(0, b - item.quantity));
-    await db.insert(stockMovementsTable).values({ branchId, productId: item.product_id, type: "sale", quantity: -item.quantity, quantityBefore: before, quantityAfter: after, reference: receiptNumber });
-  }
-  await logAudit(req, { action: "sale.created", entityType: "sale", entityId: sale.id, description: `Sale ${receiptNumber} \u2014 KES ${total.toLocaleString()} (${items.length} item${items.length !== 1 ? "s" : ""}) via ${payment_method}`, metadata: { receipt: receiptNumber } });
-  // Auto-generate invoice for this POS sale
-  const invoiceNumber = await nextDocumentNumber("invoice");
   const invStatus = payment_method === "credit" ? "partial" : Number(amount_paid) >= total ? "paid" : "partial";
   const balanceDue = Math.max(0, total - Number(amount_paid));
-  const [invoice] = await db.insert(invoicesTable).values({
-    invoiceNumber,
-    branchId,
-    customerId: customer_id ?? null,
-    subtotal: subtotal.toString(),
-    discountAmount: discount_amount.toString(),
-    taxAmount: taxAmount.toString(),
-    total: total.toString(),
-    amountPaid: amount_paid.toString(),
-    balanceDue: balanceDue.toString(),
-    status: invStatus
-  }).returning();
-  for (const item of items) {
-    const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
-    const lineVat = lineBase * (Number(item.vat_rate ?? 0) / 100);
-    await db.insert(invoiceItemsTable).values({
-      invoiceId: invoice.id,
-      productId: item.product_id,
-      quantity: item.quantity,
-      unitPrice: item.unit_price.toString(),
-      discount: (item.discount ?? 0).toString(),
-      vatRate: (item.vat_rate ?? 16).toString(),
-      total: (lineBase + lineVat).toString()
-    });
-  }
-  if (Number(amount_paid) > 0) {
-    const pmVal = ["cash", "mpesa", "bank_transfer", "card", "credit", "split"].includes(payment_method) ? payment_method : "cash";
-    await db.insert(invoicePaymentsTable).values({
-      invoiceId: invoice.id,
-      amount: amount_paid.toString(),
-      method: pmVal
-    });
-  }
-  const saleData = await formatSale(sale);
-  res.status(201).json({ ...saleData, invoice_id: invoice.id, invoice_number: invoice.invoiceNumber });
+  const result = await db.transaction(async (tx) => {
+    const receiptNumber = await nextDocumentNumber("receipt");
+    const invoiceNumber = await nextDocumentNumber("invoice");
+    const [sale] = await tx.insert(salesTable).values({
+      receiptNumber,
+      branchId,
+      customerId: customer_id ?? null,
+      subtotal: subtotal.toString(),
+      discountAmount: discount_amount.toString(),
+      taxAmount: taxAmount.toString(),
+      total: total.toString(),
+      amountPaid: amount_paid.toString(),
+      change: change.toString(),
+      paymentMethod: payment_method,
+      cashierName
+    }).returning();
+    for (const item of items) {
+      const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
+      const lineVat = lineBase * (Number(item.vat_rate ?? 0) / 100);
+      const lineTotal = lineBase + lineVat;
+      await tx.insert(saleItemsTable).values({ saleId: sale.id, productId: item.product_id, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: (item.discount ?? 0).toString(), vatRate: (item.vat_rate ?? 16).toString(), total: lineTotal.toString() });
+      const { before, after } = await adjustBranchStock(branchId, item.product_id, (b) => Math.max(0, b - item.quantity), tx);
+      await tx.insert(stockMovementsTable).values({ branchId, productId: item.product_id, type: "sale", quantity: -item.quantity, quantityBefore: before, quantityAfter: after, reference: receiptNumber });
+    }
+    const [invoice] = await tx.insert(invoicesTable).values({
+      invoiceNumber,
+      branchId,
+      customerId: customer_id ?? null,
+      subtotal: subtotal.toString(),
+      discountAmount: discount_amount.toString(),
+      taxAmount: taxAmount.toString(),
+      total: total.toString(),
+      amountPaid: amount_paid.toString(),
+      balanceDue: balanceDue.toString(),
+      status: invStatus
+    }).returning();
+    for (const item of items) {
+      const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
+      const lineVat = lineBase * (Number(item.vat_rate ?? 0) / 100);
+      await tx.insert(invoiceItemsTable).values({
+        invoiceId: invoice.id,
+        productId: item.product_id,
+        quantity: item.quantity,
+        unitPrice: item.unit_price.toString(),
+        discount: (item.discount ?? 0).toString(),
+        vatRate: (item.vat_rate ?? 16).toString(),
+        total: (lineBase + lineVat).toString()
+      });
+    }
+    if (Number(amount_paid) > 0) {
+      const pmVal = ["cash", "mpesa", "bank_transfer", "card", "credit", "split"].includes(payment_method) ? payment_method : "cash";
+      await tx.insert(invoicePaymentsTable).values({
+        invoiceId: invoice.id,
+        amount: amount_paid.toString(),
+        method: pmVal
+      });
+    }
+    const receiptInsert = await tx.execute(sql`
+      INSERT INTO receipts (sale_id, invoice_id, receipt_number, issued_to, amount)
+      VALUES (${sale.id}, ${invoice.id}, ${receiptNumber}, ${cashierName || "Cash sale"}, ${total})
+      RETURNING id
+    `);
+    const receiptRows = receiptInsert.rows ?? receiptInsert;
+    return { sale, invoice, receiptId: Number(receiptRows?.[0]?.id || 0), receiptNumber };
+  });
+  await logAudit(req, { action: "sale.created", entityType: "sale", entityId: result.sale.id, description: `Sale ${result.receiptNumber} \u2014 KES ${total.toLocaleString()} (${items.length} item${items.length !== 1 ? "s" : ""}) via ${payment_method}`, metadata: { receipt: result.receiptNumber, invoice: result.invoice.invoiceNumber } });
+  const saleData = await formatSale(result.sale);
+  res.status(201).json({ ...saleData, invoice_id: result.invoice.id, invoice_number: result.invoice.invoiceNumber, receipt_id: result.receiptId });
 });
 router14.get("/pos/sales", async (req, res) => {
   const { page = "1", limit = "50" } = req.query;
