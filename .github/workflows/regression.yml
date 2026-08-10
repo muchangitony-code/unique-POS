@@ -6,6 +6,13 @@ on:
   push:
     branches: [main, master]
 
+# Required secrets (set these in the repository Settings → Secrets and variables → Actions):
+#   POSTGRES_PASSWORD           – password for the test PostgreSQL service
+#   BOOTSTRAP_ADMIN_PASSWORD    – password seeded into the admin account
+#
+# The secrets are referenced below; the defaults shown in comments are
+# used only in forks / local act runs where secrets may not be set.
+
 jobs:
   regression:
     name: Full POS Regression
@@ -16,7 +23,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: posuser
-          POSTGRES_PASSWORD: pospassword
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'pospassword' }}
           POSTGRES_DB: posdb
         ports:
           - 5432:5432
@@ -29,9 +36,9 @@ jobs:
     env:
       PORT: 3099
       NODE_ENV: test
-      UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD: TestAdmin123!
       UNIQUEPOS_BOOTSTRAP_ADMIN_USERNAME: admin
       UNIQUEPOS_BOOTSTRAP_ADMIN_EMAIL: admin@test.local
+      UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD || 'TestAdmin123!' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -52,7 +59,8 @@ jobs:
           # Construct the DATABASE_URL from individual parts so the URL itself
           # does not appear literally in this file (avoids secret-scanner false positives).
           SCHEME="postgres"
-          echo "DATABASE_URL=${SCHEME}://posuser:pospassword@localhost:5432/posdb" >> "$GITHUB_ENV"
+          PG_PASS="${{ secrets.POSTGRES_PASSWORD || 'pospassword' }}"
+          echo "DATABASE_URL=${SCHEME}://posuser:${PG_PASS}@localhost:5432/posdb" >> "$GITHUB_ENV"
 
       - name: Bootstrap database and start server
         run: |

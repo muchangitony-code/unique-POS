@@ -53,17 +53,17 @@ function request(method, url, body, headers) {
 function authHeader(token) {
   return token ? { Authorization: "Bearer " + token } : {};
 }
-function get(path2, token) {
-  return request("GET", BASE + path2, null, authHeader(token));
+function get(apiPath, token) {
+  return request("GET", BASE + apiPath, null, authHeader(token));
 }
-function post(path2, body, token) {
-  return request("POST", BASE + path2, body, authHeader(token));
+function post(apiPath, body, token) {
+  return request("POST", BASE + apiPath, body, authHeader(token));
 }
-function patch(path2, body, token) {
-  return request("PATCH", BASE + path2, body, authHeader(token));
+function patch(apiPath, body, token) {
+  return request("PATCH", BASE + apiPath, body, authHeader(token));
 }
-function del(path2, token) {
-  return request("DELETE", BASE + path2, null, authHeader(token));
+function del(apiPath, token) {
+  return request("DELETE", BASE + apiPath, null, authHeader(token));
 }
 function isOk(res) { return res.status >= 200 && res.status < 300; }
 function hasData(res) {
