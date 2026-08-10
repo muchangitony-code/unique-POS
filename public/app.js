@@ -41,6 +41,7 @@
     ["unit", "Unit"],
     ["cost_price", "Cost Price"],
     ["selling_price", "Selling Price"],
+    ["wholesale_price", "Wholesale Price"],
     ["vat_rate", "Tax / VAT"],
     ["min_stock", "Reorder Level"],
     ["current_stock", "Current Stock"],
@@ -52,6 +53,7 @@
   const IMPORT_NUMERIC_FIELDS = {
     cost_price: true,
     selling_price: true,
+    wholesale_price: true,
     vat_rate: true,
     min_stock: true,
     current_stock: true
@@ -914,7 +916,7 @@
 
   function canBulkImportProducts() {
     const role = firstText(state.user && state.user.role);
-    return ["super_admin", "business_owner", "branch_manager"].includes(role);
+    return ["super_admin", "business_owner", "branch_manager", "inventory_manager"].includes(role);
   }
 
   function renderBulkImportSummaryCard(history) {
