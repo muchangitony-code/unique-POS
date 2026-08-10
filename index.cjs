@@ -71869,6 +71869,7 @@ var import_express17 = __toESM(require_express2(), 1);
 var import_pdfkit = __toESM(require("pdfkit"), 1);
 var router17 = (0, import_express17.Router)();
 var DEFAULT_COMPANY_LOGO_URL = "/assets/unique-solar-kenya-logo.svg";
+var PDF_EOF_MARKER = Buffer.from("%%EOF");
 function safeNum(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -71947,8 +71948,45 @@ async function loadLogoBuffer(logoUrl) {
     return null;
   }
 }
+function documentFooterForType(settings, documentType) {
+  if (documentType === "invoice" || documentType === "delivery_note" || documentType === "credit_note") {
+    return settings.documentFooter || settings.invoiceFooter || settings.receiptFooter || "Thank you for your business.";
+  }
+  if (documentType === "quotation") {
+    return settings.documentFooter || settings.quotationFooter || settings.receiptFooter || "Thank you for your business.";
+  }
+  return settings.documentFooter || settings.receiptFooter || "Thank you for your business.";
+}
+async function loadProductNameMap(productIds) {
+  const ids = [...new Set((productIds || []).map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0))];
+  if (!ids.length) return /* @__PURE__ */ new Map();
+  const products = await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(inArray(productsTable.id, ids));
+  return new Map(products.map((product) => [product.id, product.name]));
+}
+async function formatDocumentRows(items, options = {}) {
+  const productNameMap = await loadProductNameMap((items || []).map((item) => item?.productId ?? item?.product_id));
+  const resolveDescription = options.resolveDescription || ((item) => item?.description || productNameMap.get(Number(item?.productId ?? item?.product_id)) || `Product #${item?.productId ?? item?.product_id ?? "?"}`);
+  return (items || []).map((item) => ({
+    description: resolveDescription(item),
+    quantity: safeNum(item?.quantity),
+    unitPrice: safeNum(item?.unitPrice ?? item?.unitPrice2 ?? item?.unit_price ?? item?.unitCost ?? item?.unit_cost),
+    total: safeNum(item?.total)
+  }));
+}
+function assertPdfBuffer(pdf) {
+  if (!Buffer.isBuffer(pdf) || pdf.length < 32) {
+    throw new Error("PDF generation returned an empty file.");
+  }
+  if (pdf.subarray(0, 4).toString("utf8") !== "%PDF") {
+    throw new Error("PDF generation returned invalid output.");
+  }
+  if (!pdf.includes(PDF_EOF_MARKER)) {
+    throw new Error("PDF generation returned a truncated file.");
+  }
+  return pdf;
+}
 function buildDocumentHtml(opts) {
-  const { settings, documentType, documentNumber, partyName, partyEmail, partyPhone, branchName, rows, totals, notes, generatedAt, paper, logoSrc } = opts;
+  const { settings, documentType, documentNumber, partyName, partyEmail, partyPhone, branchName, rows, totals, notes, generatedAt, paper, logoSrc, requestedType } = opts;
   const currency = settings.currency || "KES";
   const logoUrl = logoSrc || normalizeLogoUrl(settings.logoUrl);
   const logo = logoUrl ? `<img src="${htmlEscape2(logoUrl)}" alt="logo" style="max-height:56px;max-width:160px;object-fit:contain;" />` : "";
@@ -71960,7 +71998,7 @@ function buildDocumentHtml(opts) {
   const website = htmlEscape2(settings.website || "");
   const taxPin = htmlEscape2(settings.taxNumber || "");
   const vat = htmlEscape2(settings.vatNumber || "");
-  const footer = htmlEscape2(settings.documentFooter || settings.receiptFooter || "Thank you for your business.");
+  const footer = htmlEscape2(documentFooterForType(settings, requestedType || String(documentType || "").toLowerCase()));
   const tableRows = (rows || []).map(
     (row, idx) => `<tr><td>${idx + 1}</td><td>${htmlEscape2(row.description)}</td><td style="text-align:right;">${safeNum(row.quantity).toLocaleString()}</td><td style="text-align:right;">${fmtCurrency2(row.unitPrice, currency)}</td><td style="text-align:right;">${fmtCurrency2(row.total, currency)}</td></tr>`
   ).join("");
@@ -72012,7 +72050,8 @@ async function resolveDocumentPayload(req, type, id) {
       partyEmail: customer?.email ?? "",
       partyPhone: customer?.phone ?? "",
       notes: invoice.notes || settings.invoicePaymentTerms || "",
-      rows: items.map((i) => ({ description: i.description || `Product #${i.productId}`, quantity: i.quantity, unitPrice: i.unitPrice, total: i.total })),
+      requestedType,
+      rows: await formatDocumentRows(items),
       totals: invoiceTotals
     };
   }
@@ -72030,7 +72069,8 @@ async function resolveDocumentPayload(req, type, id) {
       partyEmail: customer?.email ?? "",
       partyPhone: customer?.phone ?? "",
       notes: [quotation.notes, quotation.paymentTerms].filter(Boolean).join("\n"),
-      rows: items.map((i) => ({ description: i.description || `Product #${i.productId}`, quantity: i.quantity, unitPrice: i.unitPrice, total: i.total })),
+      requestedType,
+      rows: await formatDocumentRows(items),
       totals: { subtotal: quotation.subtotal, tax: quotation.taxAmount, discount: quotation.discountAmount, total: quotation.total }
     };
   }
@@ -72048,7 +72088,8 @@ async function resolveDocumentPayload(req, type, id) {
       partyEmail: customer?.email ?? "",
       partyPhone: customer?.phone ?? "",
       notes: `Payment method: ${sale.paymentMethod || "cash"}`,
-      rows: items.map((i) => ({ description: `Product #${i.productId}`, quantity: i.quantity, unitPrice: i.unitPrice, total: i.total })),
+      requestedType,
+      rows: await formatDocumentRows(items),
       totals: { subtotal: sale.subtotal, tax: sale.taxAmount ?? 0, discount: sale.discountAmount, total: sale.total }
     };
   }
@@ -72065,6 +72106,7 @@ async function resolveDocumentPayload(req, type, id) {
       partyEmail: customer.email ?? "",
       partyPhone: customer.phone ?? "",
       notes: "Outstanding invoices and balances.",
+      requestedType,
       rows: invoices.map((i) => ({ description: `${i.invoiceNumber} (${dateText2(i.createdAt)})`, quantity: 1, unitPrice: i.total, total: i.balanceDue })),
       totals: {
         subtotal: invoices.reduce((sum, i) => sum + safeNum(i.total), 0),
@@ -72087,6 +72129,7 @@ async function resolveDocumentPayload(req, type, id) {
       partyEmail: supplier.email ?? "",
       partyPhone: supplier.phone ?? "",
       notes: "Purchase order history and balances.",
+      requestedType,
       rows: purchases.map((p) => ({ description: `${p.purchaseNumber} (${dateText2(p.createdAt)})`, quantity: 1, unitPrice: p.total, total: p.total })),
       totals: {
         subtotal: purchases.reduce((sum, p) => sum + safeNum(p.total), 0),
@@ -72110,7 +72153,8 @@ async function resolveDocumentPayload(req, type, id) {
       partyEmail: supplier?.email ?? "",
       partyPhone: supplier?.phone ?? "",
       notes: [purchase.notes, type === "goods_received_note" ? `Received date: ${purchase.receivedDate || "Pending"}` : `Expected date: ${purchase.expectedDate || "—"}`].filter(Boolean).join("\n"),
-      rows: items.map((i) => ({ description: `Product #${i.productId}`, quantity: i.quantity, unitPrice: i.unitCost, total: i.total })),
+      requestedType,
+      rows: await formatDocumentRows(items),
       totals: { subtotal: purchase.subtotal, tax: purchase.taxAmount, discount: 0, total: purchase.total }
     };
   }
@@ -72127,6 +72171,7 @@ async function resolveDocumentPayload(req, type, id) {
       partyEmail: "",
       partyPhone: "",
       notes: [transfer.notes, transfer.status ? `Status: ${transfer.status}` : ""].filter(Boolean).join("\n"),
+      requestedType,
       rows: [{ description: product?.productName || `Product #${transfer.productId}`, quantity: transfer.quantity, unitPrice: 0, total: 0 }],
       totals: { subtotal: 0, tax: 0, discount: 0, total: 0 }
     };
@@ -72146,6 +72191,7 @@ async function resolveDocumentPayload(req, type, id) {
       partyEmail: "",
       partyPhone: "",
       notes: "Latest stock adjustments",
+      requestedType,
       rows: movements.map((m) => ({ description: `${map2.get(m.productId) || `Product #${m.productId}`} (${dateText2(m.createdAt)})`, quantity: m.quantity, unitPrice: 0, total: 0 })),
       totals: { subtotal: 0, tax: 0, discount: 0, total: 0 }
     };
@@ -72193,49 +72239,63 @@ async function renderPdfBuffer(payload, paper) {
     doc.moveDown(0.4);
     if (payload.notes) doc.fontSize(9).text(`Notes: ${payload.notes}`);
     doc.moveDown(0.4);
-    doc.fontSize(9).text(payload.settings.documentFooter || payload.settings.receiptFooter || "Thank you for your business.");
+    doc.fontSize(9).text(documentFooterForType(payload.settings, payload.requestedType || String(payload.documentType || "").toLowerCase()));
     doc.end();
   });
 }
 router17.get("/documents/:type/:id/preview", async (req, res) => {
-  const type = String(req.params.type || "").toLowerCase();
-  const id = Number(req.params.id);
-  if (!Number.isFinite(id) || id <= 0) {
-    res.status(400).json({ error: "invalid document id" });
-    return;
+  try {
+    const type = String(req.params.type || "").toLowerCase();
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: "invalid document id" });
+      return;
+    }
+    const payload = await resolveDocumentPayload(req, type, id);
+    if (!payload) {
+      res.status(404).json({ error: "document not found" });
+      return;
+    }
+    const paper = normalizePaper(req.query.paper, type === "receipt" ? "80mm" : "a4");
+    const html = buildDocumentHtml({
+      ...payload,
+      logoSrc: absoluteLogoUrl(req, payload.settings.logoUrl),
+      paper,
+      generatedAt: dateText2(/* @__PURE__ */ new Date())
+    });
+    res.json({ html });
+  } catch (error40) {
+    console.error("[documents.preview] Failed to build preview", error40);
+    res.status(500).json({ error: "Unable to build document preview." });
   }
-  const payload = await resolveDocumentPayload(req, type, id);
-  if (!payload) {
-    res.status(404).json({ error: "document not found" });
-    return;
-  }
-  const paper = normalizePaper(req.query.paper, type === "receipt" ? "80mm" : "a4");
-  const html = buildDocumentHtml({
-    ...payload,
-    logoSrc: absoluteLogoUrl(req, payload.settings.logoUrl),
-    paper,
-    generatedAt: dateText2(/* @__PURE__ */ new Date())
-  });
-  res.json({ html });
 });
 router17.get("/documents/:type/:id/pdf", async (req, res) => {
-  const type = String(req.params.type || "").toLowerCase();
-  const id = Number(req.params.id);
-  if (!Number.isFinite(id) || id <= 0) {
-    res.status(400).json({ error: "invalid document id" });
-    return;
+  try {
+    const type = String(req.params.type || "").toLowerCase();
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: "invalid document id" });
+      return;
+    }
+    const payload = await resolveDocumentPayload(req, type, id);
+    if (!payload) {
+      res.status(404).json({ error: "document not found" });
+      return;
+    }
+    const paper = normalizePaper(req.query.paper, type === "receipt" ? "80mm" : "a4");
+    const pdf = assertPdfBuffer(await renderPdfBuffer(payload, paper));
+    const fileBase = `${type}-${payload.documentNumber || id}`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+    const disposition = String(req.query.disposition || "").toLowerCase() === "attachment" || String(req.query.download || "") === "1" ? "attachment" : "inline";
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `${disposition}; filename="${fileBase}.pdf"`);
+    res.setHeader("Content-Length", String(pdf.length));
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.send(pdf);
+  } catch (error40) {
+    console.error("[documents.pdf] Failed to generate PDF", error40);
+    res.status(500).json({ error: "Unable to generate document PDF." });
   }
-  const payload = await resolveDocumentPayload(req, type, id);
-  if (!payload) {
-    res.status(404).json({ error: "document not found" });
-    return;
-  }
-  const paper = normalizePaper(req.query.paper, type === "receipt" ? "80mm" : "a4");
-  const pdf = await renderPdfBuffer(payload, paper);
-  const fileBase = `${type}-${payload.documentNumber || id}`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="${fileBase}.pdf"`);
-  res.send(pdf);
 });
 router17.post("/documents/:type/:id/email", async (req, res) => {
   const type = String(req.params.type || "").toLowerCase();

@@ -293,7 +293,7 @@
         openDocumentModal(button.dataset.type, button.dataset.id, button.dataset.paper || "a4", button.dataset.title || "Document");
         return;
       case "download-document":
-        downloadDocumentPdf(button.dataset.type, button.dataset.id);
+        downloadDocumentPdf(button.dataset.type, button.dataset.id, button.dataset.paper || defaultDocumentPaper(button.dataset.type));
         return;
       case "print-document":
         printDocument(button.dataset.type, button.dataset.id, button.dataset.paper || "a4");
@@ -302,7 +302,7 @@
         emailDocument(button.dataset.type, button.dataset.id);
         return;
       case "share-document":
-        shareDocumentWhatsapp(button.dataset.type, button.dataset.id);
+        shareDocumentWhatsapp(button.dataset.type, button.dataset.id, button.dataset.paper || defaultDocumentPaper(button.dataset.type));
         return;
       case "convert-quotation":
         convertQuotation(button.dataset.id);
@@ -1113,7 +1113,7 @@
   }
 
   function renderDocumentButtons(type, id, paper, label) {
-    return '<div class="table-actions"><button class="btn btn-outline" data-action="open-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '" data-paper="' + escapeAttr(paper) + '" data-title="' + escapeAttr(label) + '"><i class="fa-solid fa-eye"></i>Open</button><button class="btn btn-outline" data-action="download-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '"><i class="fa-solid fa-file-pdf"></i>PDF</button></div>';
+    return '<div class="table-actions"><button class="btn btn-outline" data-action="open-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '" data-paper="' + escapeAttr(paper) + '" data-title="' + escapeAttr(label) + '"><i class="fa-solid fa-eye"></i>Preview</button><button class="btn btn-outline" data-action="download-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '" data-paper="' + escapeAttr(paper) + '"><i class="fa-solid fa-file-pdf"></i>Download PDF</button></div>';
   }
 
   function renderOverviewTiles(rows) {
@@ -1389,7 +1389,9 @@
       showToast("Sale completed successfully.", "success");
       clearBasket(false);
       await Promise.all([loadDashboardData(), loadSalesData(), loadInvoicesData()]);
-      openDocumentModal("receipt", sale.id, "80mm", "Receipt");
+      openDocumentModal("receipt", sale.id, "80mm", "Receipt", {
+        relatedDocuments: sale && sale.invoice_id ? [{ type: "invoice", id: sale.invoice_id, paper: "a4", title: "Invoice" }] : []
+      });
       renderCurrentRoute();
     } catch (error) {
       showToast(error.message || "Sale failed.", "error");
@@ -1459,53 +1461,103 @@
     }
   }
 
-  async function openDocumentModal(type, id, paper, title) {
+  async function openDocumentModal(type, id, paper, title, options) {
     const docType = documentType(type);
+    const normalizedPaper = paper || defaultDocumentPaper(docType);
+    const relatedDocuments = options && Array.isArray(options.relatedDocuments) ? options.relatedDocuments : [];
+    resetModalDocument();
     openModal({
       title: title + " Preview",
-      subtitle: "Printable document preview with share actions.",
+      subtitle: "Loading PDF preview with print, download and share actions.",
       wide: true,
-      actions: renderDocumentActionBar(docType, id, paper)
+      actions: renderDocumentActionBar(docType, id, normalizedPaper, relatedDocuments)
     });
-    els.modalBody.innerHTML = '<div class="loader-card"><i class="fa-solid fa-spinner fa-spin fa-2x"></i><div>Loading document preview…</div></div>';
+    els.modalBody.innerHTML = '<div class="loader-card"><i class="fa-solid fa-spinner fa-spin fa-2x"></i><div>Generating PDF preview…</div></div>';
     try {
-      const preview = await apiJson("/api/documents/" + encodeURIComponent(docType) + "/" + encodeURIComponent(id) + "/preview?paper=" + encodeURIComponent(paper));
-      state.modalDocument = { type: docType, id: id, paper: paper };
-      els.modalBody.innerHTML = '<div class="document-view"><div class="document-meta"><span class="document-chip">Type: ' + escapeHtml(titleize(docType)) + '</span><span class="document-chip">Paper: ' + escapeHtml(paper.toUpperCase()) + '</span></div><iframe class="modal-frame" title="Document Preview" srcdoc="' + escapeAttr(preview && preview.html ? preview.html : '<p>Preview not available.</p>') + '"></iframe></div>';
+      const pdfDocument = await fetchDocumentPdf(docType, id, normalizedPaper);
+      state.modalDocument = {
+        type: docType,
+        id: String(id),
+        paper: normalizedPaper,
+        title: title || titleize(docType),
+        objectUrl: pdfDocument.objectUrl,
+        fileName: pdfDocument.fileName,
+        relatedDocuments: relatedDocuments
+      };
+      els.modalBody.innerHTML = '<div class="document-view"><div class="document-meta"><span class="document-chip">Type: ' + escapeHtml(title || titleize(docType)) + '</span><span class="document-chip">Paper: ' + escapeHtml(normalizedPaper.toUpperCase()) + '</span><span class="document-chip">File: ' + escapeHtml(pdfDocument.fileName) + '</span></div><iframe class="modal-frame" title="Document Preview" src="' + escapeAttr(pdfDocument.objectUrl + '#toolbar=1&navpanes=0&scrollbar=1') + '"></iframe></div>';
     } catch (error) {
       els.modalBody.innerHTML = '<div class="page-empty"><i class="fa-solid fa-circle-exclamation"></i><p>' + escapeHtml(error.message || 'Unable to load document preview.') + '</p></div>';
+      showToast(error.message || "Unable to generate document PDF.", "error");
     }
   }
 
-  function renderDocumentActionBar(type, id, paper) {
-    return [
+  function renderDocumentActionBar(type, id, paper, relatedDocuments) {
+    const related = Array.isArray(relatedDocuments) ? relatedDocuments : [];
+    return related.map(function (document) {
+      return '<button class="btn btn-outline" data-action="open-document" data-type="' + escapeAttr(document.type) + '" data-id="' + escapeAttr(String(document.id)) + '" data-paper="' + escapeAttr(document.paper || defaultDocumentPaper(document.type)) + '" data-title="' + escapeAttr(document.title || titleize(document.type)) + '"><i class="fa-solid fa-file-lines"></i>Preview ' + escapeHtml(document.title || titleize(document.type)) + '</button>';
+    }).concat([
       '<button class="btn btn-primary" data-action="print-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '" data-paper="' + escapeAttr(paper) + '"><i class="fa-solid fa-print"></i>Print</button>',
-      '<button class="btn btn-outline" data-action="download-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '"><i class="fa-solid fa-file-pdf"></i>Download PDF</button>',
-      '<button class="btn btn-outline" data-action="share-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '"><i class="fa-brands fa-whatsapp"></i>Share WhatsApp</button>',
+      '<button class="btn btn-outline" data-action="download-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '" data-paper="' + escapeAttr(paper) + '"><i class="fa-solid fa-file-pdf"></i>Download PDF</button>',
+      '<button class="btn btn-outline" data-action="share-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '" data-paper="' + escapeAttr(paper) + '"><i class="fa-solid fa-share-nodes"></i>Share</button>',
       '<button class="btn btn-outline" data-action="email-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '"><i class="fa-solid fa-envelope"></i>Email</button>',
       '<button class="btn btn-danger" data-action="close-modal"><i class="fa-solid fa-xmark"></i>Close</button>'
-    ].join("");
+    ]).join("");
   }
 
-  function printDocument(type, id, paper) {
+  async function printDocument(type, id, paper) {
     const docType = documentType(type);
-    apiJson("/api/documents/" + encodeURIComponent(docType) + "/" + encodeURIComponent(id) + "/preview?paper=" + encodeURIComponent(paper)).then(function (preview) {
-      const win = window.open("", "_blank", "noopener");
-      if (!win) {
-        showToast("Popup blocked. Allow popups to print.", "error");
-        return;
-      }
-      win.document.open();
-      win.document.write(preview && preview.html ? preview.html : "<p>Preview unavailable.</p>");
-      win.document.close();
-    }).catch(function (error) {
+    try {
+      const pdfDocument = await ensureDocumentPdf(docType, id, paper);
+      const frame = document.createElement("iframe");
+      let printStarted = false;
+      frame.className = "hidden";
+      frame.src = pdfDocument.objectUrl;
+      frame.onload = function () {
+        printStarted = true;
+        window.setTimeout(function () {
+          try {
+            if (frame.contentWindow) {
+              frame.contentWindow.focus();
+              frame.contentWindow.print();
+            }
+          } catch (printError) {
+            showToast("Open the preview and use your browser print dialog if printing stays blocked.", "error");
+          }
+        }, 400);
+      };
+      frame.onerror = function () {
+        showToast("Unable to load the PDF for printing.", "error");
+      };
+      document.body.appendChild(frame);
+      window.setTimeout(function () {
+        if (!printStarted) {
+          showToast("Print preview is taking too long to load. Try the Download PDF button instead.", "error");
+        }
+      }, 5000);
+      window.setTimeout(function () {
+        frame.remove();
+        if (!state.modalDocument || state.modalDocument.objectUrl !== pdfDocument.objectUrl) {
+          URL.revokeObjectURL(pdfDocument.objectUrl);
+        }
+      }, 6e4);
+    } catch (error) {
       showToast(error.message || "Unable to print document.", "error");
-    });
+    }
   }
 
-  function downloadDocumentPdf(type, id) {
+  async function downloadDocumentPdf(type, id, paper) {
     const docType = documentType(type);
-    window.open("/api/documents/" + encodeURIComponent(docType) + "/" + encodeURIComponent(id) + "/pdf", "_blank", "noopener");
+    try {
+      const pdfDocument = await fetchDocumentPdf(docType, id, paper || defaultDocumentPaper(docType));
+      triggerBlobDownload(pdfDocument.objectUrl, pdfDocument.fileName);
+      if (!state.modalDocument || String(state.modalDocument.id) !== String(id) || state.modalDocument.type !== docType) {
+        window.setTimeout(function () {
+          URL.revokeObjectURL(pdfDocument.objectUrl);
+        }, 1000);
+      }
+    } catch (error) {
+      showToast(error.message || "Unable to download PDF.", "error");
+    }
   }
 
   async function emailDocument(type, id) {
@@ -1522,13 +1574,30 @@
     }
   }
 
-  function shareDocumentWhatsapp(type, id) {
-    const phoneInput = window.prompt("WhatsApp number, e.g. 2547XXXXXXXX");
-    if (!phoneInput) return;
-    const phone = String(phoneInput).replace(/\D/g, "");
-    const url = window.location.origin + "/api/documents/" + encodeURIComponent(documentType(type)) + "/" + encodeURIComponent(id) + "/pdf";
-    const text = encodeURIComponent("Hello, please find your document here: " + url);
-    window.open("https://wa.me/" + phone + "?text=" + text, "_blank", "noopener");
+  async function shareDocumentWhatsapp(type, id, paper) {
+    try {
+      const pdfDocument = await fetchDocumentPdf(documentType(type), id, paper || defaultDocumentPaper(type));
+      const file = typeof File === "function" ? new File([pdfDocument.blob], pdfDocument.fileName, { type: "application/pdf" }) : null;
+      if (file && navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+        await navigator.share({ files: [file], title: pdfDocument.fileName, text: "POS document PDF" });
+        if (!state.modalDocument || state.modalDocument.objectUrl !== pdfDocument.objectUrl) {
+          window.setTimeout(function () {
+            URL.revokeObjectURL(pdfDocument.objectUrl);
+          }, 1000);
+        }
+        showToast("Document shared.", "success");
+        return;
+      }
+      triggerBlobDownload(pdfDocument.objectUrl, pdfDocument.fileName);
+      if (!state.modalDocument || state.modalDocument.objectUrl !== pdfDocument.objectUrl) {
+        window.setTimeout(function () {
+          URL.revokeObjectURL(pdfDocument.objectUrl);
+        }, 1000);
+      }
+      showToast("File sharing is not available in this browser. PDF downloaded instead.", "warning");
+    } catch (error) {
+      showToast(error.message || "Unable to share document.", "error");
+    }
   }
 
   function openModal(options) {
@@ -1544,7 +1613,7 @@
     els.modalOverlay.classList.add("hidden");
     els.modalActions.innerHTML = "";
     els.modalBody.innerHTML = "";
-    state.modalDocument = null;
+    resetModalDocument();
   }
 
   function openCustomerModal() {
@@ -1697,6 +1766,77 @@
     if (res.status === 204) return null;
     const text = await res.text();
     return text ? JSON.parse(text) : null;
+  }
+
+  function defaultDocumentPaper(type) {
+    return documentType(type) === "receipt" ? "80mm" : "a4";
+  }
+
+  function parseDocumentFileName(res, fallback) {
+    const header = firstText(res && res.headers && res.headers.get("Content-Disposition"), "");
+    const match = header.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
+    if (!match || !match[1]) return fallback;
+    try {
+      return decodeURIComponent(String(match[1]).replace(/"/g, "").trim()) || fallback;
+    } catch (error) {
+      return String(match[1]).replace(/"/g, "").trim() || fallback;
+    }
+  }
+
+  function buildDocumentPdfEndpoint(type, id, paper) {
+    return "/api/documents/" + encodeURIComponent(documentType(type)) + "/" + encodeURIComponent(id) + "/pdf?paper=" + encodeURIComponent(paper || defaultDocumentPaper(type));
+  }
+
+  async function fetchDocumentPdf(type, id, paper) {
+    const url = buildDocumentPdfEndpoint(type, id, paper);
+    const res = await authorizedFetch(url, { headers: { Accept: "application/pdf" } });
+    if (res.status === 401) {
+      clearSession();
+      showLogin();
+      throw new Error("Your session expired. Please sign in again.");
+    }
+    if (!res.ok) {
+      const errorBody = await res.json().catch(function () { return {}; });
+      throw new Error(firstText(errorBody.error, errorBody.message, res.statusText, "Unable to generate PDF"));
+    }
+    const contentType = firstText(res.headers.get("Content-Type"), "");
+    if (contentType.toLowerCase().indexOf("application/pdf") === -1) {
+      throw new Error("The server returned an invalid PDF response.");
+    }
+    const blob = await res.blob();
+    if (!blob || !blob.size) {
+      throw new Error("The generated PDF was empty.");
+    }
+    const fallback = documentType(type) + "-" + String(id) + ".pdf";
+    return {
+      blob: blob,
+      objectUrl: URL.createObjectURL(blob),
+      fileName: parseDocumentFileName(res, fallback)
+    };
+  }
+
+  async function ensureDocumentPdf(type, id, paper) {
+    if (state.modalDocument && state.modalDocument.objectUrl && state.modalDocument.type === documentType(type) && String(state.modalDocument.id) === String(id) && state.modalDocument.paper === (paper || defaultDocumentPaper(type))) {
+      return state.modalDocument;
+    }
+    return fetchDocumentPdf(type, id, paper || defaultDocumentPaper(type));
+  }
+
+  function triggerBlobDownload(objectUrl, fileName) {
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = fileName || "document.pdf";
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  function resetModalDocument() {
+    if (state.modalDocument && state.modalDocument.objectUrl) {
+      URL.revokeObjectURL(state.modalDocument.objectUrl);
+    }
+    state.modalDocument = null;
   }
 
   function fetchWithJson(url, options) {

@@ -50,6 +50,35 @@ function request(method, url, body, headers) {
   });
 }
 
+function requestBinary(method, url, headers) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const lib = parsed.protocol === "https:" ? https : http;
+    const req = lib.request(
+      {
+        hostname: parsed.hostname,
+        port: parsed.port,
+        path: parsed.pathname + parsed.search,
+        method,
+        headers: headers || {}
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode,
+            body: Buffer.concat(chunks),
+            headers: res.headers || {}
+          });
+        });
+      }
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 function authHeader(token) {
   return token ? { Authorization: "Bearer " + token } : {};
 }
@@ -95,6 +124,9 @@ async function run() {
   let createdProductId = null;
   let createdCustomerId = null;
   let createdSupplierId = null;
+  let createdSaleId = null;
+  let createdInvoiceId = null;
+  let createdQuotationId = null;
 
   // ── PostgreSQL connectivity ────────────────────────────────────────────────
   await section("PostgreSQL connectivity", async () => {
@@ -271,11 +303,62 @@ async function run() {
         items: [{ product_id: createdProductId, quantity: 1, unit_price: 100, discount: 0, vat_rate: 16 }]
       }, token);
       ok("POST /pos/sale 201", sale.status, sale.status === 201, JSON.stringify(sale.body));
+      createdSaleId = sale.body && sale.body.id;
+      createdInvoiceId = sale.body && sale.body.invoice_id;
 
-      if (sale.body && sale.body.id) {
-        const byId = await get("/pos/sales/" + sale.body.id, token);
+      if (createdSaleId) {
+        const byId = await get("/pos/sales/" + createdSaleId, token);
         ok("GET /pos/sales/:id 200", byId.status, byId.status === 200);
       }
+    }
+  });
+
+  // ── Quotations ──────────────────────────────────────────────────────────────
+  await section("Quotations", async () => {
+    if (createdProductId && createdCustomerId) {
+      const quotation = await post("/quotations", {
+        customer_id: createdCustomerId,
+        valid_until: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+        notes: "Regression quotation",
+        items: [{ product_id: createdProductId, description: "Regression Product Updated", quantity: 1, unit_price: 100, discount: 0, vat_rate: 16, total: 116 }]
+      }, token);
+      ok("POST /quotations 201", quotation.status, quotation.status === 201, JSON.stringify(quotation.body));
+      createdQuotationId = quotation.body && quotation.body.id;
+    } else {
+      ok("POST /quotations 201", null, false, "missing product or customer prerequisite");
+    }
+  });
+
+  // ── Documents ───────────────────────────────────────────────────────────────
+  await section("Documents", async () => {
+    const documentCases = [
+      { name: "receipt", id: createdSaleId, paper: "80mm", expectText: "Regression Product Updated" },
+      { name: "invoice", id: createdInvoiceId, paper: "a4", expectText: "Regression Product Updated" },
+      { name: "quotation", id: createdQuotationId, paper: "a4", expectText: "Regression Product Updated" }
+    ];
+    for (const documentCase of documentCases) {
+      if (!documentCase.id) {
+        ok("Document " + documentCase.name + " prerequisites", null, false, "missing id");
+        continue;
+      }
+      const preview = await get("/documents/" + documentCase.name + "/" + documentCase.id + "/preview?paper=" + documentCase.paper, token);
+      ok("GET /documents/" + documentCase.name + "/:id/preview 200", preview.status, preview.status === 200, JSON.stringify(preview.body));
+      ok(documentCase.name + " preview returns html", preview.status,
+        !!(preview.body && typeof preview.body.html === "string" && preview.body.html.includes(documentCase.expectText)),
+        preview.body && preview.body.html ? preview.body.html.slice(0, 200) : "no html");
+
+      const pdf = await requestBinary("GET", BASE + "/documents/" + documentCase.name + "/" + documentCase.id + "/pdf?paper=" + documentCase.paper, authHeader(token));
+      ok("GET /documents/" + documentCase.name + "/:id/pdf 200", pdf.status, pdf.status === 200,
+        "status=" + pdf.status + " content-type=" + pdf.headers["content-type"]);
+      ok(documentCase.name + " PDF content-type is application/pdf", pdf.status,
+        String(pdf.headers["content-type"] || "").includes("application/pdf"),
+        "content-type=" + pdf.headers["content-type"]);
+      ok(documentCase.name + " PDF is non-empty", pdf.status,
+        Buffer.isBuffer(pdf.body) && pdf.body.length > 32,
+        "bytes=" + (pdf.body ? pdf.body.length : 0));
+      ok(documentCase.name + " PDF header is valid", pdf.status,
+        Buffer.isBuffer(pdf.body) && pdf.body.subarray(0, 4).toString("utf8") === "%PDF",
+        Buffer.isBuffer(pdf.body) ? pdf.body.subarray(0, 16).toString("utf8") : "no body");
     }
   });
 
