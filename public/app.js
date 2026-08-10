@@ -92,8 +92,11 @@
         customer_id: null,
         customer: null,
         discount_amount: 0,
+        shipping_amount: 0,
         notes: "",
         payment_method: "cash",
+        split_method2: "mpesa",
+        split_amount2: 0,
         amount_paid: 0,
         filter_category: null,
         filter_brand: null,
@@ -104,6 +107,9 @@
         customers: [],
         heldSales: [],
         lastSaleId: null,
+        lastInvoiceId: null,
+        lastInvoiceNumber: null,
+        submitting: false,
         view: "checkout"
       }
     }
@@ -1941,20 +1947,23 @@
         ];
       }), "No invoices yet.");
     }
-    return renderTableCard("POS sales", ["Receipt", "Customer", "Items", "Total", "Paid", "Method", "Date", "Actions"], (data.sales || []).map(function (item) {
+    return renderTableCard("POS Sales History", ["Receipt", "Invoice #", "Customer", "Cashier", "Items", "Total", "Paid", "Method", "Status", "Date", "Actions"], (data.sales || []).map(function (item) {
       return [
         escapeHtml(firstText(item.receipt_number, "—")),
+        escapeHtml(firstText(item.invoice_number, "—")),
         escapeHtml(firstText(item.customer_name, "Walk-in")),
+        escapeHtml(firstText(item.cashier_name, "—")),
         escapeHtml(String((item.items || []).length)),
         money(item.total),
         money(item.amount_paid),
         escapeHtml(firstText(item.payment_method, "—")),
+        renderBadge(firstText(item.status, "completed")),
         escapeHtml(formatDateTime(item.created_at)),
         actionButtons([
-          { cls: "js-print-receipt", label: "Print", id: item.id, tone: "secondary" },
+          { cls: "js-print-receipt", label: "🖨 Print", id: item.id, tone: "secondary" },
           { cls: "js-pdf-receipt", label: "PDF", id: item.id, tone: "secondary" },
-          { cls: "js-whatsapp-receipt", label: "WhatsApp", id: item.id, tone: "secondary" },
-          { cls: "js-email-receipt", label: "Email", id: item.id, tone: "secondary" }
+          { cls: "js-whatsapp-receipt", label: "💬 WhatsApp", id: item.id, tone: "secondary" },
+          { cls: "js-email-receipt", label: "✉ Email", id: item.id, tone: "secondary" }
         ])
       ];
     }), "No POS sales yet.");
@@ -1992,12 +2001,30 @@
       return '<button type="button" class="pos-pay-btn js-pos-payment' + (checkout.payment_method === m ? ' active' : '') + '" data-method="' + escapeAttr(m) + '">' + escapeHtml(paymentLabels[m] || m) + '</button>';
     }).join('');
 
+    var splitUI = checkout.payment_method === 'split' ? [
+      '<div class="pos-split-payment" id="posSplitPayment">',
+        '<div class="pos-split-row">',
+          '<label>1st Payment</label>',
+          '<select id="posSplit1Method"><option value="cash">💵 Cash</option><option value="mpesa">📱 M-Pesa</option><option value="card">💳 Card</option><option value="bank_transfer">🏦 Bank</option></select>',
+          '<input type="number" id="posSplit1Amount" class="pos-inline-num" min="0" step="0.01" placeholder="Amount" value="' + escapeAttr(String(checkout.amount_paid || 0)) + '" />',
+        '</div>',
+        '<div class="pos-split-row">',
+          '<label>2nd Payment</label>',
+          '<select id="posSplit2Method"><option value="mpesa"' + (checkout.split_method2 === 'mpesa' ? ' selected' : '') + '>📱 M-Pesa</option><option value="cash"' + (checkout.split_method2 === 'cash' ? ' selected' : '') + '>💵 Cash</option><option value="card"' + (checkout.split_method2 === 'card' ? ' selected' : '') + '>💳 Card</option><option value="bank_transfer"' + (checkout.split_method2 === 'bank_transfer' ? ' selected' : '') + '>🏦 Bank</option></select>',
+          '<input type="number" id="posSplit2Amount" class="pos-inline-num" min="0" step="0.01" placeholder="Amount" value="' + escapeAttr(String(checkout.split_amount2 || 0)) + '" />',
+        '</div>',
+      '</div>'
+    ].join('') : '';
+
+    var cashierName = (state.user && state.user.name) ? escapeHtml(state.user.name) : '—';
+
     body.innerHTML = [
       '<div class="pos-checkout" id="posCheckoutRoot">',
         '<div class="pos-checkout-topbar">',
           '<span class="pos-checkout-title">🧾 Point of Sale</span>',
           '<div class="pos-topbar-actions">',
-            '<button type="button" class="secondary small" id="posViewHistoryBtn">📋 History / Invoices</button>',
+            '<span class="pos-cashier-badge">👤 ' + cashierName + '</span>',
+            '<button type="button" class="secondary small" id="posViewHistoryBtn">📋 History</button>',
           '</div>',
         '</div>',
         '<div class="pos-flash-msg hidden" id="posCheckoutFlash"></div>',
@@ -2028,16 +2055,21 @@
                 '<span id="posTotalDiscount">—</span>',
               '</div>',
               '<div class="pos-total-row"><span>VAT</span><span id="posTotalVat">—</span></div>',
+              '<div class="pos-total-row pos-total-shipping">',
+                '<span>Shipping <input type="number" id="posShippingInput" class="pos-inline-num" min="0" step="0.01" value="' + escapeAttr(String(checkout.shipping_amount || 0)) + '" /></span>',
+                '<span id="posTotalShipping">—</span>',
+              '</div>',
               '<div class="pos-total-row pos-total-grand"><span>GRAND TOTAL</span><span id="posTotalGrand">—</span></div>',
             '</div>',
             '<div class="pos-payment-methods">' + paymentBtns + '</div>',
+            splitUI,
             '<div class="pos-pay-row">',
               '<div class="pos-pay-field">',
                 '<label class="pos-pay-label" for="posAmountPaid">Amount Paid</label>',
                 '<input type="number" id="posAmountPaid" class="pos-amount-input" min="0" step="0.01" value="' + escapeAttr(String(checkout.amount_paid || 0)) + '" />',
               '</div>',
               '<div class="pos-balance-box">',
-                '<span class="pos-balance-label">Balance</span>',
+                '<span class="pos-balance-label">Change/Balance</span>',
                 '<span class="pos-balance-val" id="posBalanceDue">—</span>',
               '</div>',
             '</div>',
@@ -2050,12 +2082,14 @@
             '</div>',
             '<button type="button" class="pos-complete-btn" id="posCompleteSaleBtn">✓ COMPLETE SALE</button>',
             '<div class="pos-after-actions hidden" id="posAfterActions">',
-              '<button type="button" class="secondary small" id="posPrintReceiptBtn">🖨 Print</button>',
-              '<button type="button" class="secondary small" id="posEmailReceiptBtn">✉ Email</button>',
-              '<button type="button" class="secondary small" id="posWhatsappBtn">💬 WhatsApp</button>',
-              '<button type="button" class="secondary small" id="posGenerateInvoiceBtn">📄 Invoice</button>',
+              '<button type="button" class="pos-after-btn pos-after-btn--primary" id="posViewInvoiceBtn">📄 View Invoice</button>',
+              '<button type="button" class="pos-after-btn" id="posPrintReceiptBtn">🖨 Print</button>',
+              '<button type="button" class="pos-after-btn" id="posEmailReceiptBtn">✉ Email</button>',
+              '<button type="button" class="pos-after-btn" id="posWhatsappBtn">💬 WhatsApp</button>',
+              '<button type="button" class="pos-after-btn pos-after-btn--new" id="posNewSaleBtn">＋ New Sale</button>',
             '</div>',
             '<input type="hidden" id="posLastSaleId" value="" />',
+            '<input type="hidden" id="posLastInvoiceId" value="" />',
           '</div>',
         '</div>',
       '</div>'
@@ -2177,13 +2211,58 @@
       });
     }
 
+    var discountEl = document.getElementById("posDiscountInput");
+    if (discountEl) {
+      discountEl.addEventListener("input", function () {
+        checkout.discount_amount = Math.max(0, Number(discountEl.value) || 0);
+        posRenderBasket();
+      });
+    }
+
+    var shippingEl = document.getElementById("posShippingInput");
+    if (shippingEl) {
+      shippingEl.addEventListener("input", function () {
+        checkout.shipping_amount = Math.max(0, Number(shippingEl.value) || 0);
+        posRenderBasket();
+      });
+    }
+
     body.querySelectorAll(".js-pos-payment").forEach(function (btn) {
       btn.addEventListener("click", function () {
         checkout.payment_method = btn.dataset.method;
         body.querySelectorAll(".js-pos-payment").forEach(function (b) { b.classList.remove("active"); });
         btn.classList.add("active");
+        // Re-render to show/hide split payment UI
+        renderPosCheckout(body, checkout);
+        posRenderProductGrid();
+        posRenderBasket();
+        bindCheckoutEvents(body, checkout);
       });
     });
+
+    // Split payment field listeners
+    var split1El = document.getElementById("posSplit1Amount");
+    if (split1El) {
+      split1El.addEventListener("input", function () {
+        checkout.amount_paid = Math.max(0, Number(split1El.value) || 0);
+        var apEl = document.getElementById("posAmountPaid");
+        if (apEl) apEl.value = String(checkout.amount_paid);
+        posRenderBasket();
+      });
+    }
+    var split2El = document.getElementById("posSplit2Amount");
+    if (split2El) {
+      split2El.addEventListener("input", function () {
+        checkout.split_amount2 = Math.max(0, Number(split2El.value) || 0);
+        posRenderBasket();
+      });
+    }
+    var split2MethodEl = document.getElementById("posSplit2Method");
+    if (split2MethodEl) {
+      split2MethodEl.addEventListener("change", function () {
+        checkout.split_method2 = split2MethodEl.value;
+      });
+    }
 
     bindClick("posHoldBtn", posHoldSale);
     bindClick("posRecallBtn", posRecallSale);
@@ -2202,6 +2281,10 @@
       if (de) de.value = String(num);
       posRenderBasket();
     });
+    bindClick("posViewInvoiceBtn", function () {
+      var invoiceId = (document.getElementById("posLastInvoiceId") || {}).value;
+      if (invoiceId) posShowInvoiceModal(state.ui.posCheckout.lastCompletedSale);
+    });
     bindClick("posPrintReceiptBtn", function () {
       var saleId = (document.getElementById("posLastSaleId") || {}).value;
       if (!saleId) return;
@@ -2209,15 +2292,15 @@
       openDocumentPrint("receipt", saleId, paper || "80mm");
     });
     bindClick("posEmailReceiptBtn", function () {
-      var saleId = (document.getElementById("posLastSaleId") || {}).value;
-      if (saleId) Promise.resolve(emailDocument("receipt", saleId)).catch(handleActionError);
+      var invoiceId = (document.getElementById("posLastInvoiceId") || {}).value;
+      if (invoiceId) Promise.resolve(emailDocument("invoice", invoiceId)).catch(handleActionError);
     });
     bindClick("posWhatsappBtn", function () {
-      var saleId = (document.getElementById("posLastSaleId") || {}).value;
-      if (saleId) shareDocumentWhatsapp("receipt", saleId);
+      var invoiceId = (document.getElementById("posLastInvoiceId") || {}).value;
+      if (invoiceId) shareDocumentWhatsapp("invoice", invoiceId);
     });
-    bindClick("posGenerateInvoiceBtn", function () {
-      Promise.resolve(posGenerateInvoice()).catch(handleActionError);
+    bindClick("posNewSaleBtn", function () {
+      posClearBasket(true);
     });
   }
 
@@ -2307,8 +2390,9 @@
       vat += lineAmt * (Number(line.vat_rate || 0) / 100);
     });
     var discount = Number(checkout.discount_amount || 0);
-    var total = Math.max(0, subtotal - discount + vat);
-    return { subtotal: subtotal, discount: discount, vat: vat, total: total };
+    var shipping = Number(checkout.shipping_amount || 0);
+    var total = Math.max(0, subtotal - discount + vat + shipping);
+    return { subtotal: subtotal, discount: discount, vat: vat, shipping: shipping, total: total };
   }
 
   function posRenderBasket() {
@@ -2324,16 +2408,24 @@
     }
 
     itemsEl.innerHTML = basket.map(function (line, idx) {
-      var lineTotal = (Number(line.unit_price) - Number(line.line_discount || 0)) * Number(line.quantity);
+      var lineBase = (Number(line.unit_price) - Number(line.line_discount || 0)) * Number(line.quantity);
+      var lineVat = lineBase * (Number(line.vat_rate || 0) / 100);
+      var lineTotal = lineBase + lineVat;
+      var stockOk = line.stock >= line.quantity;
       return [
-        '<div class="pos-basket-row">',
+        '<div class="pos-basket-row' + (stockOk ? '' : ' pos-basket-row--low-stock') + '">',
           '<div class="pos-basket-row-main">',
             '<div class="pos-basket-row-name">' + escapeHtml(line.product_name) + '</div>',
+            '<div class="pos-basket-row-meta">',
+              (line.product_code ? '<span class="pos-row-code">' + escapeHtml(line.product_code) + '</span>' : ''),
+              '<span class="pos-row-stock ' + (stockOk ? 'pos-stock-ok' : 'pos-stock-out') + '">Stock: ' + escapeHtml(String(line.stock || 0)) + '</span>',
+              (line.vat_rate ? '<span class="pos-row-vat">VAT ' + escapeHtml(String(line.vat_rate)) + '%</span>' : ''),
+            '</div>',
             '<div class="pos-basket-row-price">' + money(line.unit_price) + (line.line_discount ? ' −' + money(line.line_discount) : '') + '</div>',
           '</div>',
           '<div class="pos-basket-row-controls">',
             '<button type="button" class="pos-qty-btn js-pos-qty" data-line="' + idx + '" data-action="dec">−</button>',
-            '<span class="pos-qty-val">' + escapeHtml(String(line.quantity)) + '</span>',
+            '<input type="number" class="pos-qty-input js-pos-qty-input" data-line="' + idx + '" value="' + escapeAttr(String(line.quantity)) + '" min="1" step="1" />',
             '<button type="button" class="pos-qty-btn js-pos-qty" data-line="' + idx + '" data-action="inc">+</button>',
           '</div>',
           '<div class="pos-basket-row-total">' + money(lineTotal) + '</div>',
@@ -2341,6 +2433,16 @@
         '</div>'
       ].join('');
     }).join('');
+
+    // Bind qty input events
+    itemsEl.querySelectorAll('.js-pos-qty-input').forEach(function (input) {
+      input.addEventListener('change', function () {
+        var idx2 = parseInt(input.dataset.line, 10);
+        var val = Math.max(1, parseInt(input.value, 10) || 1);
+        var line = checkout.basket[idx2];
+        if (line) { line.quantity = val; posRenderBasket(); }
+      });
+    });
 
     var t = posCalcTotals(checkout);
     var amtPaid = Number(checkout.amount_paid || 0);
@@ -2350,6 +2452,7 @@
     setTxt("posTotalSubtotal", money(t.subtotal));
     setTxt("posTotalDiscount", "−" + money(t.discount));
     setTxt("posTotalVat", money(t.vat));
+    setTxt("posTotalShipping", money(t.shipping));
     setTxt("posTotalGrand", money(t.total));
     var balEl = document.getElementById("posBalanceDue");
     if (balEl) {
@@ -2363,9 +2466,11 @@
     var existing = checkout.basket.find(function (line) { return line.product_id === product.id; });
     if (existing) {
       existing.quantity += 1;
+      existing.stock = Number(product.current_stock || 0);
     } else {
       checkout.basket.push({
         product_id: product.id,
+        product_code: product.product_code || '',
         product_name: product.product_name,
         unit_price: Number(product.selling_price),
         quantity: 1,
@@ -2391,32 +2496,37 @@
     posRenderBasket();
   }
 
-  function posClearBasket() {
+  function posClearBasket(skipConfirm) {
     var co = state.ui.posCheckout;
-    if (co.basket.length && !window.confirm("Clear all items from basket?")) return;
+    if (!skipConfirm && co.basket.length && !window.confirm("Clear all items from basket?")) return;
     co.basket = [];
     co.discount_amount = 0;
+    co.shipping_amount = 0;
     co.notes = "";
     co.amount_paid = 0;
     co.customer_id = null;
     co.customer = null;
+    co.lastCompletedSale = null;
     posRenderBasket();
-    var els = ["posCustomerSelect", "posDiscountInput", "posAmountPaid"];
+    var els = ["posCustomerSelect", "posDiscountInput", "posShippingInput", "posAmountPaid"];
     els.forEach(function (id) { var el = document.getElementById(id); if (el) el.value = id === "posCustomerSelect" ? "" : "0"; });
     var ne = document.getElementById("posNotesInput");
     if (ne) ne.value = "";
     var aa = document.getElementById("posAfterActions");
     if (aa) aa.classList.add("hidden");
+    var btn = document.getElementById("posCompleteSaleBtn");
+    if (btn) { btn.disabled = false; btn.textContent = "✓ COMPLETE SALE"; }
   }
 
   function posHoldSale() {
     var co = state.ui.posCheckout;
     if (!co.basket.length) { posFlashMsg("Basket is empty.", "error"); return; }
-    co.heldSales.push({ basket: co.basket.slice(), customer_id: co.customer_id, customer: co.customer, discount_amount: co.discount_amount, notes: co.notes });
+    co.heldSales.push({ basket: co.basket.slice(), customer_id: co.customer_id, customer: co.customer, discount_amount: co.discount_amount, shipping_amount: co.shipping_amount, notes: co.notes });
     co.basket = [];
     co.customer_id = null;
     co.customer = null;
     co.discount_amount = 0;
+    co.shipping_amount = 0;
     co.notes = "";
     co.amount_paid = 0;
     posRenderBasket();
@@ -2434,6 +2544,7 @@
     co.customer_id = held.customer_id;
     co.customer = held.customer;
     co.discount_amount = held.discount_amount;
+    co.shipping_amount = held.shipping_amount || 0;
     co.notes = held.notes;
     co.amount_paid = 0;
     posRenderBasket();
@@ -2441,6 +2552,8 @@
     if (ce && co.customer_id) ce.value = String(co.customer_id);
     var de = document.getElementById("posDiscountInput");
     if (de) de.value = String(co.discount_amount);
+    var se = document.getElementById("posShippingInput");
+    if (se) se.value = String(co.shipping_amount);
     var ne = document.getElementById("posNotesInput");
     if (ne) ne.value = co.notes || "";
     posFlashMsg("Sale recalled.");
@@ -2450,9 +2563,13 @@
 
   async function posCompleteSale() {
     var co = state.ui.posCheckout;
+    if (co.submitting) { posFlashMsg("Sale is being processed, please wait.", "error"); return; }
     if (!co.basket.length) { posFlashMsg("Add items first.", "error"); return; }
     var totals = posCalcTotals(co);
     var amtPaid = Number(co.amount_paid || 0);
+    if (co.payment_method === 'split') {
+      amtPaid = Number(co.amount_paid || 0) + Number(co.split_amount2 || 0);
+    }
     if (amtPaid <= 0 && co.payment_method !== "credit") { posFlashMsg("Enter the amount paid.", "error"); return; }
     if (co.payment_method !== "credit" && co.payment_method !== "split" && amtPaid < totals.total) {
       posFlashMsg("Amount paid (" + money(amtPaid) + ") is less than the total (" + money(totals.total) + ").", "error");
@@ -2463,52 +2580,203 @@
         return { product_id: line.product_id, quantity: line.quantity, unit_price: line.unit_price, discount: line.line_discount || 0, vat_rate: line.vat_rate || 0 };
       }),
       discount_amount: co.discount_amount || 0,
+      shipping_amount: co.shipping_amount || 0,
       amount_paid: amtPaid,
-      payment_method: co.payment_method || "cash",
-      notes: co.notes || ""
+      payment_method: co.payment_method || "cash"
     };
     if (co.customer_id) payload.customer_id = co.customer_id;
     var btn = document.getElementById("posCompleteSaleBtn");
-    if (btn) { btn.disabled = true; btn.textContent = "Processing…"; }
+    co.submitting = true;
+    if (btn) { btn.disabled = true; btn.textContent = "⏳ Processing…"; }
     try {
       var result = await apiJson("/api/pos/sale", { method: "POST", body: JSON.stringify(payload) });
       co.lastSaleId = result && result.id ? String(result.id) : null;
+      co.lastInvoiceId = result && result.invoice_id ? String(result.invoice_id) : null;
+      co.lastInvoiceNumber = result && result.invoice_number ? result.invoice_number : null;
+      co.lastCompletedSale = result;
       var lsi = document.getElementById("posLastSaleId");
       if (lsi) lsi.value = co.lastSaleId || "";
+      var lii = document.getElementById("posLastInvoiceId");
+      if (lii) lii.value = co.lastInvoiceId || "";
       co.basket = [];
-      co.customer_id = null;
-      co.customer = null;
       co.discount_amount = 0;
+      co.shipping_amount = 0;
       co.notes = "";
       co.amount_paid = 0;
+      co.split_amount2 = 0;
+      co.customer_id = null;
+      co.customer = null;
       posRenderBasket();
+      // Show after-sale actions
       var aa = document.getElementById("posAfterActions");
       if (aa) aa.classList.remove("hidden");
-      posFlashMsg("Sale complete! Receipt #" + (result && result.receipt_number ? result.receipt_number : ""));
-      await loadDashboard();
-      renderDashboardStats();
+      if (btn) { btn.disabled = false; btn.textContent = "✓ COMPLETE SALE"; }
+      // Auto-show invoice modal
+      posShowInvoiceModal(result);
+      // Update dashboard stats in background
+      loadDashboard().then(renderDashboardStats).catch(function () {});
     } catch (e) {
       posFlashMsg(e && e.message ? e.message : "Sale failed.", "error");
-    } finally {
       if (btn) { btn.disabled = false; btn.textContent = "✓ COMPLETE SALE"; }
+    } finally {
+      co.submitting = false;
     }
   }
 
+  function posShowInvoiceModal(saleResult) {
+    if (!saleResult) return;
+    var invoiceId = saleResult.invoice_id;
+    var invoiceNumber = saleResult.invoice_number || saleResult.receipt_number || '—';
+    var saleId = saleResult.id;
+    var customerName = saleResult.customer_name || 'Walk-in Customer';
+    var cashierName = saleResult.cashier_name || (state.user && state.user.name) || '—';
+    var paymentMethod = saleResult.payment_method || '—';
+    var total = money(saleResult.total || 0);
+    var amountPaid = money(saleResult.amount_paid || 0);
+    var change = money(saleResult.change || 0);
+    var createdAt = saleResult.created_at ? new Date(saleResult.created_at).toLocaleString() : new Date().toLocaleString();
+    var items = saleResult.items || [];
+
+    var itemRows = items.map(function (item) {
+      return '<tr>' +
+        '<td>' + escapeHtml(item.product_name || '—') + '</td>' +
+        '<td class="inv-td-num">' + escapeHtml(String(item.quantity)) + '</td>' +
+        '<td class="inv-td-num">' + money(item.unit_price) + '</td>' +
+        '<td class="inv-td-num">' + money(item.discount || 0) + '</td>' +
+        '<td class="inv-td-num">' + escapeHtml(String(item.vat_rate || 0)) + '%</td>' +
+        '<td class="inv-td-num">' + money(item.total) + '</td>' +
+        '</tr>';
+    }).join('');
+
+    var branding = state.branding || {};
+    var companyName = branding.business_name || 'UniquePOS';
+    var companyAddr = branding.business_address || '';
+    var companyPhone = branding.business_phone || '';
+    var companyEmail = branding.business_email || '';
+
+    var modalHtml = [
+      '<div class="pos-invoice-modal-overlay" id="posInvoiceModalOverlay">',
+        '<div class="pos-invoice-modal" id="posInvoiceModal">',
+          '<div class="pos-invoice-modal-header">',
+            '<h2>✅ Sale Complete — Invoice #' + escapeHtml(invoiceNumber) + '</h2>',
+            '<button type="button" class="pos-modal-close" id="posInvoiceModalClose" aria-label="Close">✕</button>',
+          '</div>',
+          '<div class="pos-invoice-modal-body" id="posInvoiceContent">',
+            // Invoice document
+            '<div class="inv-doc">',
+              '<div class="inv-header">',
+                (branding.logo_url ? '<img class="inv-logo" src="' + escapeAttr(branding.logo_url) + '" alt="Logo" />' : ''),
+                '<div class="inv-company">',
+                  '<h3>' + escapeHtml(companyName) + '</h3>',
+                  (companyAddr ? '<div>' + escapeHtml(companyAddr) + '</div>' : ''),
+                  (companyPhone ? '<div>Tel: ' + escapeHtml(companyPhone) + '</div>' : ''),
+                  (companyEmail ? '<div>' + escapeHtml(companyEmail) + '</div>' : ''),
+                '</div>',
+                '<div class="inv-meta">',
+                  '<div class="inv-meta-row"><span>Invoice #:</span><strong>' + escapeHtml(invoiceNumber) + '</strong></div>',
+                  '<div class="inv-meta-row"><span>Receipt #:</span><span>' + escapeHtml(saleResult.receipt_number || '—') + '</span></div>',
+                  '<div class="inv-meta-row"><span>Date:</span><span>' + escapeHtml(createdAt) + '</span></div>',
+                  '<div class="inv-meta-row"><span>Customer:</span><span>' + escapeHtml(customerName) + '</span></div>',
+                  '<div class="inv-meta-row"><span>Cashier:</span><span>' + escapeHtml(cashierName) + '</span></div>',
+                  '<div class="inv-meta-row"><span>Payment:</span><span>' + escapeHtml(paymentMethod) + '</span></div>',
+                '</div>',
+              '</div>',
+              '<table class="inv-table">',
+                '<thead><tr><th>Item</th><th class="inv-td-num">Qty</th><th class="inv-td-num">Unit Price</th><th class="inv-td-num">Discount</th><th class="inv-td-num">VAT</th><th class="inv-td-num">Total</th></tr></thead>',
+                '<tbody>' + itemRows + '</tbody>',
+              '</table>',
+              '<div class="inv-totals">',
+                '<div class="inv-total-row"><span>Subtotal</span><span>' + money(saleResult.subtotal || 0) + '</span></div>',
+                (Number(saleResult.discount_amount || 0) > 0 ? '<div class="inv-total-row"><span>Discount</span><span>−' + money(saleResult.discount_amount) + '</span></div>' : ''),
+                '<div class="inv-total-row"><span>VAT</span><span>' + money(saleResult.tax_amount || 0) + '</span></div>',
+                '<div class="inv-total-row inv-total-grand"><span>TOTAL</span><span>' + total + '</span></div>',
+                '<div class="inv-total-row"><span>Amount Paid</span><span>' + amountPaid + '</span></div>',
+                '<div class="inv-total-row inv-total-change"><span>Change</span><span>' + change + '</span></div>',
+              '</div>',
+              (branding.receipt_footer ? '<div class="inv-footer">' + escapeHtml(branding.receipt_footer) + '</div>' : ''),
+            '</div>',
+          '</div>',
+          '<div class="pos-invoice-modal-actions">',
+            '<button type="button" class="pos-inv-btn pos-inv-btn--primary" id="posInvPrintA4">🖨 Print A4</button>',
+            '<button type="button" class="pos-inv-btn pos-inv-btn--primary" id="posInvPrint80">🧾 Print Receipt (80mm)</button>',
+            '<button type="button" class="pos-inv-btn" id="posInvDownloadPdf">⬇ Download PDF</button>',
+            '<button type="button" class="pos-inv-btn" id="posInvWhatsapp">💬 WhatsApp</button>',
+            '<button type="button" class="pos-inv-btn" id="posInvEmail">✉ Email</button>',
+            '<button type="button" class="pos-inv-btn" id="posInvCopyLink">🔗 Copy Link</button>',
+            '<button type="button" class="pos-inv-btn pos-inv-btn--success" id="posInvNewSale">＋ New Sale</button>',
+            '<button type="button" class="pos-inv-btn pos-inv-btn--secondary" id="posInvClose">✓ Save & Close</button>',
+          '</div>',
+        '</div>',
+      '</div>'
+    ].join('');
+
+    // Inject modal into DOM
+    var existing = document.getElementById("posInvoiceModalOverlay");
+    if (existing) existing.remove();
+    document.body.insertAdjacentHTML("beforeend", modalHtml);
+
+    // Bind modal buttons
+    var overlay = document.getElementById("posInvoiceModalOverlay");
+    function closeModal() { if (overlay) overlay.remove(); }
+
+    var closeBtn = document.getElementById("posInvoiceModalClose");
+    if (closeBtn) closeBtn.addEventListener("click", closeModal);
+
+    var invCloseBtn = document.getElementById("posInvClose");
+    if (invCloseBtn) invCloseBtn.addEventListener("click", closeModal);
+
+    var printA4Btn = document.getElementById("posInvPrintA4");
+    if (printA4Btn) printA4Btn.addEventListener("click", function () {
+      if (invoiceId) openDocumentPrint("invoice", invoiceId, "a4");
+    });
+
+    var print80Btn = document.getElementById("posInvPrint80");
+    if (print80Btn) print80Btn.addEventListener("click", function () {
+      if (saleId) openDocumentPrint("receipt", saleId, "80mm");
+    });
+
+    var pdfBtn = document.getElementById("posInvDownloadPdf");
+    if (pdfBtn) pdfBtn.addEventListener("click", function () {
+      if (invoiceId) openDocumentPdf("invoice", invoiceId);
+    });
+
+    var waBtn = document.getElementById("posInvWhatsapp");
+    if (waBtn) waBtn.addEventListener("click", function () {
+      if (invoiceId) shareDocumentWhatsapp("invoice", invoiceId);
+    });
+
+    var emailBtn = document.getElementById("posInvEmail");
+    if (emailBtn) emailBtn.addEventListener("click", function () {
+      if (invoiceId) Promise.resolve(emailDocument("invoice", invoiceId)).catch(handleActionError);
+    });
+
+    var copyBtn = document.getElementById("posInvCopyLink");
+    if (copyBtn) copyBtn.addEventListener("click", function () {
+      var link = invoiceId ? window.location.origin + "/api/documents/invoice/" + invoiceId + "/pdf" : "";
+      if (link && navigator.clipboard) {
+        navigator.clipboard.writeText(link).then(function () {
+          posFlashMsg("Invoice link copied to clipboard.");
+        }).catch(function () { window.prompt("Copy this link:", link); });
+      } else if (link) {
+        window.prompt("Copy this link:", link);
+      }
+    });
+
+    var newSaleBtn = document.getElementById("posInvNewSale");
+    if (newSaleBtn) newSaleBtn.addEventListener("click", function () {
+      closeModal();
+      posClearBasket(true);
+    });
+
+    // Close on overlay click outside modal
+    if (overlay) overlay.addEventListener("click", function (e) {
+      if (e.target === overlay) closeModal();
+    });
+  }
+
   async function posGenerateInvoice() {
-    var co = state.ui.posCheckout;
-    if (!co.basket.length) { posFlashMsg("Add items first.", "error"); return; }
-    if (!co.customer_id && !window.confirm("No customer selected. Generate a walk-in invoice?")) return;
-    var payload = {
-      items: co.basket.map(function (line) {
-        return { product_id: line.product_id, quantity: line.quantity, unit_price: line.unit_price, discount: line.line_discount || 0, vat_rate: line.vat_rate || 0 };
-      }),
-      discount_amount: co.discount_amount || 0,
-      notes: co.notes || "",
-      status: "sent"
-    };
-    if (co.customer_id) payload.customer_id = co.customer_id;
-    await apiJson("/api/invoices", { method: "POST", body: JSON.stringify(payload) });
-    posFlashMsg("Invoice generated.");
+    // Now a no-op since invoice is auto-generated with each sale
+    posFlashMsg("Invoice is auto-generated when you complete a sale.");
   }
 
   function posFlashMsg(msg, type) {
