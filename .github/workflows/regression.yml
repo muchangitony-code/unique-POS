@@ -17,6 +17,8 @@ jobs:
   regression:
     name: Full POS Regression
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     services:
       postgres:
