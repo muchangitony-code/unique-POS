@@ -380,10 +380,10 @@
 
   async function loadDashboard() {
     const results = await Promise.all([
-      apiJson("/api/dashboard/stats"),
-      apiJson("/api/dashboard/recent-transactions"),
-      apiJson("/api/dashboard/top-products"),
-      apiJson("/api/dashboard/sales-chart")
+      apiJson("/api/dashboard/stats").catch(function () { return {}; }),
+      apiJson("/api/dashboard/recent-transactions").catch(function () { return []; }),
+      apiJson("/api/dashboard/top-products").catch(function () { return []; }),
+      apiJson("/api/dashboard/sales-chart").catch(function () { return []; })
     ]);
     state.dashboardStats = results[0];
     state.moduleData.dashboard = {
@@ -451,11 +451,11 @@
 
   async function loadProducts() {
     const results = await Promise.all([
-      apiJson("/api/products?limit=100"),
-      apiJson("/api/categories"),
-      apiJson("/api/brands"),
-      apiJson("/api/suppliers?limit=100"),
-      apiJson("/api/branches/options"),
+      apiJson("/api/products?limit=100").catch(function () { return { data: [] }; }),
+      apiJson("/api/categories").catch(function () { return []; }),
+      apiJson("/api/brands").catch(function () { return []; }),
+      apiJson("/api/suppliers?limit=100").catch(function () { return { data: [] }; }),
+      apiJson("/api/branches/options").catch(function () { return []; }),
       apiJson("/api/products/imports").catch(function () { return { data: [] }; }),
       apiJson("/api/products/duplicates").catch(function () { return { data: [] }; })
     ]);
@@ -1208,11 +1208,11 @@
 
   async function loadInventory() {
     const results = await Promise.all([
-      apiJson("/api/inventory/stock-count"),
-      apiJson("/api/inventory/movements?limit=25"),
-      apiJson("/api/inventory/transfers?limit=25"),
-      apiJson("/api/products?limit=100"),
-      apiJson("/api/branches/options")
+      apiJson("/api/inventory/stock-count").catch(function () { return []; }),
+      apiJson("/api/inventory/movements?limit=25").catch(function () { return { data: [] }; }),
+      apiJson("/api/inventory/transfers?limit=25").catch(function () { return { data: [] }; }),
+      apiJson("/api/products?limit=100").catch(function () { return { data: [] }; }),
+      apiJson("/api/branches/options").catch(function () { return []; })
     ]);
     state.moduleData.inventory = {
       stock: normalizeList(results[0]),
@@ -1369,18 +1369,18 @@
   async function loadSales() {
     var checkout = state.ui.posCheckout;
     var [salesResult, catResult, brandResult, custResult, quotesResult, invResult] = await Promise.all([
-      apiJson("/api/pos/sales?limit=25"),
-      apiJson("/api/categories"),
-      apiJson("/api/brands"),
-      apiJson("/api/customers?limit=200"),
-      apiJson("/api/quotations?limit=25"),
-      apiJson("/api/invoices?limit=25")
+      apiJson("/api/pos/sales?limit=25").catch(function () { return { data: [] }; }),
+      apiJson("/api/categories").catch(function () { return []; }),
+      apiJson("/api/brands").catch(function () { return []; }),
+      apiJson("/api/customers?limit=200").catch(function () { return { data: [] }; }),
+      apiJson("/api/quotations?limit=25").catch(function () { return { data: [] }; }),
+      apiJson("/api/invoices?limit=25").catch(function () { return { data: [] }; })
     ]);
     checkout.categories = normalizeList(catResult);
     checkout.brands = normalizeList(brandResult);
     checkout.customers = normalizeList(custResult);
     if (!checkout.products.length) {
-      var prodResult = await apiJson("/api/products?limit=30");
+      var prodResult = await apiJson("/api/products?limit=30").catch(function () { return { data: [] }; });
       checkout.products = normalizeList(prodResult);
     }
     state.moduleData.sales = {

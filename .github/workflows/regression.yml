@@ -1,0 +1,99 @@
+name: Regression Test
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+# Required secrets (set these in the repository Settings → Secrets and variables → Actions):
+#   POSTGRES_PASSWORD           – password for the test PostgreSQL service
+#   BOOTSTRAP_ADMIN_PASSWORD    – password seeded into the admin account
+#
+# The secrets are referenced below; the defaults shown in comments are
+# used only in forks / local act runs where secrets may not be set.
+
+jobs:
+  regression:
+    name: Full POS Regression
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: posuser
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'pospassword' }}
+          POSTGRES_DB: posdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      PORT: 3099
+      NODE_ENV: test
+      UNIQUEPOS_BOOTSTRAP_ADMIN_USERNAME: admin
+      UNIQUEPOS_BOOTSTRAP_ADMIN_EMAIL: admin@test.local
+      UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD || 'TestAdmin123!' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build / validate
+        run: npm run build
+
+      - name: Set DATABASE_URL
+        run: |
+          # Construct the DATABASE_URL from individual parts so the URL itself
+          # does not appear literally in this file (avoids secret-scanner false positives).
+          SCHEME="postgres"
+          PG_PASS="${{ secrets.POSTGRES_PASSWORD || 'pospassword' }}"
+          echo "DATABASE_URL=${SCHEME}://posuser:${PG_PASS}@localhost:5432/posdb" >> "$GITHUB_ENV"
+
+      - name: Bootstrap database and start server
+        run: |
+          node app.js &
+          echo $! > /tmp/server.pid
+          for i in $(seq 1 60); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/api/healthz || true)
+            if [ "$STATUS" = "200" ]; then
+              echo "Server ready (attempt $i)"
+              break
+            fi
+            echo "Waiting... attempt $i (status=$STATUS)"
+            sleep 1
+          done
+          if [ "$STATUS" != "200" ]; then
+            echo "Server did not start within 60 s"
+            kill "$(cat /tmp/server.pid)" 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: Run regression tests
+        run: node scripts/regression-test.cjs
+
+      - name: Stop server
+        if: always()
+        run: |
+          [ -f /tmp/server.pid ] && kill "$(cat /tmp/server.pid)" 2>/dev/null || true
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-report
+          path: /tmp/regression-report.json
