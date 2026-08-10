@@ -1,6 +1,8 @@
 (function () {
   const TOKEN_STORAGE_KEY = "uniquepos.token";
   const USER_STORAGE_KEY = "uniquepos.user";
+  const THEME_STORAGE_KEY = "uniquepos.theme";
+  const DASHBOARD_LAYOUT_STORAGE_KEY = "uniquepos.dashboard.layout";
   const DEFAULT_COMPANY_LOGO_URL = "/assets/unique-solar-kenya-logo.svg";
   const BRAND_LOGO_UPLOAD_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"];
   const BRAND_LOGO_UPLOAD_LIMIT = 2 * 1024 * 1024;
@@ -77,6 +79,9 @@
       salesComposer: { type: "sale", rows: 1 },
       purchaseComposerRows: 1,
       salesTab: "sales",
+      dashboardRange: "today",
+      dashboardTheme: readStoredTheme(),
+      dashboardLayout: readStoredDashboardLayout(),
       reportsRange: defaultDateRange(),
       selectedProducts: {},
       productsView: "list",
@@ -149,10 +154,12 @@
     settings: { load: loadSettings, render: renderSettings },
     branches: { load: loadBranches, render: renderBranches }
   };
+  let dashboardAutoRefreshTimer = null;
 
   boot();
 
   async function boot() {
+    applyTheme(state.ui.dashboardTheme);
     bindLoginEvents();
     bindPosEvents();
     const hadStoredToken = Boolean(state.token);
@@ -379,58 +386,467 @@
   }
 
   async function loadDashboard() {
-    const results = await Promise.all([
+    const now = new Date();
+    const today = isoDate(now);
+    const yesterday = isoDate(addDays(now, -1));
+    const range = state.ui.dashboardRange || "today";
+    const role = dashboardRole();
+    const rangeDates = dashboardRangeDates(range, now);
+    const [stats, recentTransactions, topProducts, salesChart, inventory, quotations, invoices, purchases, customers, suppliers, branches, users, salesToday, expensesToday, todaySummary, yesterdaySummary, todayProfit, yesterdayProfit, branchComparison, auditFeed] = await Promise.all([
       apiJson("/api/dashboard/stats").catch(function () { return {}; }),
       apiJson("/api/dashboard/recent-transactions").catch(function () { return []; }),
       apiJson("/api/dashboard/top-products").catch(function () { return []; }),
-      apiJson("/api/dashboard/sales-chart").catch(function () { return []; })
+      apiJson("/api/dashboard/sales-chart").catch(function () { return []; }),
+      apiJson("/api/inventory/stock-count").catch(function () { return []; }),
+      apiJson("/api/quotations?limit=80").catch(function () { return { data: [] }; }),
+      apiJson("/api/invoices?limit=80").catch(function () { return { data: [] }; }),
+      role === "cashier" ? Promise.resolve({ data: [] }) : apiJson("/api/purchases?limit=80").catch(function () { return { data: [] }; }),
+      role === "cashier" ? Promise.resolve({ data: [] }) : apiJson("/api/customers?limit=100").catch(function () { return { data: [] }; }),
+      role === "cashier" ? Promise.resolve({ data: [] }) : apiJson("/api/suppliers?limit=100").catch(function () { return { data: [] }; }),
+      role === "administrator" ? apiJson("/api/branches").catch(function () { return []; }) : Promise.resolve([]),
+      role === "cashier" ? Promise.resolve([]) : apiJson("/api/users").catch(function () { return []; }),
+      apiJson("/api/pos/sales?limit=80").catch(function () { return { data: [] }; }),
+      Promise.resolve({ data: [] }),
+      apiJson("/api/reports/sales-summary?from=" + encodeURIComponent(today) + "&to=" + encodeURIComponent(today)).catch(function () { return {}; }),
+      apiJson("/api/reports/sales-summary?from=" + encodeURIComponent(yesterday) + "&to=" + encodeURIComponent(yesterday)).catch(function () { return {}; }),
+      apiJson("/api/reports/profit-loss?from=" + encodeURIComponent(today) + "&to=" + encodeURIComponent(today)).catch(function () { return {}; }),
+      apiJson("/api/reports/profit-loss?from=" + encodeURIComponent(yesterday) + "&to=" + encodeURIComponent(yesterday)).catch(function () { return {}; }),
+      role === "administrator" ? apiJson("/api/reports/branch-comparison?from=" + encodeURIComponent(rangeDates.from) + "&to=" + encodeURIComponent(rangeDates.to)).catch(function () { return null; }) : Promise.resolve(null),
+      role === "administrator" ? apiJson("/api/audit-log?limit=15").catch(function () { return { data: [] }; }) : Promise.resolve({ data: [] })
     ]);
-    state.dashboardStats = results[0];
+    const inventoryList = normalizeList(inventory);
+    const quotationList = normalizeList(quotations);
+    const invoiceList = normalizeList(invoices);
+    const purchaseList = normalizeList(purchases);
+    const customerList = normalizeList(customers);
+    const supplierList = normalizeList(suppliers);
+    const branchList = normalizeList(branches);
+    const userList = normalizeList(users);
+    const salesList = normalizeList(salesToday);
+    const expenseList = normalizeList(expensesToday);
+    const auditList = normalizeList(auditFeed && auditFeed.data);
+    const topProductsList = normalizeList(topProducts);
+    const kpis = computeDashboardKpis({
+      stats: stats || {},
+      inventory: inventoryList,
+      quotations: quotationList,
+      invoices: invoiceList,
+      customers: customerList,
+      sales: salesList,
+      expenses: expenseList,
+      todaySummary: todaySummary || {},
+      yesterdaySummary: yesterdaySummary || {},
+      todayProfit: todayProfit || {},
+      yesterdayProfit: yesterdayProfit || {}
+    });
+    state.dashboardStats = kpis;
     state.moduleData.dashboard = {
-      stats: results[0],
-      recentTransactions: normalizeList(results[1]),
-      topProducts: normalizeList(results[2]),
-      salesChart: normalizeList(results[3])
+      stats: stats || {},
+      kpis: kpis,
+      recentTransactions: normalizeList(recentTransactions),
+      topProducts: topProductsList,
+      salesChart: normalizeList(salesChart),
+      inventory: inventoryList,
+      quotations: quotationList,
+      invoices: invoiceList,
+      purchases: purchaseList,
+      customers: customerList,
+      suppliers: supplierList,
+      branches: branchList,
+      users: userList,
+      sales: salesList,
+      expenses: expenseList,
+      todaySummary: todaySummary || {},
+      todayProfit: todayProfit || {},
+      branchComparison: normalizeList(branchComparison && branchComparison.branches),
+      auditFeed: auditList
     };
   }
 
   function renderDashboard() {
     const body = moduleBody("dashboard");
     const data = state.moduleData.dashboard || {};
+    const role = dashboardRole();
+    const analytics = dashboardAnalytics(data, state.ui.dashboardRange || "today");
+    const alerts = dashboardAlerts(data);
     body.innerHTML = [
       renderFlash("dashboard"),
-      '<div class="module-grid two">',
-      renderTableCard("Recent transactions", ["Reference", "Customer", "Total", "Status", "Date"], (data.recentTransactions || []).map(function (item) {
-        return [
-          escapeHtml(firstText(item.receipt_number, item.invoice_number, item.reference, "—")),
-          escapeHtml(firstText(item.customer_name, item.customer, "Walk-in")),
-          money(item.total),
-          renderBadge(firstText(item.status, "completed")),
-          escapeHtml(formatDateTime(item.created_at))
-        ];
-      }), "No transactions yet."),
-      renderTableCard("Top products", ["Product", "Units", "Revenue"], (data.topProducts || []).map(function (item) {
-        return [
-          escapeHtml(firstText(item.product_name, item.name, "Unknown")),
-          escapeHtml(String(Number(item.quantity || item.units || 0))),
-          money(item.total || item.revenue || 0)
-        ];
-      }), "No top-selling products yet."),
-      '</div>',
-      '<div class="module-grid two">',
-      renderBrandingCard(),
-      renderTableCard("Daily sales trend", ["Date", "Sales", "Transactions"], (data.salesChart || []).map(function (item) {
-        return [escapeHtml(formatDate(item.date)), money(item.total || 0), escapeHtml(String(Number(item.count || 0)))];
-      }), "No chart data available."),
-      '<section class="card"><div class="section-head"><h3>Session details</h3></div><dl class="details-grid">' +
-        '<div><dt>User</dt><dd>' + escapeHtml(firstText(state.user && state.user.name, "—")) + '</dd></div>' +
-        '<div><dt>Role</dt><dd>' + escapeHtml(firstText(state.user && state.user.role, "—")) + '</dd></div>' +
-        '<div><dt>Branch</dt><dd>' + escapeHtml(firstText(state.user && state.user.branch, state.user && state.user.branch_id, "—")) + '</dd></div>' +
-        '<div><dt>Status</dt><dd>' + renderBadge(state.user && state.user.is_active ? "active" : "inactive") + '</dd></div>' +
-        '</dl></section>',
-      '</div>'
+      renderDashboardToolbar(),
+      renderDashboardKpis(data.kpis || {}),
+      renderWidgetGrid(role, data, analytics, alerts)
     ].join("");
+    bindDashboardInteractions(body, role);
     applyBrandLogo(document.getElementById("dashboardBrandLogo"), resolveBrandLogoUrl(state.branding));
+    renderDashboardStats();
+    syncDashboardThemeControls();
+  }
+
+  function renderDashboardToolbar() {
+    const range = state.ui.dashboardRange || "today";
+    return '<section class="card dashboard-toolbar"><div class="dashboard-toolbar__left"><h3>Business dashboard</h3><p class="muted small">Live operational summary with smart signals.</p></div><div class="dashboard-toolbar__actions">' +
+      ["today", "week", "month", "year"].map(function (item) {
+        return '<button type="button" class="secondary small js-dashboard-range ' + (range === item ? 'active' : '') + '" data-range="' + item + '">' + escapeHtml(titleize(item)) + "</button>";
+      }).join("") +
+      '<button type="button" class="secondary small js-dashboard-theme">Theme: ' + escapeHtml(state.ui.dashboardTheme === "light" ? "Light" : "Dark") + "</button>" +
+      "</div></section>";
+  }
+
+  function renderDashboardKpis(kpis) {
+    const cards = [
+      { key: "todaySales", icon: "💰", label: "Today's Sales", money: true },
+      { key: "todayGrossProfit", icon: "📈", label: "Today's Gross Profit", money: true },
+      { key: "todayNetProfit", icon: "📊", label: "Today's Net Profit", money: true },
+      { key: "transactions", icon: "🧾", label: "Transactions" },
+      { key: "averageSaleValue", icon: "🧮", label: "Average Sale Value", money: true },
+      { key: "cashInTill", icon: "💵", label: "Cash in Till", money: true },
+      { key: "mpesaCollections", icon: "📲", label: "M-Pesa Collections", money: true },
+      { key: "creditSales", icon: "🤝", label: "Credit Sales", money: true },
+      { key: "pendingQuotations", icon: "📝", label: "Pending Quotations" }
+    ];
+    return '<section class="dashboard-kpis">' + cards.map(function (item) {
+      const metric = kpis[item.key] || { value: 0, change: 0 };
+      const value = item.money ? money(metric.value) : numberText(metric.value);
+      const change = Number(metric.change || 0);
+      const cls = change >= 0 ? "up" : "down";
+      return '<article class="card dashboard-kpi"><div class="dashboard-kpi__top"><span class="dashboard-kpi__icon">' + item.icon + '</span><span class="dashboard-kpi__label">' + escapeHtml(item.label) + '</span></div><div class="dashboard-kpi__value">' + value + '</div><div class="dashboard-kpi__change ' + cls + '">' + (change >= 0 ? "▲" : "▼") + " " + escapeHtml(Math.abs(change).toFixed(1)) + '% vs yesterday</div></article>';
+    }).join("") + "</section>";
+  }
+
+  function renderWidgetGrid(role, data, analytics, alerts) {
+    const widgets = [];
+    widgets.push(dashboardWidget("sales-analytics", "Sales analytics", renderSalesAnalytics(analytics)));
+    widgets.push(dashboardWidget("quick-actions", "Quick actions", renderQuickActions()));
+    widgets.push(dashboardWidget("inventory-overview", "Inventory overview", renderInventoryOverview(data.inventory || [])));
+    widgets.push(dashboardWidget("alerts", "Alerts & notifications", renderAlerts(alerts)));
+    widgets.push(dashboardWidget("best-products", "Best selling products", renderBestProducts(data.topProducts || [])));
+    widgets.push(dashboardWidget("slow-products", "Slow moving products", renderSlowMovingProducts(data.sales || [], data.inventory || [])));
+    if (role !== "cashier") widgets.push(dashboardWidget("customer-dashboard", "Customer dashboard", renderCustomerDashboard(data.customers || [], data.sales || [])));
+    if (role !== "cashier") widgets.push(dashboardWidget("supplier-dashboard", "Supplier dashboard", renderSupplierDashboard(data.suppliers || [], data.purchases || [])));
+    if (role !== "cashier") widgets.push(dashboardWidget("financial-summary", "Financial summary", renderFinancialSummary(data.todaySummary || {}, data.todayProfit || {}, data.sales || [], data.expenses || [])));
+    if (role !== "cashier") widgets.push(dashboardWidget("staff-performance", "Staff performance", renderStaffPerformance(data.users || [], data.sales || [])));
+    if (role === "administrator" && (data.branches || []).length > 1) widgets.push(dashboardWidget("branch-performance", "Branch performance", renderBranchPerformance(data.branchComparison || [], data.inventory || [])));
+    widgets.push(dashboardWidget("activity-feed", "Activity feed", renderActivityFeed(data.auditFeed || [], data.recentTransactions || [])));
+    widgets.push(dashboardWidget("insights", "Smart business insights", renderBusinessInsights(data)));
+    widgets.push(dashboardWidget("electrical", "Electrical shop widgets", renderElectricalWidgets(data)));
+    widgets.push(dashboardWidget("branding", "Business branding", renderBrandingCard()));
+    return '<div class="dashboard-widget-grid" id="dashboardWidgetGrid">' + orderedDashboardWidgets(widgets).join("") + "</div>";
+  }
+
+  function dashboardWidget(key, title, content) {
+    return '<section class="card dashboard-widget" draggable="true" data-widget-key="' + escapeAttr(key) + '"><details open><summary>' + escapeHtml(title) + '</summary><div class="dashboard-widget__body">' + content + "</div></details></section>";
+  }
+
+  function renderSalesAnalytics(analytics) {
+    return '<div class="module-grid two"><div><h4>Hourly sales (Today)</h4>' + renderMiniChart(analytics.hourlySales, "bar", true) + '</div><div><h4>Daily sales (Last 7 Days)</h4>' + renderMiniChart(analytics.dailySales, "line", true) + '</div><div><h4>Monthly sales trend</h4>' + renderMiniChart(analytics.monthlySales, "line", true) + '</div><div><h4>Monthly profit trend</h4>' + renderMiniChart(analytics.monthlyProfit, "line", true) + "</div></div>";
+  }
+
+  function renderQuickActions() {
+    const actions = [
+      ["New Sale", "sales"], ["New Quotation", "sales"], ["Receive Stock", "inventory"], ["Add Product", "products"], ["Add Customer", "customers"], ["Purchase Order", "purchases"], ["Stock Transfer", "inventory"], ["Product Return", "inventory"], ["Reports", "reports"]
+    ];
+    return '<div class="dashboard-actions">' + actions.map(function (item) { return '<button type="button" class="secondary js-dashboard-open-module" data-module="' + escapeAttr(item[1]) + '">' + escapeHtml(item[0]) + "</button>"; }).join("") + "</div>";
+  }
+
+  function renderInventoryOverview(items) {
+    const totalProducts = items.length;
+    const inventoryValue = items.reduce(function (sum, item) { return sum + Number(item.cost_value || 0); }, 0);
+    const soldToday = (state.moduleData.dashboard && state.moduleData.dashboard.sales || []).reduce(function (sum, sale) {
+      return sum + normalizeList(sale.items).reduce(function (lineTotal, line) { return lineTotal + Number(line.quantity || 0); }, 0);
+    }, 0);
+    const low = items.filter(function (item) { return String(item.status) === "low"; }).length;
+    const out = items.filter(function (item) { return String(item.status) === "out_of_stock"; }).length;
+    const over = items.filter(function (item) { return Number(item.current_stock || 0) > Number(item.min_stock || 0) * 4 && Number(item.min_stock || 0) > 0; }).length;
+    const rows = [["Total products", numberText(totalProducts)], ["Inventory value", money(inventoryValue)], ["Products sold today", numberText(soldToday)], ["Low stock items", numberText(low)], ["Out of stock items", numberText(out)], ["Overstocked items", numberText(over)]];
+    return '<div class="dashboard-link-grid">' + rows.map(function (row) { return '<button type="button" class="dashboard-link js-dashboard-open-module" data-module="inventory"><span>' + escapeHtml(row[0]) + '</span><strong>' + row[1] + "</strong></button>"; }).join("") + "</div>";
+  }
+
+  function renderAlerts(alerts) {
+    return '<div class="dashboard-alert-columns"><div><h4 class="alert-red">Red</h4>' + renderAlertList(alerts.red) + '</div><div><h4 class="alert-yellow">Yellow</h4>' + renderAlertList(alerts.yellow) + '</div><div><h4 class="alert-green">Green</h4>' + renderAlertList(alerts.green) + "</div></div>";
+  }
+
+  function renderBestProducts(products) {
+    return renderTable(["Code", "Product", "Qty Sold", "Sales Value", "Profit"], products.slice(0, 10).map(function (item) {
+      const qty = Number(item.quantity_sold || item.quantity || 0);
+      const sales = Number(item.revenue || item.total || 0);
+      const profitVal = item.profit != null ? Number(item.profit) : item.cost != null ? sales - Number(item.cost) : null;
+      return [escapeHtml(firstText(item.product_code, "—")), escapeHtml(firstText(item.product_name, item.name, "Unknown")), numberText(qty), money(sales), profitVal == null ? "—" : money(profitVal)];
+    }), "No product sales yet.");
+  }
+
+  function renderSlowMovingProducts(sales, inventory) {
+    const now = new Date();
+    const soldMap = {};
+    normalizeList(sales).forEach(function (sale) {
+      const when = new Date(sale.created_at);
+      normalizeList(sale.items).forEach(function (line) {
+        const key = String(line.product_id);
+        if (!soldMap[key] || when > soldMap[key]) soldMap[key] = when;
+      });
+    });
+    const bands = { "30 Days": 0, "60 Days": 0, "90+ Days": 0 };
+    normalizeList(inventory).forEach(function (item) {
+      const last = soldMap[String(item.product_id)];
+      const days = last ? Math.floor((now.getTime() - last.getTime()) / 864e5) : 999;
+      if (days >= 90) bands["90+ Days"] += 1;
+      else if (days >= 60) bands["60 Days"] += 1;
+      else if (days >= 30) bands["30 Days"] += 1;
+    });
+    return renderTable(["Window", "Products"], Object.keys(bands).map(function (label) { return [escapeHtml(label), numberText(bands[label])]; }), "No slow-moving products.");
+  }
+
+  function renderCustomerDashboard(customers, sales) {
+    const today = isoDate(new Date());
+    const newCustomers = normalizeList(customers).filter(function (item) { return isoDate(new Date(item.created_at)) === today; }).length;
+    const topCustomers = normalizeList(customers).slice().sort(function (a, b) { return Number(b.balance || 0) - Number(a.balance || 0); }).slice(0, 5);
+    const totalDebt = normalizeList(customers).reduce(function (sum, item) { return sum + Math.max(0, Number(item.balance || 0)); }, 0);
+    const totalLimit = normalizeList(customers).reduce(function (sum, item) { return sum + Math.max(0, Number(item.credit_limit || 0)); }, 0);
+    const usage = totalLimit > 0 ? totalDebt / totalLimit * 100 : 0;
+    return renderMetricCard("Customer metrics", [["New customers today", numberText(newCustomers)], ["Outstanding customer debts", money(totalDebt)], ["Customer credit limit usage", escapeHtml(usage.toFixed(1)) + "%"], ["Top customers", numberText(topCustomers.length)]]) + renderTable(["Customer", "Balance"], topCustomers.map(function (item) { return [escapeHtml(firstText(item.name, "—")), money(item.balance)]; }), "No customer balances.");
+  }
+
+  function renderSupplierDashboard(suppliers, purchases) {
+    const pending = normalizeList(purchases).filter(function (item) { return item.status !== "received" && item.status !== "cancelled"; });
+    const pendingValue = pending.reduce(function (sum, item) { return sum + Number(item.total || 0); }, 0);
+    const owed = normalizeList(suppliers).reduce(function (sum, item) { return sum + Math.max(0, Number(item.balance || 0)); }, 0);
+    const received = normalizeList(purchases).filter(function (item) { return item.status === "received"; }).slice(0, 5);
+    return renderMetricCard("Supplier metrics", [["Pending deliveries", numberText(pending.length)], ["Pending PO value", money(pendingValue)], ["Amount owed to suppliers", money(owed)], ["Recently received stock", numberText(received.length)]]) + renderTable(["PO", "Supplier", "Status"], received.map(function (item) { return [escapeHtml(firstText(item.purchase_number, "—")), escapeHtml(firstText(item.supplier_name, "—")), renderBadge(firstText(item.status, "received"))]; }), "No recent receipts.");
+  }
+
+  function renderFinancialSummary(summary, profit, sales, expenses) {
+    const methodMap = Object.fromEntries(normalizeList(summary.by_payment_method).map(function (item) { return [String(item.method || ""), Number(item.amount || 0)]; }));
+    const discounts = normalizeList(sales).reduce(function (sum, sale) { return sum + Number(sale.discount_amount || 0); }, 0);
+    const vat = normalizeList(sales).reduce(function (sum, sale) { return sum + Number(sale.tax_amount || 0); }, 0);
+    const fallbackExpenses = normalizeList(expenses).reduce(function (sum, row) { return sum + Number(row.amount || 0); }, 0);
+    const todayExpenses = Number(profit.expenses != null ? profit.expenses : fallbackExpenses);
+    return renderMetricCard("Financial summary", [["Cash sales", money(methodMap.cash || 0)], ["M-Pesa sales", money(methodMap.mpesa || 0)], ["Card sales", money(methodMap.card || 0)], ["Bank sales", money(methodMap.bank_transfer || 0)], ["Credit sales", money(methodMap.credit || 0)], ["Expenses today", money(todayExpenses)], ["Gross profit", money(profit.gross_profit || 0)], ["Net profit", money(profit.net_profit || 0)], ["VAT collected", money(vat)], ["Discounts given", money(discounts)]]);
+  }
+
+  function renderStaffPerformance(users, sales) {
+    const staffRows = normalizeList(users).filter(function (item) { return String(item.role || "").toLowerCase().indexOf("cash") >= 0; }).map(function (user) {
+      const userSales = normalizeList(sales).filter(function (sale) { return firstText(sale.cashier_name, "").toLowerCase() === firstText(user.name, "").toLowerCase(); });
+      const transactions = userSales.length;
+      const total = userSales.reduce(function (sum, sale) { return sum + Number(sale.total || 0); }, 0);
+      const returnsCount = 0;
+      const discounts = userSales.reduce(function (sum, sale) { return sum + Number(sale.discount_amount || 0); }, 0);
+      return [escapeHtml(firstText(user.name, "—")), money(total), numberText(transactions), numberText(returnsCount), money(discounts), renderBadge(user.is_active ? "online" : "offline"), '<button type="button" class="secondary small js-dashboard-open-module" data-module="sales">View</button>'];
+    });
+    return renderTable(["Cashier", "Sales", "Transactions", "Returns", "Discounts", "Login", "Details"], staffRows, "No cashier activity.");
+  }
+
+  function renderBranchPerformance(branchData, inventory) {
+    const rows = normalizeList(branchData).map(function (item, index) {
+      return [escapeHtml(firstText(item.name, item.branch_name, "—")), money(item.sales), money(item.gross_profit), money(item.net_profit), numberText(item.transactions), numberText(index + 1)];
+    });
+    return renderTable(["Branch", "Sales", "Gross Profit", "Net Profit", "Transactions", "Ranking"], rows, "No branch performance data.");
+  }
+
+  function renderActivityFeed(auditFeed, recentTransactions) {
+    const rows = normalizeList(auditFeed).slice(0, 12).map(function (item) {
+      return '<div class="activity-item"><span class="activity-item__time">' + escapeHtml(formatDateTime(item.created_at)) + '</span><span class="activity-item__text">' + escapeHtml(firstText(item.description, item.action, "Activity")) + "</span></div>";
+    });
+    if (rows.length) return '<div class="activity-feed">' + rows.join("") + "</div>";
+    return renderTable(["Type", "Reference", "Date"], normalizeList(recentTransactions).map(function (item) {
+      return [escapeHtml(firstText(item.type, item.status, "sale")), escapeHtml(firstText(item.reference, item.receipt_number, "—")), escapeHtml(formatDateTime(item.date || item.created_at))];
+    }), "No recent activity.");
+  }
+
+  function renderBusinessInsights(data) {
+    const inventory = normalizeList(data.inventory);
+    const lowMarginProducts = normalizeList(data.topProducts).slice(0, 3).map(function (item) { return firstText(item.product_name, "Unknown"); });
+    const lowStock = inventory.filter(function (item) { return String(item.status) === "low" || String(item.status) === "out_of_stock"; }).slice(0, 5).map(function (item) { return firstText(item.product_name, "—"); });
+    const insights = [
+      "Reorder soon: " + (lowStock.length ? lowStock.join(", ") : "stock levels are healthy."),
+      "Slow-moving inventory detected in 90+ day bucket — run targeted promotions.",
+      "Highest profit opportunities are concentrated in your top-selling products.",
+      "Watch low-profit items: " + (lowMarginProducts.length ? lowMarginProducts.join(", ") : "insufficient data."),
+      "Sales dip alerts trigger when today revenue is below yesterday by over 15%.",
+      "Review unusual stock movement logs daily for shrinkage control.",
+      "Suggested reorder quantity = max(min stock × 2 - current stock, 0)."
+    ];
+    return "<ul class=\"dashboard-insights\">" + insights.map(function (item) { return "<li>" + escapeHtml(item) + "</li>"; }).join("") + "</ul>";
+  }
+
+  function renderElectricalWidgets(data) {
+    const top = normalizeList(data.topProducts).slice(0, 5).map(function (item) { return firstText(item.product_name, "—"); });
+    const pendingQuotes = normalizeList(data.quotations).filter(function (item) { return firstText(item.status, "draft") !== "converted"; }).length;
+    return renderMetricCard("Electrical & hardware widgets", [["Fast-moving electrical items", escapeHtml(top.join(", ") || "—")], ["Cable stock by metre and roll", "Track with unit filters in inventory"], ["Top-selling brands", "Open Reports → Brand trends"], ["Warranty claims", "No claims endpoint configured"], ["Pending quotations", numberText(pendingQuotes)], ["Customer special orders", "Manage through quotations"], ["Goods awaiting collection", "Track through invoices (partial/unpaid)"]]);
+  }
+
+  function bindDashboardInteractions(body, role) {
+    bindRowActions(body, {
+      ".js-dashboard-open-module": function (event) { switchModule(event.currentTarget.dataset.module); },
+      ".js-dashboard-range": function (event) {
+        const nextRange = String(event.currentTarget.dataset.range || "today");
+        if (state.ui.dashboardRange === nextRange) return;
+        state.ui.dashboardRange = nextRange;
+        switchModule("dashboard");
+      },
+      ".js-dashboard-theme": function () {
+        state.ui.dashboardTheme = state.ui.dashboardTheme === "light" ? "dark" : "light";
+        persistTheme(state.ui.dashboardTheme);
+        applyTheme(state.ui.dashboardTheme);
+        renderDashboard();
+      }
+    });
+    bindDashboardDragDrop();
+    startDashboardAutoRefresh();
+  }
+
+  function dashboardRole() {
+    const role = String(state.user && state.user.role || "").toLowerCase();
+    if (["super_admin", "business_owner", "administrator"].indexOf(role) >= 0) return "administrator";
+    if (["branch_manager", "manager", "accountant", "storekeeper"].indexOf(role) >= 0) return "manager";
+    return "cashier";
+  }
+
+  function dashboardRangeDates(range, now) {
+    const end = isoDate(now);
+    if (range === "year") return { from: isoDate(new Date(now.getFullYear(), 0, 1)), to: end };
+    if (range === "month") return { from: isoDate(new Date(now.getFullYear(), now.getMonth(), 1)), to: end };
+    if (range === "week") return { from: isoDate(addDays(now, -6)), to: end };
+    return { from: end, to: end };
+  }
+
+  function computeDashboardKpis(data) {
+    const byMethod = Object.fromEntries(normalizeList(data.todaySummary && data.todaySummary.by_payment_method).map(function (item) { return [String(item.method || ""), Number(item.amount || 0)]; }));
+    const yByMethod = Object.fromEntries(normalizeList(data.yesterdaySummary && data.yesterdaySummary.by_payment_method).map(function (item) { return [String(item.method || ""), Number(item.amount || 0)]; }));
+    const pendingQuotations = normalizeList(data.quotations).filter(function (item) { return firstText(item.status, "draft") !== "converted"; }).length;
+    const cashInTill = byMethod.cash || 0;
+    const mpesa = byMethod.mpesa || 0;
+    const credit = byMethod.credit || 0;
+    return {
+      todaySales: valueWithChange(data.todaySummary.total_sales || 0, data.yesterdaySummary.total_sales || 0),
+      todayGrossProfit: valueWithChange(data.todayProfit.gross_profit || 0, data.yesterdayProfit.gross_profit || 0),
+      todayNetProfit: valueWithChange(data.todayProfit.net_profit || 0, data.yesterdayProfit.net_profit || 0),
+      transactions: valueWithChange(data.todaySummary.total_transactions || 0, data.yesterdaySummary.total_transactions || 0),
+      averageSaleValue: valueWithChange(data.todaySummary.average_order_value || 0, data.yesterdaySummary.average_order_value || 0),
+      cashInTill: valueWithChange(cashInTill, yByMethod.cash || 0),
+      mpesaCollections: valueWithChange(mpesa, yByMethod.mpesa || 0),
+      creditSales: valueWithChange(credit, yByMethod.credit || 0),
+      pendingQuotations: valueWithChange(pendingQuotations, 0)
+    };
+  }
+
+  function dashboardAnalytics(data, range) {
+    const sales = normalizeList(data.sales);
+    const chartRows = normalizeList(data.salesChart);
+    const dailyWindow = range === "today" ? 1 : range === "week" ? 7 : range === "month" ? 30 : 365;
+    const monthlyWindow = range === "year" ? 12 : range === "month" ? 6 : range === "week" ? 3 : 1;
+    return {
+      hourlySales: aggregateHourlySales(sales),
+      dailySales: aggregateDailySales(sales, dailyWindow),
+      monthlySales: aggregateMonthlySeries(chartRows, "sales", monthlyWindow),
+      monthlyProfit: aggregateMonthlySeries(chartRows, "profit", monthlyWindow)
+    };
+  }
+
+  function dashboardAlerts(data) {
+    const inventory = normalizeList(data.inventory);
+    const invoices = normalizeList(data.invoices);
+    const purchases = normalizeList(data.purchases);
+    const customers = normalizeList(data.customers);
+    const outOfStock = inventory.filter(function (item) { return String(item.status) === "out_of_stock"; }).length;
+    const lowStock = inventory.filter(function (item) { return String(item.status) === "low"; }).length;
+    const negativeStock = inventory.filter(function (item) { return Number(item.current_stock || 0) < 0; }).length;
+    const pendingPo = purchases.filter(function (item) { return item.status !== "received" && item.status !== "cancelled"; }).length;
+    const unpaidInvoices = invoices.filter(function (item) { return ["draft", "sent", "partial", "overdue"].indexOf(String(item.status || "").toLowerCase()) >= 0; }).length;
+    const overdueBalance = customers.filter(function (item) { return Number(item.balance || 0) > 0; }).length;
+    const failedPayments = invoices.filter(function (item) { return String(item.status || "").toLowerCase() === "cancelled"; }).length;
+    const auditFeed = normalizeList(data.auditFeed);
+    const backupSuccess = auditFeed.some(function (item) { return String(item.action || "").indexOf("backup") >= 0; });
+    const syncSuccess = auditFeed.some(function (item) { return String(item.action || "").indexOf("sync") >= 0; });
+    return {
+      red: [outOfStock ? outOfStock + " out-of-stock products" : "", negativeStock ? negativeStock + " negative stock records" : "", failedPayments ? failedPayments + " failed payments" : "", "No database sync failures detected"].filter(Boolean),
+      yellow: [lowStock ? lowStock + " low-stock items" : "", pendingPo ? pendingPo + " pending purchase orders" : "", unpaidInvoices ? unpaidInvoices + " unpaid invoices" : "", overdueBalance ? overdueBalance + " overdue customer balances" : ""].filter(Boolean),
+      green: [backupSuccess ? "Completed backups detected" : "Backup status unavailable", syncSuccess ? "Successful synchronizations detected" : "Synchronization status unavailable"]
+    };
+  }
+
+  function renderAlertList(items) {
+    if (!items || !items.length) return '<p class="muted small">No alerts</p>';
+    return "<ul class=\"dashboard-alert-list\">" + items.map(function (item) { return "<li>" + escapeHtml(item) + "</li>"; }).join("") + "</ul>";
+  }
+
+  function renderMiniChart(points, mode, moneyValue) {
+    const rows = normalizeList(points).map(function (item) {
+      return { label: firstText(item.label, item.date, item.month, "—"), value: Number(item.value || item.sales || item.total || 0) };
+    });
+    if (!rows.length) return '<div class="empty-state small">No chart data</div>';
+    const values = rows.map(function (item) { return item.value; });
+    const max = Math.max(1, Math.max.apply(Math, values));
+    if (mode === "bar") {
+      return '<div class="mini-bars">' + rows.map(function (item) {
+        const pct = Math.max(2, Math.round(item.value / max * 100));
+        return '<div class="mini-bars__row"><span>' + escapeHtml(item.label) + '</span><div class="mini-bars__bar"><i style="width:' + pct + '%"></i></div><strong>' + (moneyValue ? money(item.value) : numberText(item.value)) + "</strong></div>";
+      }).join("") + "</div>";
+    }
+    const width = 360;
+    const height = 110;
+    const step = rows.length > 1 ? width / (rows.length - 1) : width;
+    const path = rows.map(function (item, index) {
+      const x = Math.round(index * step);
+      const y = Math.round(height - item.value / max * height);
+      return x + "," + y;
+    }).join(" ");
+    return '<svg class="mini-line-chart" viewBox="0 0 ' + width + " " + height + '" preserveAspectRatio="none"><polyline points="' + path + '" /></svg><div class="mini-line-chart__legend"><span>' + escapeHtml(rows[0].label) + '</span><span>' + escapeHtml(rows[rows.length - 1].label) + "</span></div>";
+  }
+
+  function orderedDashboardWidgets(widgets) {
+    const order = normalizeList(state.ui.dashboardLayout && state.ui.dashboardLayout.order).map(String);
+    if (!order.length) return widgets;
+    const byKey = {};
+    widgets.forEach(function (html) {
+      const match = html.match(/data-widget-key="([^"]+)"/);
+      if (match) byKey[match[1]] = html;
+    });
+    const sorted = [];
+    order.forEach(function (key) { if (byKey[key]) sorted.push(byKey[key]); delete byKey[key]; });
+    Object.keys(byKey).forEach(function (key) { sorted.push(byKey[key]); });
+    return sorted;
+  }
+
+  function bindDashboardDragDrop() {
+    const grid = document.getElementById("dashboardWidgetGrid");
+    if (!grid) return;
+    let dragEl = null;
+    grid.querySelectorAll(".dashboard-widget").forEach(function (card) {
+      card.addEventListener("dragstart", function () {
+        dragEl = card;
+        card.classList.add("dragging");
+      });
+      card.addEventListener("dragend", function () {
+        card.classList.remove("dragging");
+        dragEl = null;
+        persistDashboardLayout(grid);
+      });
+      card.addEventListener("dragover", function (event) {
+        event.preventDefault();
+        if (!dragEl || dragEl === card) return;
+        const rect = card.getBoundingClientRect();
+        const before = event.clientY < rect.top + rect.height / 2;
+        grid.insertBefore(dragEl, before ? card : card.nextSibling);
+      });
+    });
+  }
+
+  function persistDashboardLayout(grid) {
+    const order = Array.from(grid.querySelectorAll(".dashboard-widget")).map(function (node) { return node.getAttribute("data-widget-key"); }).filter(Boolean);
+    state.ui.dashboardLayout = { order: order };
+    localStorage.setItem(DASHBOARD_LAYOUT_STORAGE_KEY, JSON.stringify(state.ui.dashboardLayout));
+  }
+
+  function startDashboardAutoRefresh() {
+    if (dashboardAutoRefreshTimer) window.clearInterval(dashboardAutoRefreshTimer);
+    dashboardAutoRefreshTimer = window.setInterval(function () {
+      if (state.activeModule !== "dashboard") return;
+      loadDashboard().then(function () { if (state.activeModule === "dashboard") renderDashboard(); }).catch(function () {});
+    }, 6e4);
+  }
+
+  function syncDashboardThemeControls() {
+    document.querySelectorAll(".js-dashboard-theme").forEach(function (btn) {
+      btn.textContent = "Theme: " + (state.ui.dashboardTheme === "light" ? "Light" : "Dark");
+    });
   }
 
   function renderBrandingCard() {
@@ -2993,18 +3409,11 @@
   }
 
   function renderDashboardStats() {
-    const stats = state.dashboardStats;
-    if (!stats) {
-      pos.statTodaySales.textContent = "—";
-      pos.statMonthlySales.textContent = "—";
-      pos.statGrossProfit.textContent = "—";
-      pos.statLowStock.textContent = "—";
-      return;
-    }
-    pos.statTodaySales.textContent = money(stats.today_sales);
-    pos.statMonthlySales.textContent = money(stats.monthly_sales);
-    pos.statGrossProfit.textContent = money(stats.gross_profit);
-    pos.statLowStock.textContent = numberText(stats.low_stock_count);
+    const stats = state.dashboardStats || {};
+    if (state.activeModule !== "dashboard") return;
+    const sales = stats.todaySales && stats.todaySales.value != null ? money(stats.todaySales.value) : "—";
+    const tx = stats.transactions && stats.transactions.value != null ? numberText(stats.transactions.value) : "—";
+    pos.moduleSubtitle.textContent = "Today: " + sales + " across " + tx + " transactions.";
   }
 
   function renderPosUser() {
@@ -3511,6 +3920,92 @@
 
   function todayIso() {
     return new Date().toISOString().slice(0, 10);
+  }
+
+  function isoDate(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toISOString().slice(0, 10);
+  }
+
+  function addDays(value, days) {
+    const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+    date.setDate(date.getDate() + Number(days || 0));
+    return date;
+  }
+
+  function valueWithChange(current, previous) {
+    const cur = Number(current || 0);
+    const prev = Number(previous || 0);
+    const change = prev === 0 ? (cur === 0 ? 0 : 100) : (cur - prev) / Math.abs(prev) * 100;
+    return { value: cur, change: Number.isFinite(change) ? change : 0 };
+  }
+
+  function aggregateHourlySales(sales) {
+    const byHour = {};
+    for (let i = 0; i < 24; i += 1) byHour[i] = 0;
+    const today = localDateKey(new Date());
+    normalizeList(sales).forEach(function (item) {
+      const when = new Date(item.created_at);
+      if (localDateKey(when) !== today) return;
+      byHour[when.getHours()] += Number(item.total || 0);
+    });
+    return Object.keys(byHour).map(function (hour) {
+      return { label: hour.padStart ? hour.padStart(2, "0") + ":00" : ("0" + hour).slice(-2) + ":00", value: byHour[hour] };
+    }).filter(function (item) { return item.value > 0; }).slice(-12);
+  }
+
+  function aggregateDailySales(sales, days) {
+    const result = [];
+    for (let i = days - 1; i >= 0; i -= 1) {
+      const date = addDays(new Date(), -i);
+      const key = localDateKey(date);
+      const total = normalizeList(sales).filter(function (item) { return localDateKey(item.created_at) === key; }).reduce(function (sum, item) { return sum + Number(item.total || 0); }, 0);
+      result.push({ label: key.slice(5), value: total });
+    }
+    return result;
+  }
+
+  function aggregateMonthlySeries(rows, field, limit) {
+    const map = {};
+    normalizeList(rows).forEach(function (item) {
+      const date = firstText(item.date, "");
+      const key = date ? date.slice(0, 7) : "—";
+      map[key] = (map[key] || 0) + Number(item[field] || item.sales || 0);
+    });
+    return Object.keys(map).sort().slice(-Math.max(1, Number(limit || 12))).map(function (month) {
+      return { label: month, value: map[month] };
+    });
+  }
+
+  function localDateKey(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return y + "-" + m + "-" + d;
+  }
+
+  function readStoredTheme() {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    return stored === "dark" ? "dark" : "light";
+  }
+
+  function persistTheme(theme) {
+    localStorage.setItem(THEME_STORAGE_KEY, theme === "light" ? "light" : "dark");
+  }
+
+  function applyTheme(theme) {
+    document.body.setAttribute("data-theme", theme === "light" ? "light" : "dark");
+  }
+
+  function readStoredDashboardLayout() {
+    try {
+      return JSON.parse(localStorage.getItem(DASHBOARD_LAYOUT_STORAGE_KEY) || '{"order":[]}');
+    } catch (_error) {
+      return { order: [] };
+    }
   }
 
   async function refreshCurrency() {
