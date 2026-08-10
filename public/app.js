@@ -390,6 +390,7 @@
     const today = isoDate(now);
     const yesterday = isoDate(addDays(now, -1));
     const range = state.ui.dashboardRange || "today";
+    const role = dashboardRole();
     const rangeDates = dashboardRangeDates(range, now);
     const [stats, recentTransactions, topProducts, salesChart, inventory, quotations, invoices, purchases, customers, suppliers, branches, users, salesToday, expensesToday, todaySummary, yesterdaySummary, todayProfit, yesterdayProfit, branchComparison, auditFeed] = await Promise.all([
       apiJson("/api/dashboard/stats").catch(function () { return {}; }),
@@ -397,21 +398,21 @@
       apiJson("/api/dashboard/top-products").catch(function () { return []; }),
       apiJson("/api/dashboard/sales-chart").catch(function () { return []; }),
       apiJson("/api/inventory/stock-count").catch(function () { return []; }),
-      apiJson("/api/quotations?limit=200").catch(function () { return { data: [] }; }),
-      apiJson("/api/invoices?limit=200").catch(function () { return { data: [] }; }),
-      apiJson("/api/purchases?limit=200").catch(function () { return { data: [] }; }),
-      apiJson("/api/customers?limit=200").catch(function () { return { data: [] }; }),
-      apiJson("/api/suppliers?limit=200").catch(function () { return { data: [] }; }),
-      apiJson("/api/branches").catch(function () { return []; }),
-      apiJson("/api/users").catch(function () { return []; }),
-      apiJson("/api/pos/sales?limit=200").catch(function () { return { data: [] }; }),
-      apiJson("/api/expenses?limit=200").catch(function () { return { data: [] }; }),
+      apiJson("/api/quotations?limit=80").catch(function () { return { data: [] }; }),
+      apiJson("/api/invoices?limit=80").catch(function () { return { data: [] }; }),
+      role === "cashier" ? Promise.resolve({ data: [] }) : apiJson("/api/purchases?limit=80").catch(function () { return { data: [] }; }),
+      role === "cashier" ? Promise.resolve({ data: [] }) : apiJson("/api/customers?limit=100").catch(function () { return { data: [] }; }),
+      role === "cashier" ? Promise.resolve({ data: [] }) : apiJson("/api/suppliers?limit=100").catch(function () { return { data: [] }; }),
+      role === "administrator" ? apiJson("/api/branches").catch(function () { return []; }) : Promise.resolve([]),
+      role === "cashier" ? Promise.resolve([]) : apiJson("/api/users").catch(function () { return []; }),
+      apiJson("/api/pos/sales?limit=80").catch(function () { return { data: [] }; }),
+      Promise.resolve({ data: [] }),
       apiJson("/api/reports/sales-summary?from=" + encodeURIComponent(today) + "&to=" + encodeURIComponent(today)).catch(function () { return {}; }),
       apiJson("/api/reports/sales-summary?from=" + encodeURIComponent(yesterday) + "&to=" + encodeURIComponent(yesterday)).catch(function () { return {}; }),
       apiJson("/api/reports/profit-loss?from=" + encodeURIComponent(today) + "&to=" + encodeURIComponent(today)).catch(function () { return {}; }),
       apiJson("/api/reports/profit-loss?from=" + encodeURIComponent(yesterday) + "&to=" + encodeURIComponent(yesterday)).catch(function () { return {}; }),
-      apiJson("/api/reports/branch-comparison?from=" + encodeURIComponent(rangeDates.from) + "&to=" + encodeURIComponent(rangeDates.to)).catch(function () { return null; }),
-      apiJson("/api/audit-log?limit=15").catch(function () { return { data: [] }; })
+      role === "administrator" ? apiJson("/api/reports/branch-comparison?from=" + encodeURIComponent(rangeDates.from) + "&to=" + encodeURIComponent(rangeDates.to)).catch(function () { return null; }) : Promise.resolve(null),
+      role === "administrator" ? apiJson("/api/audit-log?limit=15").catch(function () { return { data: [] }; }) : Promise.resolve({ data: [] })
     ]);
     const inventoryList = normalizeList(inventory);
     const quotationList = normalizeList(quotations);
@@ -567,8 +568,8 @@
     return renderTable(["Code", "Product", "Qty Sold", "Sales Value", "Profit"], products.slice(0, 10).map(function (item) {
       const qty = Number(item.quantity_sold || item.quantity || 0);
       const sales = Number(item.revenue || item.total || 0);
-      const cost = sales * 0.65;
-      return [escapeHtml(firstText(item.product_code, "—")), escapeHtml(firstText(item.product_name, item.name, "Unknown")), numberText(qty), money(sales), money(sales - cost)];
+      const profitVal = item.profit != null ? Number(item.profit) : item.cost != null ? sales - Number(item.cost) : null;
+      return [escapeHtml(firstText(item.product_code, "—")), escapeHtml(firstText(item.product_name, item.name, "Unknown")), numberText(qty), money(sales), profitVal == null ? "—" : money(profitVal)];
     }), "No product sales yet.");
   }
 
@@ -605,16 +606,18 @@
 
   function renderSupplierDashboard(suppliers, purchases) {
     const pending = normalizeList(purchases).filter(function (item) { return item.status !== "received" && item.status !== "cancelled"; });
+    const pendingValue = pending.reduce(function (sum, item) { return sum + Number(item.total || 0); }, 0);
     const owed = normalizeList(suppliers).reduce(function (sum, item) { return sum + Math.max(0, Number(item.balance || 0)); }, 0);
     const received = normalizeList(purchases).filter(function (item) { return item.status === "received"; }).slice(0, 5);
-    return renderMetricCard("Supplier metrics", [["Pending deliveries", numberText(pending.length)], ["POs awaiting delivery", numberText(pending.length)], ["Amount owed to suppliers", money(owed)], ["Recently received stock", numberText(received.length)]]) + renderTable(["PO", "Supplier", "Status"], received.map(function (item) { return [escapeHtml(firstText(item.purchase_number, "—")), escapeHtml(firstText(item.supplier_name, "—")), renderBadge(firstText(item.status, "received"))]; }), "No recent receipts.");
+    return renderMetricCard("Supplier metrics", [["Pending deliveries", numberText(pending.length)], ["Pending PO value", money(pendingValue)], ["Amount owed to suppliers", money(owed)], ["Recently received stock", numberText(received.length)]]) + renderTable(["PO", "Supplier", "Status"], received.map(function (item) { return [escapeHtml(firstText(item.purchase_number, "—")), escapeHtml(firstText(item.supplier_name, "—")), renderBadge(firstText(item.status, "received"))]; }), "No recent receipts.");
   }
 
   function renderFinancialSummary(summary, profit, sales, expenses) {
     const methodMap = Object.fromEntries(normalizeList(summary.by_payment_method).map(function (item) { return [String(item.method || ""), Number(item.amount || 0)]; }));
     const discounts = normalizeList(sales).reduce(function (sum, sale) { return sum + Number(sale.discount_amount || 0); }, 0);
     const vat = normalizeList(sales).reduce(function (sum, sale) { return sum + Number(sale.tax_amount || 0); }, 0);
-    const todayExpenses = normalizeList(expenses).reduce(function (sum, row) { return sum + Number(row.amount || 0); }, 0);
+    const fallbackExpenses = normalizeList(expenses).reduce(function (sum, row) { return sum + Number(row.amount || 0); }, 0);
+    const todayExpenses = Number(profit.expenses != null ? profit.expenses : fallbackExpenses);
     return renderMetricCard("Financial summary", [["Cash sales", money(methodMap.cash || 0)], ["M-Pesa sales", money(methodMap.mpesa || 0)], ["Card sales", money(methodMap.card || 0)], ["Bank sales", money(methodMap.bank_transfer || 0)], ["Credit sales", money(methodMap.credit || 0)], ["Expenses today", money(todayExpenses)], ["Gross profit", money(profit.gross_profit || 0)], ["Net profit", money(profit.net_profit || 0)], ["VAT collected", money(vat)], ["Discounts given", money(discounts)]]);
   }
 
@@ -727,11 +730,13 @@
   function dashboardAnalytics(data, range) {
     const sales = normalizeList(data.sales);
     const chartRows = normalizeList(data.salesChart);
+    const dailyWindow = range === "today" ? 1 : range === "week" ? 7 : range === "month" ? 30 : 365;
+    const monthlyWindow = range === "year" ? 12 : range === "month" ? 6 : range === "week" ? 3 : 1;
     return {
       hourlySales: aggregateHourlySales(sales),
-      dailySales: aggregateDailySales(sales, 7),
-      monthlySales: aggregateMonthlySeries(chartRows, "sales"),
-      monthlyProfit: aggregateMonthlySeries(chartRows, "profit")
+      dailySales: aggregateDailySales(sales, dailyWindow),
+      monthlySales: aggregateMonthlySeries(chartRows, "sales", monthlyWindow),
+      monthlyProfit: aggregateMonthlySeries(chartRows, "profit", monthlyWindow)
     };
   }
 
@@ -747,10 +752,13 @@
     const unpaidInvoices = invoices.filter(function (item) { return ["draft", "sent", "partial", "overdue"].indexOf(String(item.status || "").toLowerCase()) >= 0; }).length;
     const overdueBalance = customers.filter(function (item) { return Number(item.balance || 0) > 0; }).length;
     const failedPayments = invoices.filter(function (item) { return String(item.status || "").toLowerCase() === "cancelled"; }).length;
+    const auditFeed = normalizeList(data.auditFeed);
+    const backupSuccess = auditFeed.some(function (item) { return String(item.action || "").indexOf("backup") >= 0; });
+    const syncSuccess = auditFeed.some(function (item) { return String(item.action || "").indexOf("sync") >= 0; });
     return {
       red: [outOfStock ? outOfStock + " out-of-stock products" : "", negativeStock ? negativeStock + " negative stock records" : "", failedPayments ? failedPayments + " failed payments" : "", "No database sync failures detected"].filter(Boolean),
       yellow: [lowStock ? lowStock + " low-stock items" : "", pendingPo ? pendingPo + " pending purchase orders" : "", unpaidInvoices ? unpaidInvoices + " unpaid invoices" : "", overdueBalance ? overdueBalance + " overdue customer balances" : ""].filter(Boolean),
-      green: ["Backups completed", "Synchronizations successful"]
+      green: [backupSuccess ? "Completed backups detected" : "Backup status unavailable", syncSuccess ? "Successful synchronizations detected" : "Synchronization status unavailable"]
     };
   }
 
@@ -3936,10 +3944,10 @@
   function aggregateHourlySales(sales) {
     const byHour = {};
     for (let i = 0; i < 24; i += 1) byHour[i] = 0;
-    const today = isoDate(new Date());
+    const today = localDateKey(new Date());
     normalizeList(sales).forEach(function (item) {
       const when = new Date(item.created_at);
-      if (isoDate(when) !== today) return;
+      if (localDateKey(when) !== today) return;
       byHour[when.getHours()] += Number(item.total || 0);
     });
     return Object.keys(byHour).map(function (hour) {
@@ -3951,28 +3959,37 @@
     const result = [];
     for (let i = days - 1; i >= 0; i -= 1) {
       const date = addDays(new Date(), -i);
-      const key = isoDate(date);
-      const total = normalizeList(sales).filter(function (item) { return isoDate(item.created_at) === key; }).reduce(function (sum, item) { return sum + Number(item.total || 0); }, 0);
+      const key = localDateKey(date);
+      const total = normalizeList(sales).filter(function (item) { return localDateKey(item.created_at) === key; }).reduce(function (sum, item) { return sum + Number(item.total || 0); }, 0);
       result.push({ label: key.slice(5), value: total });
     }
     return result;
   }
 
-  function aggregateMonthlySeries(rows, field) {
+  function aggregateMonthlySeries(rows, field, limit) {
     const map = {};
     normalizeList(rows).forEach(function (item) {
       const date = firstText(item.date, "");
       const key = date ? date.slice(0, 7) : "—";
       map[key] = (map[key] || 0) + Number(item[field] || item.sales || 0);
     });
-    return Object.keys(map).sort().slice(-12).map(function (month) {
+    return Object.keys(map).sort().slice(-Math.max(1, Number(limit || 12))).map(function (month) {
       return { label: month, value: map[month] };
     });
   }
 
+  function localDateKey(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return y + "-" + m + "-" + d;
+  }
+
   function readStoredTheme() {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    return stored === "light" ? "light" : "dark";
+    return stored === "dark" ? "dark" : "light";
   }
 
   function persistTheme(theme) {
