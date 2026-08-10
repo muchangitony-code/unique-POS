@@ -41,9 +41,9 @@ if (_configuredClientDir && !fs.existsSync(_configuredClientIndex)) {
     console.warn(`[startup] SERVE_CLIENT_DIR "${_configuredClientDir}" missing index.html and no bundled frontend found; starting API-only.`);
   }
 } else if (!_configuredClientDir) {
-  // Only set SERVE_CLIENT_DIR when the public/ folder actually exists so the
-  // server starts cleanly as an API-only deployment when the built frontend
-  // has not been committed to the repository.
+  // Only set SERVE_CLIENT_DIR when the bundled frontend entry file exists so
+  // the server starts cleanly as an API-only deployment when frontend assets
+  // have not been committed to the repository.
   if (fs.existsSync(_defaultClientIndex)) {
     process.env.SERVE_CLIENT_DIR = _defaultClientDir;
   }
