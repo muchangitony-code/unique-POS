@@ -5,7 +5,7 @@ const fs = require("node:fs/promises");
 const PDFDocument = require("pdfkit");
 const readXlsxFile = require("read-excel-file/node");
 const writeXlsxFile = require("write-excel-file/node");
-const { PDFParse } = require("pdf-parse");
+const pdfParse = require("pdf-parse");
 const bwipjs = require("bwip-js");
 
 const TEMPLATE_HEADERS = [
@@ -276,24 +276,46 @@ function createProductBulkRouter(deps) {
     }
     if (!object_path) throw new Error("An uploaded import file or pasted spreadsheet data is required.");
     const buffer = await readObjectBuffer(object_path);
-    const extension = path.extname(file_name || object_path).toLowerCase();
-    if (extension === ".csv") {
+    return parseBufferSource({ buffer, source_type, file_name: file_name || object_path });
+  }
+
+  async function parseBufferSource({ buffer, source_type, file_name }) {
+    const extension = path.extname(file_name || "").toLowerCase();
+    if (extension === ".csv" || source_type === "csv" || source_type === "paste") {
       return rowsFromMatrix(parseDelimitedText(buffer.toString("utf8")));
     }
-    if (extension === ".xlsx") {
+    if (extension === ".xlsx" || source_type === "xlsx") {
       const workbook = await readXlsxFile(buffer);
       const rows = Array.isArray(workbook) && workbook[0] && Array.isArray(workbook[0].data) ? workbook[0].data : workbook;
       return rowsFromMatrix(rows);
     }
-    if (extension === ".pdf") {
-      const parser = new PDFParse({ data: buffer });
-      const result = await parser.getText();
-      await parser.destroy();
-      const lines = String(result.text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (extension === ".pdf" || source_type === "pdf") {
+      const parsed = await pdfParse(buffer);
+      const lines = String(parsed.text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
       const matrix = lines.map((line) => line.includes("\t") ? line.split("\t") : line.split(/\s{2,}/g));
       return rowsFromMatrix(matrix);
     }
-    throw new Error(`Unsupported import file type: ${extension || source_type || "unknown"}`);
+    // Try CSV as fallback for unknown extensions
+    return rowsFromMatrix(parseDelimitedText(buffer.toString("utf8")));
+  }
+
+  function collectRawBody(req, limitBytes) {
+    const max = limitBytes || 10 * 1024 * 1024;
+    return new Promise((resolve, reject) => {
+      const chunks = [];
+      let size = 0;
+      req.on("data", (chunk) => {
+        size += chunk.length;
+        if (size > max) {
+          reject(new Error("Upload too large. Maximum file size is 10 MB."));
+          req.destroy();
+          return;
+        }
+        chunks.push(chunk);
+      });
+      req.on("end", () => resolve(Buffer.concat(chunks)));
+      req.on("error", reject);
+    });
   }
 
   async function fetchExistingMatches(codes, barcodes, names) {
@@ -812,6 +834,54 @@ function createProductBulkRouter(deps) {
     if (absolutePath !== publicRoot && !absolutePath.startsWith(`${publicRoot}${path.sep}`)) return null;
     return fs.readFile(absolutePath).catch(() => null);
   }
+
+  // Combined upload-and-parse endpoint: client sends raw file bytes, server parses in-memory.
+  // This avoids the two-step upload flow and works regardless of how many server replicas are running.
+  router.post("/products/imports/upload-and-parse", async (req, res) => {
+    await ensureSchema();
+    const fileName = trimText(String(req.query.filename || req.headers["x-filename"] || ""));
+    const extension = path.extname(fileName).toLowerCase();
+    let sourceType = extension === ".csv" ? "csv" : extension === ".pdf" ? "pdf" : "xlsx";
+    const sourceName = fileName || "Uploaded file";
+
+    const buffer = await collectRawBody(req, 10 * 1024 * 1024);
+    if (!buffer.length) {
+      res.status(400).json({ error: "No file data received. Please select a file and try again." });
+      return;
+    }
+
+    const source = await parseBufferSource({ buffer, source_type: sourceType, file_name: fileName });
+    if (!source.headers.length) {
+      res.status(400).json({ error: "No tabular data found in this file. Make sure it has column headers in the first row and at least one product row." });
+      return;
+    }
+
+    const draft = await prepareDraftRows(source);
+    const job = await saveDraftJob({
+      sourceType,
+      sourceName,
+      fileName: fileName || null,
+      objectPath: null,
+      mapping: draft.mapping,
+      preparedRows: draft.rows,
+      actor: req.user
+    });
+
+    await logAudit(req, {
+      action: "product.import_draft_created",
+      entityType: "product_import",
+      entityId: job.id,
+      description: `Created bulk product import draft #${job.id} from ${fileName || "upload"}`,
+      metadata: { sourceType, totalRows: draft.rows.length }
+    });
+
+    res.status(201).json({
+      job: serializeJob(job),
+      headers: source.headers,
+      mapping: draft.mapping,
+      preview: draft.rows.slice(0, 100)
+    });
+  });
 
   router.post("/products/imports/parse", async (req, res) => {
     await ensureSchema();
