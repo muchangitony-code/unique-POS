@@ -486,7 +486,13 @@
         '<section class="card"><div class="section-head"><h3>' + (edit.id ? "Edit product" : "Add product") + '</h3></div>' +
           '<form id="productForm" class="form-grid two">' +
             hiddenInput("id", edit.id) +
-            textField("Product code", "product_code", edit.product_code, true) +
+            (edit.id
+              ? (isSuperAdmin()
+                  ? textField("Product code", "product_code", edit.product_code, false)
+                  : '<label><span>Product code</span><input type="text" name="product_code" value="' + escapeAttr(edit.product_code == null ? '' : edit.product_code) + '" readonly /></label>')
+              : (isSuperAdmin()
+                  ? textField("Product code", "product_code", edit.product_code, false, "Auto-generated")
+                  : '<label><span>Product code</span><input type="text" name="product_code" value="" placeholder="Auto-generated" readonly /></label>')) +
             textField("Product name", "product_name", edit.product_name, true) +
             textField("Barcode", "barcode", edit.barcode) +
             textField("Unit", "unit", edit.unit, false, "pcs") +
