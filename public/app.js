@@ -584,6 +584,9 @@
       },
       ".js-import-errors": function (event) {
         window.open("/api/products/imports/" + encodeURIComponent(event.currentTarget.dataset.id) + "/errors.csv", "_blank", "noopener");
+      },
+      ".js-import-fix-row": function (event) {
+        Promise.resolve(handleProductImportFixRow(event.currentTarget)).catch(handleActionError);
       }
     });
     body.querySelectorAll(".js-product-select").forEach(function (input) {
@@ -697,7 +700,7 @@
     const errorRows = previewRows.filter(function (row) { return Array.isArray(row.validation_errors) && row.validation_errors.length; });
     const validRows = previewRows.length - errorRows.length;
     var summaryLine = validRows + " product" + (validRows === 1 ? "" : "s") + " ready to import.";
-    if (errorRows.length) summaryLine += " " + errorRows.length + " row" + (errorRows.length === 1 ? "" : "s") + " have problems and will be skipped.";
+    if (errorRows.length) summaryLine += " " + errorRows.length + " row" + (errorRows.length === 1 ? "" : "s") + " cannot be imported yet — fix them below.";
     return '<section class="card"><div class="section-head"><h3>2) Preview &amp; confirm</h3></div>' +
       '<div class="stack gap-lg">' +
         '<p class="muted small">' + escapeHtml(summaryLine) + ' Click <strong>Import Products</strong> above when you are ready.</p>' +
@@ -711,13 +714,22 @@
             hasErrors ? '<span style="color:#f87171">\u26A0 Has errors</span>' : escapeHtml(firstText(row.status, "preview"))
           ];
         }), "No preview rows available.") +
-        (errorRows.length ? '<div><h4 style="color:#f87171">\u26A0 Rows with problems (' + errorRows.length + ')</h4><p class="muted small">These rows will be skipped during import. Fix the file and re-upload to include them.</p>' +
-        renderTable(["Row", "What needs fixing"], errorRows.slice(0, 25).map(function (row) {
-          return [
-            escapeHtml(String(row.row_number)),
-            escapeHtml((row.validation_errors || []).join(" \u2022 ").replace(/\s+/g, " "))
-          ];
-        }), "No row errors found.") + '</div>' : "") +
+        (errorRows.length ? '<div><h4 style="color:#f87171">\u26A0 Rows that need fixing (' + errorRows.length + ')</h4><p class="muted small">Only these rows are blocked. Fill in the missing values and click <strong>Fix row</strong> to clear the error — you do not need to re-upload the whole file.</p>' +
+        errorRows.slice(0, 25).map(function (row) {
+          var nd = row.normalized_data || {};
+          var needsName = !nd.product_name;
+          var needsPrice = nd.selling_price == null;
+          var reasons = (row.validation_errors || []).join(" \u2022 ");
+          return '<div class="import-row-fix" data-row-id="' + escapeAttr(String(row.id)) + '" data-job-id="' + escapeAttr(String(info.job.id)) + '" style="border:1px solid #f87171;border-radius:6px;padding:0.75rem 1rem;margin-bottom:0.5rem">' +
+            '<div style="font-weight:600;margin-bottom:0.25rem">Row ' + escapeHtml(String(row.row_number)) + (nd.product_name ? ' \u2014 ' + escapeHtml(nd.product_name) : '') + '</div>' +
+            '<p class="muted small" style="color:#f87171;margin-bottom:0.5rem">' + escapeHtml(reasons) + '</p>' +
+            '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:flex-end">' +
+              (needsName ? '<label style="flex:1;min-width:180px"><span class="muted small">Product Name</span><input type="text" class="import-fix-name" placeholder="Enter product name" value="' + escapeAttr(nd.product_name || '') + '" /></label>' : '') +
+              (needsPrice ? '<label style="flex:0 0 140px"><span class="muted small">Selling Price (KES)</span><input type="number" step="0.01" min="0" class="import-fix-price" placeholder="0.00" value="' + escapeAttr(nd.selling_price != null ? String(nd.selling_price) : '') + '" /></label>' : '') +
+              '<button type="button" class="js-import-fix-row secondary" style="align-self:flex-end">Fix row</button>' +
+            '</div>' +
+          '</div>';
+        }).join("") + '</div>' : "") +
         renderProductImportSummaryCard(info.job) +
       '</div></section>';
   }
@@ -1054,6 +1066,45 @@
       window.clearInterval(window.__uniqueposProductImportPoll);
       window.__uniqueposProductImportPoll = 0;
     }
+  }
+
+  async function handleProductImportFixRow(button) {
+    const container = button.closest(".import-row-fix");
+    if (!container) return;
+    const jobId = container.dataset.jobId;
+    const rowId = container.dataset.rowId;
+    const nameInput = container.querySelector(".import-fix-name");
+    const priceInput = container.querySelector(".import-fix-price");
+    const updates = {};
+    if (nameInput) updates.product_name = nameInput.value.trim();
+    if (priceInput) updates.selling_price = priceInput.value.trim() !== "" ? Number(priceInput.value) : null;
+    button.disabled = true;
+    button.textContent = "Saving\u2026";
+    try {
+      const result = await apiJson("/api/products/imports/" + jobId + "/rows/" + rowId, {
+        method: "PATCH",
+        body: JSON.stringify(updates)
+      });
+      const preview = state.ui.productImport.preview || [];
+      state.ui.productImport.preview = preview.map(function (r) {
+        if (String(r.id) === String(rowId)) return result.row;
+        return r;
+      });
+      if (state.ui.productImport.job) {
+        state.ui.productImport.job.error_count = result.job_error_count;
+        state.ui.productImport.job.valid_rows = result.job_valid_rows;
+      }
+      if (result.valid) {
+        setFlash("products", "success", "Row fixed and ready to import.");
+      } else {
+        setFlash("products", "warning", "Row updated but still has issues: " + (result.row.validation_errors || []).join(" \u2022 "));
+      }
+    } catch (err) {
+      button.disabled = false;
+      button.textContent = "Fix row";
+      throw err;
+    }
+    renderProducts();
   }
 
   async function undoProductImport(id) {
