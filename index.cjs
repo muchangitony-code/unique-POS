@@ -72201,12 +72201,26 @@ async function resolveDocumentPayload(req, type, id) {
 }
 async function renderPdfBuffer(payload, paper) {
   const logoBuffer = await loadLogoBuffer(payload.settings.logoUrl);
-  const pdfPromise = new Promise((resolve4, reject) => {
+  let doc;
+  let timeoutTimer;
+  return await new Promise((resolve4, reject) => {
+    let settled = false;
+    function settle(fn, value) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutTimer);
+      fn(value);
+    }
+    timeoutTimer = setTimeout(() => {
+      try { if (doc) doc.end(); } catch {}
+      settle(reject, new Error("PDF generation timed out"));
+    }, PDF_GENERATION_TIMEOUT_MS);
+    if (timeoutTimer.unref) timeoutTimer.unref();
     const chunks = [];
-    const doc = new import_pdfkit.default({ margin: 28, size: paperToPdfSize(paper) });
+    doc = new import_pdfkit.default({ margin: 28, size: paperToPdfSize(paper) });
     doc.on("data", (chunk) => chunks.push(chunk));
-    doc.on("error", reject);
-    doc.on("end", () => resolve4(Buffer.concat(chunks)));
+    doc.on("error", (err) => settle(reject, err));
+    doc.on("end", () => settle(resolve4, Buffer.concat(chunks)));
     const currency = payload.settings.currency || "KES";
     const headerY = doc.y;
     const headerTextX = logoBuffer ? 112 : 28;
@@ -72243,11 +72257,6 @@ async function renderPdfBuffer(payload, paper) {
     doc.fontSize(9).text(documentFooterForType(payload.settings, payload.requestedType || String(payload.documentType || "").toLowerCase()));
     doc.end();
   });
-  const timeoutPromise = new Promise((_resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("PDF generation timed out")), PDF_GENERATION_TIMEOUT_MS);
-    if (timer.unref) timer.unref();
-  });
-  return await Promise.race([pdfPromise, timeoutPromise]);
 }
 router17.get("/documents/:type/:id/preview", async (req, res) => {
   try {
