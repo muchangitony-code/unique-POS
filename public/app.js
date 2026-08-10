@@ -530,7 +530,13 @@
 
     bindRowActions(body, {
       ".js-products-view": function (event) {
-        state.ui.productsView = event.currentTarget.dataset.view || "list";
+        var nextView = event.currentTarget.dataset.view || "list";
+        // Reset import state when leaving the import view
+        if (state.ui.productsView === "import" && nextView !== "import") {
+          state.ui.productImportFile = null;
+          state.ui.productImport = { job: null, headers: [], mapping: {}, preview: [], total: 0, loading: false };
+        }
+        state.ui.productsView = nextView;
         renderProducts();
       }
     });
@@ -622,15 +628,23 @@
     const info = state.ui.productImport || {};
     const mapping = info.mapping || {};
     const headers = info.headers || [];
+    const isLoading = Boolean(info.loading);
     const importStarted = Boolean(info.job && ["queued", "processing"].includes(info.job.status));
+    const hasJob = Boolean(info.job && !isLoading);
+    const selectedFile = state.ui.productImportFile;
+    var dropzoneText = isLoading
+      ? "\u23F3 Reading file\u2026 please wait"
+      : selectedFile
+        ? "\u2705 " + escapeHtml(selectedFile.name) + " \u2014 click to change"
+        : "\u2B06 Click here or drag & drop an Excel (.xlsx), CSV, or PDF file";
     return '<section class="card"><div class="section-head"><h3>Import products</h3></div><div class="stack gap-lg">' +
       '<div class="stack gap-sm">' +
-        '<h4>1) Upload file</h4>' +
-        '<div class="dropzone" id="productImportDropzone">Drop Excel, CSV, or PDF here.</div>' +
-        '<input id="productImportFile" type="file" accept=\".xlsx,.csv,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\" />' +
-        '<p class="muted small">Columns are auto-detected and mapped for you.</p>' +
+        '<h4>1) Choose your file</h4>' +
+        '<div class="dropzone' + (isLoading ? ' dropzone--loading' : '') + '" id="productImportDropzone" style="cursor:pointer">' + dropzoneText + '</div>' +
+        '<input id="productImportFile" type="file" accept=".xlsx,.csv,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none" />' +
+        '<p class="muted small">Columns are auto-detected. <a href="/api/products/imports/templates/csv">Download CSV template</a> \u00b7 <a href="/api/products/imports/templates/xlsx">Download Excel template</a></p>' +
       '</div>' +
-      '<div class="form-actions"><button type="button" id="productImportStartBtn"' + (!info.job || importStarted ? " disabled" : "") + '>Import Products</button><a class="button-link" href="/api/products/imports/templates/csv">CSV template</a><a class="button-link" href="/api/products/imports/templates/xlsx">Excel template</a></div>' +
+      '<div class="form-actions"><button type="button" id="productImportStartBtn"' + (!hasJob || importStarted || isLoading ? " disabled" : "") + '>Import Products</button></div>' +
       '<details class="advanced-settings"><summary>Advanced Settings</summary>' +
         '<div class="stack gap-sm advanced-settings__body">' +
           '<label><span>Paste rows from a spreadsheet</span><textarea id="productImportPaste" placeholder="Paste rows directly from Excel or Google Sheets"></textarea></label>' +
@@ -664,7 +678,7 @@
           '<button type=\"button\" id=\"productBulkStockBtn\">Adjust stock</button>' +
         '</div>' +
         '<div class=\"inline-form\">' +
-          '<label><span>Reassign category</span><select id=\"productBulkCategoryId\"><option value=\"\">Select…</option>' + optionTags(data.categories || [], null) + '</select></label>' +
+          '<label><span>Reassign category</span><select id=\"productBulkCategoryId\"><option value=\"\">Select\u2026</option>' + optionTags(data.categories || [], null) + '</select></label>' +
           '<label><span>Or new category</span><input id=\"productBulkCategoryName\" type=\"text\" placeholder=\"Create if missing\" /></label>' +
           '<button type=\"button\" id=\"productBulkCategoryBtn\">Update category</button>' +
         '</div>' +
@@ -681,25 +695,29 @@
     if (!info.job) return "";
     const previewRows = info.preview || [];
     const errorRows = previewRows.filter(function (row) { return Array.isArray(row.validation_errors) && row.validation_errors.length; });
-    return '<section class="card"><div class="section-head"><h3>2) Preview products</h3></div>' +
+    const validRows = previewRows.length - errorRows.length;
+    var summaryLine = validRows + " product" + (validRows === 1 ? "" : "s") + " ready to import.";
+    if (errorRows.length) summaryLine += " " + errorRows.length + " row" + (errorRows.length === 1 ? "" : "s") + " have problems and will be skipped.";
+    return '<section class="card"><div class="section-head"><h3>2) Preview &amp; confirm</h3></div>' +
       '<div class="stack gap-lg">' +
-        '<p class="muted small">Review the products below, then click <strong>Import Products</strong>.</p>' +
-        renderTable(["Row", "SKU", "Product", "Action", "Status"], previewRows.slice(0, 25).map(function (row) {
+        '<p class="muted small">' + escapeHtml(summaryLine) + ' Click <strong>Import Products</strong> above when you are ready.</p>' +
+        renderTable(["Row", "SKU", "Product Name", "Action", "Status"], previewRows.slice(0, 25).map(function (row) {
+          var hasErrors = Array.isArray(row.validation_errors) && row.validation_errors.length;
           return [
             escapeHtml(String(row.row_number)),
-            escapeHtml(firstText(row.normalized_data && row.normalized_data.product_code, row.raw_data && row.raw_data["Product Code"], "—")),
-            escapeHtml(firstText(row.normalized_data && row.normalized_data.product_name, row.raw_data && row.raw_data["Product Name"], "—")),
+            escapeHtml(firstText(row.normalized_data && row.normalized_data.product_code, row.raw_data && row.raw_data["Product Code"], "\u2014")),
+            escapeHtml(firstText(row.normalized_data && row.normalized_data.product_name, row.raw_data && row.raw_data["Product Name"], "\u2014")),
             escapeHtml(firstText(row.action, "create")),
-            escapeHtml(firstText(row.status, "preview"))
+            hasErrors ? '<span style="color:#f87171">\u26A0 Has errors</span>' : escapeHtml(firstText(row.status, "preview"))
           ];
         }), "No preview rows available.") +
-        '<div><h4>3) Rows with issues</h4>' +
+        (errorRows.length ? '<div><h4 style="color:#f87171">\u26A0 Rows with problems (' + errorRows.length + ')</h4><p class="muted small">These rows will be skipped during import. Fix the file and re-upload to include them.</p>' +
         renderTable(["Row", "What needs fixing"], errorRows.slice(0, 25).map(function (row) {
           return [
             escapeHtml(String(row.row_number)),
-            escapeHtml((row.validation_errors || []).join(" ").replace(/\s+/g, " "))
+            escapeHtml((row.validation_errors || []).join(" \u2022 ").replace(/\s+/g, " "))
           ];
-        }), "No row errors found.") + '</div>' +
+        }), "No row errors found.") + '</div>' : "") +
         renderProductImportSummaryCard(info.job) +
       '</div></section>';
   }
@@ -844,6 +862,10 @@
       });
     }
     if (dropzone) {
+      // Click on dropzone opens the hidden file picker
+      dropzone.addEventListener("click", function () {
+        if (fileInput) fileInput.click();
+      });
       ["dragenter", "dragover"].forEach(function (eventName) {
         dropzone.addEventListener(eventName, function (event) {
           event.preventDefault();
@@ -869,56 +891,81 @@
     }
   }
 
-  async function uploadManagedFile(file) {
-    const uploadTicket = await apiJson("/api/storage/uploads/request-url", {
-      method: "POST",
-      body: JSON.stringify({ name: file.name, size: file.size, content_type: file.type || "application/octet-stream" })
-    });
-    const uploadResponse = await authorizedFetch(uploadTicket.upload_url, {
-      method: "PUT",
-      headers: { "Content-Type": file.type || "application/octet-stream" },
-      body: await file.arrayBuffer()
-    });
-    if (!uploadResponse.ok) {
-      const errorBody = await uploadResponse.json().catch(function () { return {}; });
-      throw new Error(firstText(errorBody.error, "File upload failed."));
-    }
-    return uploadTicket.object_path;
-  }
-
   async function handleProductImportParse() {
     const pasteText = valueById("productImportPaste");
     const file = state.ui.productImportFile;
-    let objectPath = "";
-    let fileName = "";
-    let sourceType = "paste";
-    if (file) {
-      objectPath = await uploadManagedFile(file);
-      fileName = file.name;
-      sourceType = /\.pdf$/i.test(file.name) ? "pdf" : /\.csv$/i.test(file.name) ? "csv" : "xlsx";
-    } else if (!pasteText) {
+
+    if (!file && !pasteText) {
       throw new Error("Choose an import file or paste spreadsheet rows first.");
     }
-    const result = await apiJson("/api/products/imports/parse", {
-      method: "POST",
-      body: JSON.stringify({
-        source_type: sourceType,
-        source_name: fileName || "Pasted spreadsheet data",
-        file_name: fileName || null,
-        object_path: objectPath || null,
-        paste_text: pasteText || null
-      })
-    });
-    state.ui.productImport = {
-      job: result.job,
-      headers: result.headers || [],
-      mapping: result.mapping || {},
-      preview: normalizeList(result.preview || result.rows || []),
-      total: Number(result.job && result.job.total_rows || 0)
-    };
-    setFlash("products", "success", "Preview ready. Review products and click Import Products.");
-    await loadProducts();
+
+    // Show loading state immediately so the user knows something is happening
+    state.ui.productImport = Object.assign({}, state.ui.productImport, { loading: true });
     renderProducts();
+
+    try {
+      let result;
+      if (file) {
+        // Send the file as raw bytes to the combined upload-and-parse endpoint.
+        // This single request eliminates the old two-step upload flow and the
+        // super_admin permission barrier that blocked managers and storekeepers.
+        // It also avoids multi-replica file loss (no temp disk storage needed).
+        const fileBuffer = await file.arrayBuffer();
+        const safeFilename = encodeURIComponent(file.name);
+        const contentType = file.type || "application/octet-stream";
+        const response = await authorizedFetch(
+          "/api/products/imports/upload-and-parse?filename=" + safeFilename,
+          {
+            method: "POST",
+            headers: { "Content-Type": contentType },
+            body: fileBuffer
+          }
+        );
+        if (!response.ok) {
+          const errorBody = await response.json().catch(function () { return {}; });
+          if (response.status === 401) {
+            clearSession();
+            await routeAfterAuthChange({ showExpiredMessage: true });
+            throw new Error("__AUTH_REDIRECT__");
+          }
+          throw new Error(firstText(errorBody.error, errorBody.message, "File upload failed."));
+        }
+        result = await response.json();
+      } else {
+        // Paste-text path: keep existing behaviour
+        result = await apiJson("/api/products/imports/parse", {
+          method: "POST",
+          body: JSON.stringify({
+            source_type: "paste",
+            source_name: "Pasted spreadsheet data",
+            file_name: null,
+            object_path: null,
+            paste_text: pasteText
+          })
+        });
+      }
+
+      state.ui.productImport = {
+        job: result.job,
+        headers: result.headers || [],
+        mapping: result.mapping || {},
+        preview: normalizeList(result.preview || result.rows || []),
+        total: Number(result.job && result.job.total_rows || 0),
+        loading: false
+      };
+      var errorCount = Number(result.job && result.job.error_count || 0);
+      var totalRows = Number(result.job && result.job.total_rows || 0);
+      var successMsg = "Preview ready: " + totalRows + " product" + (totalRows === 1 ? "" : "s") + " found.";
+      if (errorCount) successMsg += " " + errorCount + " row" + (errorCount === 1 ? "" : "s") + " have issues — see below.";
+      successMsg += " Click \u201cImport Products\u201d to save.";
+      setFlash("products", "success", successMsg);
+      await loadProducts();
+      renderProducts();
+    } catch (err) {
+      // Clear loading state before re-throwing so the dropzone shows normally
+      state.ui.productImport = Object.assign({}, state.ui.productImport, { loading: false });
+      throw err;
+    }
   }
 
   async function viewProductImport(id) {
