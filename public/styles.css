@@ -3,6 +3,8 @@
   --orange-dark: #d87912;
   --blue: #083d6d;
   --blue-soft: #0f4f8d;
+  --brand-primary: #083d6d;
+  --brand-secondary: #f7931e;
   --white: #ffffff;
   --gray-50: #f8fafc;
   --gray-100: #f4f6f8;
@@ -380,6 +382,7 @@ label span {
   background: rgba(255, 255, 255, 0.12);
   border-radius: 16px;
   padding: 7px;
+  object-fit: contain;
 }
 
 .sidebar__brand strong,
@@ -1455,6 +1458,46 @@ label span {
 .settings-panels {
   display: grid;
   gap: 20px;
+}
+
+.branding-upload {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border: 1px dashed rgba(8, 61, 109, 0.2);
+  border-radius: 18px;
+  background: rgba(8, 61, 109, 0.04);
+}
+
+.branding-upload__preview {
+  width: 108px;
+  height: 108px;
+  border-radius: 18px;
+  object-fit: contain;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  padding: 10px;
+  flex-shrink: 0;
+}
+
+.branding-upload__meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.branding-upload__hint,
+.branding-upload__status {
+  margin: 10px 0 0;
+  color: var(--gray-500);
+  font-size: 0.9rem;
+}
+
+.branding-upload__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
 }
 
 .stats-inline {

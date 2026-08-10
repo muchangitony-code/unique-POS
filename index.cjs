@@ -71903,13 +71903,77 @@ async function ensureBusinessSettingsWithDefaults() {
 async function getDocSettings() {
   return await ensureBusinessSettingsWithDefaults();
 }
-async function getBranchName(branchId) {
-  if (!branchId) return "Main Branch";
+async function getBranchDetails(branchId) {
+  if (!branchId) return null;
   const [branch] = await db.select().from(branchesTable).where(eq(branchesTable.id, branchId));
+  return branch ?? null;
+}
+async function getBranchName(branchId) {
+  const branch = await getBranchDetails(branchId);
+  if (!branchId) return "Main Branch";
   return branch?.name ?? `Branch ${branchId}`;
 }
 function htmlEscape2(v) {
   return String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function safeHex2(value, fallback) {
+  return value && /^#?[0-9a-fA-F]{6}$/.test(value) ? value.startsWith("#") ? value : `#${value}` : fallback;
+}
+function brandInitials2(name) {
+  const parts = String(name || "UniquePOS").trim().split(/\s+/).filter(Boolean).slice(0, 2);
+  const initials = parts.map((part) => part[0]?.toUpperCase() || "").join("");
+  return initials || "UP";
+}
+function placeholderLogoDataUri(name, primaryColor, secondaryColor) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${primaryColor}"/><stop offset="100%" stop-color="${secondaryColor}"/></linearGradient></defs><rect width="160" height="160" rx="28" fill="url(#g)"/><text x="80" y="94" text-anchor="middle" font-family="Arial, sans-serif" font-size="52" font-weight="700" fill="#ffffff">${htmlEscape2(brandInitials2(name))}</text></svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+function resolveStoredAssetUrl(rawPath) {
+  const raw = String(rawPath || "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("/objects/")) return `/api/storage/objects/${encodeURIComponent(raw.slice("/objects/".length)).replace(/%2F/g, "/")}`;
+  if (raw.startsWith("/api/storage/objects/")) return raw;
+  return "";
+}
+function assetMimeType(rawPath) {
+  const lower = String(rawPath || "").toLowerCase();
+  if (lower.endsWith(".svg")) return "image/svg+xml";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  return "image/png";
+}
+function selectDocumentLogoPath(settings, branch) {
+  return settings?.logoUrl || branch?.logoUrl || null;
+}
+function buildDocumentFooter(settings) {
+  const sections = [
+    settings?.documentFooter || settings?.receiptFooter || "",
+    settings?.invoicePaymentTerms ? `Terms: ${settings.invoicePaymentTerms}` : "",
+    settings?.warrantyText ? `Warranty: ${settings.warrantyText}` : "",
+    settings?.returnPolicy ? `Returns: ${settings.returnPolicy}` : "",
+    settings?.paymentInstructions ? `Payment: ${settings.paymentInstructions}` : ""
+  ].filter(Boolean);
+  return sections.join("\n\n") || "Thank you for your business.";
+}
+function branchDetailsText(branch) {
+  if (!branch) return "";
+  return [
+    branch.name,
+    branch.address,
+    [branch.phone, branch.phone2].filter(Boolean).join(" / "),
+    branch.email,
+    branch.kraPin ? `KRA PIN: ${branch.kraPin}` : ""
+  ].filter(Boolean).join("\n");
+}
+async function loadStoredAssetBuffer(rawPath) {
+  if (!rawPath || !String(rawPath).startsWith("/objects/")) return null;
+  try {
+    const file2 = await objectStorageService.getObjectEntityFile(String(rawPath));
+    const [buf] = await file2.download();
+    return buf;
+  } catch {
+    return null;
+  }
 }
 function dateText2(value) {
   if (!value) return "—";
@@ -71987,11 +72051,14 @@ function assertPdfBuffer(pdf) {
   return pdf;
 }
 function buildDocumentHtml(opts) {
-  const { settings, documentType, documentNumber, partyName, partyEmail, partyPhone, branchName, rows, totals, notes, generatedAt, paper, logoSrc, requestedType } = opts;
+  const { settings, documentType, documentNumber, partyName, partyEmail, partyPhone, branchName, branch, rows, totals, notes, generatedAt, paper, requestedType } = opts;
   const currency = settings.currency || "KES";
-  const logoUrl = logoSrc || normalizeLogoUrl(settings.logoUrl);
-  const logo = logoUrl ? `<img src="${htmlEscape2(logoUrl)}" alt="logo" style="max-height:56px;max-width:160px;object-fit:contain;" />` : "";
+  const primary = safeHex2(settings.primaryColor, "#0F172A");
+  const secondary = safeHex2(settings.secondaryColor, "#38BDF8");
+  const logoPath = selectDocumentLogoPath(settings, branch);
+  const logo = `<img src="${htmlEscape2(resolveStoredAssetUrl(logoPath) || placeholderLogoDataUri(settings.businessName || branchName || "UniquePOS", primary, secondary))}" alt="logo" class="doc-logo" />`;
   const widthCss = paper === "58mm" ? "58mm" : paper === "80mm" ? "80mm" : "210mm";
+  const logoSize = paper === "a4" ? "96px" : paper === "80mm" ? "68px" : "54px";
   const companyName = htmlEscape2(settings.businessName || "UniquePOS");
   const companyAddress = htmlEscape2(settings.businessAddress || "");
   const companyPhone = htmlEscape2([settings.businessPhone, settings.businessPhone2].filter(Boolean).join(" / "));
@@ -71999,29 +72066,36 @@ function buildDocumentHtml(opts) {
   const website = htmlEscape2(settings.website || "");
   const taxPin = htmlEscape2(settings.taxNumber || "");
   const vat = htmlEscape2(settings.vatNumber || "");
-  const footer = htmlEscape2(documentFooterForType(settings, requestedType || String(documentType || "").toLowerCase()));
+  const branchInfo = htmlEscape2(branchDetailsText(branch) || branchName || "Main Branch").replace(/\n/g, "<br/>");
+  const footer = htmlEscape2(buildDocumentFooter(settings)).replace(/\n/g, "<br/>");
   const tableRows = (rows || []).map(
     (row, idx) => `<tr><td>${idx + 1}</td><td>${htmlEscape2(row.description)}</td><td style="text-align:right;">${safeNum(row.quantity).toLocaleString()}</td><td style="text-align:right;">${fmtCurrency2(row.unitPrice, currency)}</td><td style="text-align:right;">${fmtCurrency2(row.total, currency)}</td></tr>`
   ).join("");
+  const notesBlock = htmlEscape2(notes || "").replace(/\n/g, "<br/>");
   return `<!doctype html><html><head><meta charset="utf-8"/><title>${companyName} - ${htmlEscape2(documentType)} ${htmlEscape2(documentNumber || "")}</title><style>
   @page { size: ${paper === "a4" ? "A4" : widthCss} auto; margin: 10mm; }
   body { font-family: Arial, sans-serif; color: #0f172a; }
   .doc { width: min(${widthCss}, 100%); margin: 0 auto; }
-  .head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; border-bottom:1px solid #cbd5e1; padding-bottom:8px; }
+  .head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; border-bottom:2px solid ${secondary}; padding-bottom:10px; }
+  .brand-head { display:flex; gap:12px; align-items:flex-start; }
+  .doc-logo { width:${logoSize}; max-width:100%; max-height:${logoSize}; object-fit:contain; border-radius:12px; background:#fff; }
   .small { color:#475569; font-size:12px; line-height:1.45; }
   .meta { margin:12px 0; font-size:13px; }
   table { width:100%; border-collapse: collapse; font-size:12px; }
   th,td { border:1px solid #cbd5e1; padding:6px; vertical-align:top; }
-  th { background:#f8fafc; text-align:left; }
+  th { background:${primary}; color:#fff; text-align:left; }
   .totals { margin-top:10px; font-size:13px; }
-  .footer { margin-top:14px; border-top:1px dashed #94a3b8; padding-top:8px; font-size:12px; color:#334155; white-space:pre-wrap; }
+  .footer { margin-top:14px; border-top:1px dashed ${secondary}; padding-top:8px; font-size:12px; color:#334155; white-space:pre-wrap; }
   .actions { margin: 14px 0; }
+  .branch-block { margin-top:8px; padding:8px 10px; background:#f8fafc; border-left:4px solid ${secondary}; }
+  .doc-title { margin:0; text-transform:uppercase; color:${primary}; }
   @media print { .actions { display:none; } }
+  @media (max-width: 640px) { .head,.brand-head { flex-direction:column; } .doc-logo { width:min(${logoSize}, 40vw); max-height:min(${logoSize}, 40vw); } }
   </style></head><body><div class="doc">
   <div class="actions"><button onclick="window.print()">Print</button></div>
-  <div class="head"><div>${logo}<h2 style="margin:6px 0 0;">${companyName}</h2><div class="small">${companyAddress}<br/>Tel: ${companyPhone}<br/>Email: ${companyEmail}<br/>Web: ${website}<br/>KRA PIN: ${taxPin}<br/>VAT: ${vat}<br/>Branch: ${htmlEscape2(branchName || "MAIN")}</div></div>
-  <div><h3 style="margin:0;text-transform:uppercase;">${htmlEscape2(documentType)}</h3><div class="small">No: ${htmlEscape2(documentNumber || "—")}<br/>Generated: ${htmlEscape2(generatedAt)}<br/>Party: ${htmlEscape2(partyName || "Walk-in")}<br/>Phone: ${htmlEscape2(partyPhone || "—")}<br/>Email: ${htmlEscape2(partyEmail || "—")}</div></div></div>
-  <div class="meta">${htmlEscape2(notes || "")}</div>
+  <div class="head"><div class="brand-head">${logo}<div><h2 style="margin:0;">${companyName}</h2><div class="small">${companyAddress}<br/>Tel: ${companyPhone}<br/>Email: ${companyEmail}<br/>Web: ${website}<br/>KRA PIN: ${taxPin}<br/>VAT: ${vat}</div><div class="small branch-block"><strong>Branch details</strong><br/>${branchInfo}</div></div></div>
+  <div><h3 class="doc-title">${htmlEscape2(documentType)}</h3><div class="small">No: ${htmlEscape2(documentNumber || "—")}<br/>Generated: ${htmlEscape2(generatedAt)}<br/>Party: ${htmlEscape2(partyName || "Walk-in")}<br/>Phone: ${htmlEscape2(partyPhone || "—")}<br/>Email: ${htmlEscape2(partyEmail || "—")}</div></div></div>
+  <div class="meta">${notesBlock}</div>
   <table><thead><tr><th>#</th><th>Description</th><th>Qty</th><th>Unit</th><th>Total</th></tr></thead><tbody>${tableRows || '<tr><td colspan="5">No line items</td></tr>'}</tbody></table>
   <div class="totals"><strong>Subtotal:</strong> ${fmtCurrency2(totals.subtotal, currency)} &nbsp; <strong>Tax:</strong> ${fmtCurrency2(totals.tax, currency)} &nbsp; <strong>Discount:</strong> ${fmtCurrency2(totals.discount, currency)} &nbsp; <strong>Grand Total:</strong> ${fmtCurrency2(totals.total, currency)}</div>
   <div class="footer">${footer}</div></div></body></html>`;
@@ -72036,6 +72110,7 @@ async function resolveDocumentPayload(req, type, id) {
     if (!invoice || !isBranchInScope(req, invoice.branchId)) return null;
     const items = await db.select().from(invoiceItemsTable).where(eq(invoiceItemsTable.invoiceId, invoice.id));
     const [customer] = invoice.customerId ? await db.select().from(customersTable).where(eq(customersTable.id, invoice.customerId)) : [null];
+    const branch = await getBranchDetails(invoice.branchId);
     const invoiceTotals = {
       subtotal: invoice.subtotal,
       tax: invoice.taxAmount,
@@ -72046,11 +72121,12 @@ async function resolveDocumentPayload(req, type, id) {
       settings,
       documentType: requestedType === "delivery_note" ? "Delivery Note" : requestedType === "credit_note" ? "Credit Note" : "Invoice",
       documentNumber: invoice.invoiceNumber,
-      branchName: await getBranchName(invoice.branchId),
+      branchName: branch?.name ?? await getBranchName(invoice.branchId),
+      branch,
       partyName: customer?.name ?? "Walk-in",
       partyEmail: customer?.email ?? "",
       partyPhone: customer?.phone ?? "",
-      notes: invoice.notes || settings.invoicePaymentTerms || "",
+      notes: [invoice.notes, settings.invoicePaymentTerms].filter(Boolean).join("\n"),
       requestedType,
       rows: await formatDocumentRows(items),
       totals: invoiceTotals
@@ -72061,15 +72137,17 @@ async function resolveDocumentPayload(req, type, id) {
     if (!quotation || !isBranchInScope(req, quotation.branchId)) return null;
     const items = await db.select().from(quotationItemsTable).where(eq(quotationItemsTable.quotationId, quotation.id));
     const [customer] = quotation.customerId ? await db.select().from(customersTable).where(eq(customersTable.id, quotation.customerId)) : [null];
+    const branch = await getBranchDetails(quotation.branchId);
     return {
       settings,
       documentType: "Quotation",
       documentNumber: quotation.quotationNumber,
-      branchName: await getBranchName(quotation.branchId),
+      branchName: branch?.name ?? await getBranchName(quotation.branchId),
+      branch,
       partyName: customer?.name ?? "Walk-in",
       partyEmail: customer?.email ?? "",
       partyPhone: customer?.phone ?? "",
-      notes: [quotation.notes, quotation.paymentTerms].filter(Boolean).join("\n"),
+      notes: [quotation.notes, quotation.paymentTerms, settings.invoicePaymentTerms, settings.quotationValidityDays ? `Quotation validity: ${settings.quotationValidityDays} day(s)` : ""].filter(Boolean).join("\n"),
       requestedType,
       rows: await formatDocumentRows(items),
       totals: { subtotal: quotation.subtotal, tax: quotation.taxAmount, discount: quotation.discountAmount, total: quotation.total }
@@ -72080,11 +72158,13 @@ async function resolveDocumentPayload(req, type, id) {
     if (!sale || !isBranchInScope(req, sale.branchId)) return null;
     const items = await db.select().from(saleItemsTable).where(eq(saleItemsTable.saleId, sale.id));
     const [customer] = sale.customerId ? await db.select().from(customersTable).where(eq(customersTable.id, sale.customerId)) : [null];
+    const branch = await getBranchDetails(sale.branchId);
     return {
       settings,
       documentType: "Receipt",
       documentNumber: sale.receiptNumber,
-      branchName: await getBranchName(sale.branchId),
+      branchName: branch?.name ?? await getBranchName(sale.branchId),
+      branch,
       partyName: customer?.name ?? "Walk-in",
       partyEmail: customer?.email ?? "",
       partyPhone: customer?.phone ?? "",
@@ -72098,11 +72178,13 @@ async function resolveDocumentPayload(req, type, id) {
     const [customer] = await db.select().from(customersTable).where(eq(customersTable.id, id));
     if (!customer || !isBranchInScope(req, customer.branchId)) return null;
     const invoices = await db.select().from(invoicesTable).where(eq(invoicesTable.customerId, id)).orderBy(sql`${invoicesTable.createdAt} desc`).limit(200);
+    const branch = await getBranchDetails(customer.branchId);
     return {
       settings,
       documentType: "Customer Statement",
       documentNumber: `CST-${customer.id}`,
-      branchName: await getBranchName(customer.branchId),
+      branchName: branch?.name ?? await getBranchName(customer.branchId),
+      branch,
       partyName: customer.name,
       partyEmail: customer.email ?? "",
       partyPhone: customer.phone ?? "",
@@ -72121,11 +72203,13 @@ async function resolveDocumentPayload(req, type, id) {
     const [supplier] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, id));
     if (!supplier || !isBranchInScope(req, supplier.branchId)) return null;
     const purchases = await db.select().from(purchasesTable).where(eq(purchasesTable.supplierId, id)).orderBy(sql`${purchasesTable.createdAt} desc`).limit(200);
+    const branch = await getBranchDetails(supplier.branchId);
     return {
       settings,
       documentType: "Supplier Statement",
       documentNumber: `SST-${supplier.id}`,
-      branchName: await getBranchName(supplier.branchId),
+      branchName: branch?.name ?? await getBranchName(supplier.branchId),
+      branch,
       partyName: supplier.name,
       partyEmail: supplier.email ?? "",
       partyPhone: supplier.phone ?? "",
@@ -72145,11 +72229,13 @@ async function resolveDocumentPayload(req, type, id) {
     if (!purchase || !isBranchInScope(req, purchase.branchId)) return null;
     const [supplier] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, purchase.supplierId));
     const items = await db.select().from(purchaseItemsTable).where(eq(purchaseItemsTable.purchaseId, purchase.id));
+    const branch = await getBranchDetails(purchase.branchId);
     return {
       settings,
       documentType: type === "purchase_order" ? "Purchase Order" : "Goods Received Note",
       documentNumber: purchase.purchaseNumber,
-      branchName: await getBranchName(purchase.branchId),
+      branchName: branch?.name ?? await getBranchName(purchase.branchId),
+      branch,
       partyName: supplier?.name ?? "Supplier",
       partyEmail: supplier?.email ?? "",
       partyPhone: supplier?.phone ?? "",
@@ -72163,11 +72249,13 @@ async function resolveDocumentPayload(req, type, id) {
     const [transfer] = await db.select().from(stockTransfersTable).where(eq(stockTransfersTable.id, id));
     if (!transfer || (!isBranchInScope(req, transfer.sourceBranchId) && !isBranchInScope(req, transfer.destinationBranchId))) return null;
     const [product] = await db.select().from(productsTable).where(eq(productsTable.id, transfer.productId));
+    const branch = await getBranchDetails(transfer.sourceBranchId);
     return {
       settings,
       documentType: "Stock Transfer Note",
       documentNumber: transfer.transferNumber,
       branchName: `${await getBranchName(transfer.sourceBranchId)} → ${await getBranchName(transfer.destinationBranchId)}`,
+      branch,
       partyName: "Internal Transfer",
       partyEmail: "",
       partyPhone: "",
@@ -72182,12 +72270,14 @@ async function resolveDocumentPayload(req, type, id) {
     const productIds = movements.map((m) => m.productId).filter(Boolean);
     const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(inArray(productsTable.id, productIds)) : [];
     const map2 = new Map(products.map((p) => [p.id, p.name]));
-    const branchName = movements[0] ? await getBranchName(movements[0].branchId) : "All branches";
+    const branch = movements[0] ? await getBranchDetails(movements[0].branchId) : null;
+    const branchName = branch?.name ?? (movements[0] ? await getBranchName(movements[0].branchId) : "All branches");
     return {
       settings,
       documentType: "Stock Adjustment Report",
       documentNumber: `SAR-${new Date().toISOString().slice(0, 10)}`,
       branchName,
+      branch,
       partyName: "Internal",
       partyEmail: "",
       partyPhone: "",
@@ -72200,7 +72290,14 @@ async function resolveDocumentPayload(req, type, id) {
   return null;
 }
 async function renderPdfBuffer(payload, paper) {
-  const logoBuffer = await loadLogoBuffer(payload.settings.logoUrl);
+  const primary = safeHex2(payload.settings.primaryColor, "#0F172A");
+  const secondary = safeHex2(payload.settings.secondaryColor, "#38BDF8");
+  const logoPath = selectDocumentLogoPath(payload.settings, payload.branch);
+  const logoBuffer = await loadStoredAssetBuffer(logoPath);
+  const footerText = buildDocumentFooter(payload.settings);
+  const branchText = branchDetailsText(payload.branch) || payload.branchName || "Main Branch";
+  const logoSize = paper === "a4" ? 72 : paper === "80mm" ? 54 : 42;
+  const headerHeight = paper === "a4" ? 104 : 90;
   let doc;
   let timeoutTimer;
   return await new Promise((resolve4, reject) => {
@@ -72222,25 +72319,34 @@ async function renderPdfBuffer(payload, paper) {
     doc.on("error", (err) => settle(reject, err));
     doc.on("end", () => settle(resolve4, Buffer.concat(chunks)));
     const currency = payload.settings.currency || "KES";
-    const headerY = doc.y;
-    const headerTextX = logoBuffer ? 112 : 28;
+    const left = doc.page.margins.left;
+    const top = doc.page.margins.top;
+    const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    doc.roundedRect(left, top, contentWidth, headerHeight, 16).fill(primary);
+    const logoX = left + 14;
+    const logoY = top + 16;
     if (logoBuffer) {
       try {
-        doc.image(logoBuffer, 28, headerY, { fit: [70, 70], align: "left" });
+        doc.image(logoBuffer, logoX, logoY, { fit: [logoSize, logoSize], align: "center", valign: "center" });
       } catch {
+        doc.roundedRect(logoX, logoY, logoSize, logoSize, 12).fill(secondary);
+        doc.fillColor("white").font("Helvetica-Bold").fontSize(Math.max(14, Math.round(logoSize / 2.2))).text(brandInitials2(payload.settings.businessName), logoX, logoY + logoSize / 3, { width: logoSize, align: "center" });
       }
+    } else {
+      doc.roundedRect(logoX, logoY, logoSize, logoSize, 12).fill(secondary);
+      doc.fillColor("white").font("Helvetica-Bold").fontSize(Math.max(14, Math.round(logoSize / 2.2))).text(brandInitials2(payload.settings.businessName), logoX, logoY + logoSize / 3, { width: logoSize, align: "center" });
     }
-    doc.fontSize(16).text(payload.settings.businessName || "UniquePOS", headerTextX, headerY, { align: "left" });
-    doc.fontSize(10).text(`Address: ${payload.settings.businessAddress || "-"}`, headerTextX);
-    doc.text(`Tel: ${[payload.settings.businessPhone, payload.settings.businessPhone2].filter(Boolean).join(" / ") || "-"}`, headerTextX);
-    doc.text(`Email: ${payload.settings.businessEmail || "-"}  Web: ${payload.settings.website || "-"}`, headerTextX);
-    doc.text(`KRA PIN: ${payload.settings.taxNumber || "-"}   VAT: ${payload.settings.vatNumber || "-"}`, headerTextX);
-    if (logoBuffer) {
-      doc.y = Math.max(doc.y, headerY + 74);
-    }
-    doc.moveDown(0.5);
-    doc.fontSize(13).text(`${payload.documentType.toUpperCase()}  ${payload.documentNumber || ""}`, { align: "left" });
-    doc.fontSize(10).text(`Branch: ${payload.branchName}  Generated: ${dateText2(/* @__PURE__ */ new Date())}`);
+    const textX = logoX + logoSize + 16;
+    doc.fillColor("white").font("Helvetica-Bold").fontSize(paper === "a4" ? 18 : 13).text(payload.settings.businessName || "UniquePOS", textX, top + 14, { width: contentWidth - (textX - left) - 12 });
+    doc.font("Helvetica").fontSize(9).fillColor("#D6E4F0").text(payload.settings.businessAddress || "-", textX, top + 40, { width: contentWidth - (textX - left) - 12 });
+    doc.text(`Tel: ${[payload.settings.businessPhone, payload.settings.businessPhone2].filter(Boolean).join(" / ") || "-"}`, textX, doc.y + 2, { width: contentWidth - (textX - left) - 12 });
+    doc.text(`Email: ${payload.settings.businessEmail || "-"}  Web: ${payload.settings.website || "-"}`, textX, doc.y + 2, { width: contentWidth - (textX - left) - 12 });
+    doc.text(`KRA PIN: ${payload.settings.taxNumber || "-"}   VAT: ${payload.settings.vatNumber || "-"}`, textX, doc.y + 2, { width: contentWidth - (textX - left) - 12 });
+    doc.y = top + headerHeight + 12;
+    doc.fillColor(primary).font("Helvetica-Bold").fontSize(13).text(`${payload.documentType.toUpperCase()}  ${payload.documentNumber || ""}`, { align: "left" });
+    doc.moveDown(0.2);
+    doc.font("Helvetica").fontSize(10).fillColor("#111827").text(`Branch: ${payload.branchName}  Generated: ${dateText2(/* @__PURE__ */ new Date())}`);
+    doc.text(branchText.replace(/\n/g, " • "));
     doc.text(`Party: ${payload.partyName || "Walk-in"}  Phone: ${payload.partyPhone || "-"}  Email: ${payload.partyEmail || "-"}`);
     doc.moveDown(0.3);
     (payload.rows || []).forEach((row, index) => {
@@ -72250,11 +72356,13 @@ async function renderPdfBuffer(payload, paper) {
     doc.fontSize(10).text(`Subtotal: ${fmtCurrency2(payload.totals.subtotal, currency)}`);
     doc.text(`Tax: ${fmtCurrency2(payload.totals.tax, currency)}`);
     doc.text(`Discount: ${fmtCurrency2(payload.totals.discount, currency)}`);
-    doc.fontSize(11).text(`Grand Total: ${fmtCurrency2(payload.totals.total, currency)}`);
+    doc.fillColor(primary).font("Helvetica-Bold").fontSize(11).text(`Grand Total: ${fmtCurrency2(payload.totals.total, currency)}`);
     doc.moveDown(0.4);
-    if (payload.notes) doc.fontSize(9).text(`Notes: ${payload.notes}`);
+    doc.fillColor("#111827").font("Helvetica").fontSize(9);
+    if (payload.notes) doc.text(`Notes: ${payload.notes}`);
     doc.moveDown(0.4);
-    doc.fontSize(9).text(documentFooterForType(payload.settings, payload.requestedType || String(payload.documentType || "").toLowerCase()));
+    doc.fillColor(secondary).font("Helvetica-Bold").fontSize(9).text("Terms, warranty & footer");
+    doc.fillColor("#111827").font("Helvetica").fontSize(9).text(footerText);
     doc.end();
   });
 }
@@ -72343,22 +72451,34 @@ router17.post("/documents/:type/:id/email", async (req, res) => {
       from: payload.settings.smtpFrom ?? payload.settings.smtpUser ?? ""
     });
     const subject = `${payload.settings.businessName || "UniquePOS"} ${payload.documentType} ${payload.documentNumber || ""}`.trim();
-    const emailLogoUrl = absoluteLogoUrl(req, payload.settings.logoUrl);
+    const emailPrimary = safeHex2(payload.settings.primaryColor, "#0F172A");
+    const emailSecondary = safeHex2(payload.settings.secondaryColor, "#38BDF8");
+    const emailLogoPath = selectDocumentLogoPath(payload.settings, payload.branch);
+    const emailLogoBuffer = await loadStoredAssetBuffer(emailLogoPath);
+    const emailLogoSrc = emailLogoBuffer ? `data:${assetMimeType(emailLogoPath)};base64,${emailLogoBuffer.toString("base64")}` : resolveStoredAssetUrl(emailLogoPath) || placeholderLogoDataUri(payload.settings.businessName || payload.branchName || "UniquePOS", emailPrimary, emailSecondary);
+    const emailFooter = htmlEscape2(buildDocumentFooter(payload.settings)).replace(/\n/g, "<br/>");
+    const emailBranch = htmlEscape2(branchDetailsText(payload.branch) || payload.branchName || "Main Branch").replace(/\n/g, "<br/>");
     const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5;">
-  <p style="margin:0 0 16px;"><img src="${htmlEscape2(emailLogoUrl)}" alt="Company logo" style="max-height:80px;max-width:220px;object-fit:contain;" /></p>
-  <h2 style="margin:0 0 10px;">${htmlEscape2(payload.documentType)} ${htmlEscape2(payload.documentNumber || "")}</h2>
+  <div style="max-width:680px;margin:0 auto;border:1px solid #dbe4ef;border-radius:18px;overflow:hidden;">
+  <div style="background:${emailPrimary};padding:20px;color:#fff;">
+  <table role="presentation" style="width:100%;border-collapse:collapse;"><tr><td style="vertical-align:top;width:84px;"><img src="${emailLogoSrc}" alt="Company logo" style="width:72px;height:72px;object-fit:contain;border-radius:14px;background:#fff;display:block;" /></td><td style="vertical-align:top;padding-left:12px;"><h2 style="margin:0;color:#fff;">${htmlEscape2(payload.settings.businessName || "UniquePOS")}</h2><div style="font-size:13px;line-height:1.5;color:#d6e4f0;">${htmlEscape2(payload.settings.businessAddress || "")}<br/>Tel: ${htmlEscape2([payload.settings.businessPhone, payload.settings.businessPhone2].filter(Boolean).join(" / ") || "-")}<br/>Email: ${htmlEscape2(payload.settings.businessEmail || "-")}<br/>Web: ${htmlEscape2(payload.settings.website || "-")}<br/>KRA PIN: ${htmlEscape2(payload.settings.taxNumber || "-")}<br/>VAT: ${htmlEscape2(payload.settings.vatNumber || "-")}</div></td></tr></table>
+  </div>
+  <div style="padding:20px 22px;">
+  <h2 style="margin:0 0 10px;color:${emailPrimary};">${htmlEscape2(payload.documentType)} ${htmlEscape2(payload.documentNumber || "")}</h2>
   <p>Hello ${htmlEscape2(payload.partyName || "Customer")},</p>
   <p>Please find your ${htmlEscape2(payload.documentType.toLowerCase())} attached as PDF.</p>
   <p>Total: <strong>${fmtCurrency2(payload.totals.total, payload.settings.currency || "KES")}</strong></p>
-  <p>${htmlEscape2(payload.settings.businessName || "UniquePOS")}<br/>${htmlEscape2(payload.settings.businessPhone || "")}</p>
-  </body></html>`;
+  <p style="margin:0 0 14px;"><strong>Branch details</strong><br/>${emailBranch}</p>
+  <div style="padding:14px 16px;background:#f8fafc;border-left:4px solid ${emailSecondary};font-size:13px;">${emailFooter}</div>
+  <p style="margin:16px 0 0;">${htmlEscape2(payload.settings.businessName || "UniquePOS")}<br/>${htmlEscape2(payload.settings.businessPhone || "")}</p>
+  </div></div></body></html>`;
     const fileBase = `${type}-${payload.documentNumber || id}`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
     await transport.sendMail({
       from: payload.settings.smtpFrom || payload.settings.smtpUser,
       to,
       subject,
       html,
-      text: `${payload.documentType} ${payload.documentNumber || ""}\nTotal: ${fmtCurrency2(payload.totals.total, payload.settings.currency || "KES")}`,
+      text: `${payload.documentType} ${payload.documentNumber || ""}\nTotal: ${fmtCurrency2(payload.totals.total, payload.settings.currency || "KES")}\nBranch: ${branchDetailsText(payload.branch) || payload.branchName || "Main Branch"}\n\n${buildDocumentFooter(payload.settings)}`,
       attachments: [{ filename: `${fileBase}.pdf`, content: pdf, contentType: "application/pdf" }]
     });
     await logAudit(req, {
@@ -73263,8 +73383,14 @@ router20.get("/audit-log/export-pdf", async (req, res) => {
       doc.image(logoBuffer, 40, 15, { fit: [40, 40] });
       textX = 92;
     } catch {
+      logoBuffer = null;
       textX = 40;
     }
+  }
+  if (!logoBuffer) {
+    doc.roundedRect(40, 15, 40, 40, 10).fill(GOLD);
+    doc.fillColor("white").font("Helvetica-Bold").fontSize(16).text(brandInitials2(companyName), 40, 28, { width: 40, align: "center" });
+    textX = 92;
   }
   doc.fillColor("white").font("Helvetica-Bold").fontSize(18).text(companyName, textX, 20);
   const contactParts = [companyPhone, companyEmail].filter(Boolean);

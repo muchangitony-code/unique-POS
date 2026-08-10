@@ -138,6 +138,8 @@
     loginShell: document.getElementById("loginShell"),
     appShell: document.getElementById("appShell"),
     apiStatus: document.getElementById("apiStatus"),
+    brandMark: document.getElementById("brandMark"),
+    brandPillLabel: document.getElementById("brandPillLabel"),
     brandHeadline: document.getElementById("brandHeadline"),
     brandSummary: document.getElementById("brandSummary"),
     loginForm: document.getElementById("loginForm"),
@@ -149,6 +151,7 @@
     loginMessage: document.getElementById("loginMessage"),
     sidebar: document.getElementById("sidebar"),
     sidebarNav: document.getElementById("sidebarNav"),
+    sidebarLogo: document.getElementById("sidebarLogo"),
     sidebarBrandName: document.getElementById("sidebarBrandName"),
     sidebarUserInitials: document.getElementById("sidebarUserInitials"),
     sidebarUserName: document.getElementById("sidebarUserName"),
@@ -480,6 +483,7 @@
       state.branding = Object.assign({}, DEFAULT_BRANDING);
     }
     document.title = state.branding.business_name || DEFAULT_BRANDING.business_name;
+    els.brandPillLabel.textContent = state.branding.business_name || DEFAULT_BRANDING.business_name;
     els.brandHeadline.textContent = state.branding.business_name || DEFAULT_BRANDING.business_name;
     els.brandSummary.textContent = firstText(
       state.branding.tagline,
@@ -487,6 +491,9 @@
       DEFAULT_BRANDING.tagline
     );
     els.sidebarBrandName.textContent = state.branding.business_name || DEFAULT_BRANDING.business_name;
+    applyBrandTheme(state.branding);
+    applyBrandLogo(els.brandMark, state.branding);
+    applyBrandLogo(els.sidebarLogo, state.branding);
   }
 
   async function loadTopbarReferenceData() {
@@ -1533,10 +1540,11 @@
     const branding = Object.assign({}, state.branding, data.branding || {});
     els.viewRoot.innerHTML = [
       '<div class="settings-panels">',
-      '<section class="card section-card"><div class="section-head"><div><h3>Business Settings</h3><p>Primary business identity used across transactions.</p></div></div><form id="settingsBusinessForm" class="form-grid two"><label><span>Business Name</span><input name="business_name" value="' + escapeAttr(firstText(settings.business_name, branding.business_name, DEFAULT_BRANDING.business_name)) + '" /></label><label><span>Currency</span><input name="currency" value="' + escapeAttr(firstText(settings.currency, 'KES')) + '" /></label><label><span>Phone</span><input name="business_phone" value="' + escapeAttr(firstText(settings.business_phone, branding.business_phone, DEFAULT_BRANDING.business_phone)) + '" /></label><label><span>Email</span><input name="business_email" value="' + escapeAttr(firstText(settings.business_email, branding.business_email, DEFAULT_BRANDING.business_email)) + '" /></label><label class="form-span-2"><span>Address</span><textarea name="business_address">' + escapeHtml(firstText(settings.business_address, branding.business_address, DEFAULT_BRANDING.business_address)) + '</textarea></label><div class="form-span-2"><button class="btn btn-primary" type="submit">Save Business Settings</button></div></form></section>',
-      '<section class="card section-card"><div class="section-head"><div><h3>Branding</h3><p>Document header and front-end branding values.</p></div></div><form id="settingsBrandingForm" class="form-grid two"><label><span>Display Name</span><input name="business_name" value="' + escapeAttr(firstText(branding.business_name, DEFAULT_BRANDING.business_name)) + '" /></label><label><span>Tagline</span><input name="tagline" value="' + escapeAttr(firstText(branding.tagline, branding.description, DEFAULT_BRANDING.tagline)) + '" /></label><label><span>Phone</span><input name="business_phone" value="' + escapeAttr(firstText(branding.business_phone, DEFAULT_BRANDING.business_phone)) + '" /></label><label><span>Email</span><input name="business_email" value="' + escapeAttr(firstText(branding.business_email, DEFAULT_BRANDING.business_email)) + '" /></label><label class="form-span-2"><span>Address</span><textarea name="business_address">' + escapeHtml(firstText(branding.business_address, DEFAULT_BRANDING.business_address)) + '</textarea></label><div class="form-span-2"><button class="btn btn-primary" type="submit">Save Branding</button></div></form></section>',
+      '<section class="card section-card"><div class="section-head"><div><h3>Business Settings</h3><p>Primary business identity used across transactions.</p></div></div><form id="settingsBusinessForm" class="form-grid two"><label><span>Business Name</span><input name="business_name" value="' + escapeAttr(firstText(settings.business_name, branding.business_name, DEFAULT_BRANDING.business_name)) + '" /></label><label><span>Currency</span><input name="currency" value="' + escapeAttr(firstText(settings.currency, "KES")) + '" /></label><label><span>Currency Symbol</span><input name="currency_symbol" value="' + escapeAttr(firstText(settings.currency_symbol, "")) + '" /></label><label><span>Primary Phone</span><input name="business_phone" value="' + escapeAttr(firstText(settings.business_phone, branding.business_phone, DEFAULT_BRANDING.business_phone)) + '" /></label><label><span>Alternative Phone</span><input name="business_phone2" value="' + escapeAttr(firstText(settings.business_phone2, branding.business_phone2, "")) + '" /></label><label><span>Business Email</span><input name="business_email" type="email" value="' + escapeAttr(firstText(settings.business_email, branding.business_email, DEFAULT_BRANDING.business_email)) + '" /></label><label><span>KRA PIN / Tax PIN</span><input name="tax_number" value="' + escapeAttr(firstText(settings.tax_number, branding.tax_number, "")) + '" /></label><label><span>Country</span><input name="country" value="' + escapeAttr(firstText(settings.country, "")) + '" /></label><label><span>Timezone</span><input name="timezone" value="' + escapeAttr(firstText(settings.timezone, "")) + '" /></label><label><span>SMTP Host</span><input name="smtp_host" value="' + escapeAttr(firstText(settings.smtp_host, "")) + '" /></label><label><span>SMTP Port</span><input name="smtp_port" type="number" min="1" step="1" value="' + escapeAttr(firstText(settings.smtp_port, "587")) + '" /></label><label><span>SMTP User</span><input name="smtp_user" value="' + escapeAttr(firstText(settings.smtp_user, "")) + '" /></label><label><span>SMTP From</span><input name="smtp_from" type="email" value="' + escapeAttr(firstText(settings.smtp_from, "")) + '" /></label><label class="form-span-2"><span>Address</span><textarea name="business_address">' + escapeHtml(firstText(settings.business_address, branding.business_address, DEFAULT_BRANDING.business_address)) + '</textarea></label><label class="form-span-2"><span>Receipt Footer</span><textarea name="receipt_footer">' + escapeHtml(firstText(settings.receipt_footer, "")) + '</textarea></label><div class="form-span-2"><button class="btn btn-primary" type="submit">Save Business Settings</button></div></form></section>',
+      '<section class="card section-card"><div class="section-head"><div><h3>Branding</h3><p>Document header, logo, colours and customer-facing document text.</p></div></div><form id="settingsBrandingForm" class="form-grid two"><label><span>Display Name</span><input name="business_name" value="' + escapeAttr(firstText(branding.business_name, DEFAULT_BRANDING.business_name)) + '" /></label><label><span>Tagline</span><input name="tagline" value="' + escapeAttr(firstText(branding.tagline, branding.description, DEFAULT_BRANDING.tagline)) + '" /></label><label><span>Website</span><input name="website" value="' + escapeAttr(firstText(branding.website, "")) + '" /></label><label><span>VAT Number</span><input name="vat_number" value="' + escapeAttr(firstText(branding.vat_number, "")) + '" /></label><label><span>Primary Colour</span><input name="primary_color" value="' + escapeAttr(firstText(branding.primary_color, "#083d6d")) + '" /></label><label><span>Secondary Colour</span><input name="secondary_color" value="' + escapeAttr(firstText(branding.secondary_color, "#f7931e")) + '" /></label><label><span>Document Phone</span><input name="business_phone" value="' + escapeAttr(firstText(branding.business_phone, settings.business_phone, DEFAULT_BRANDING.business_phone)) + '" /></label><label><span>Document Email</span><input name="business_email" type="email" value="' + escapeAttr(firstText(branding.business_email, settings.business_email, DEFAULT_BRANDING.business_email)) + '" /></label><label class="form-span-2"><span>Document Address</span><textarea name="business_address">' + escapeHtml(firstText(branding.business_address, settings.business_address, DEFAULT_BRANDING.business_address)) + '</textarea></label><label class="form-span-2"><span>Company Logo</span><input type="hidden" name="logo_url" value="' + escapeAttr(firstText(branding.logo_url, branding.logoUrl, "")) + '" /><div class="branding-upload"><img id="brandingLogoPreview" class="branding-upload__preview" alt="Logo preview" /><div class="branding-upload__meta"><input id="brandingLogoFile" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" /><p class="branding-upload__hint">Upload PNG, JPG, WebP, or SVG up to 2 MB. Stored logos are reused in the UI, previews, PDFs, and emails.</p><div class="branding-upload__actions"><button class="btn btn-outline" id="brandingLogoUploadBtn" type="button">Upload selected logo</button><button class="btn btn-outline" id="brandingLogoClearBtn" type="button">Use placeholder</button></div><div class="branding-upload__status" id="brandingLogoStatus">Current logo stays active until you save branding.</div></div></div></label><label><span>Quotation Validity Days</span><input name="quotation_validity_days" type="number" min="1" step="1" value="' + escapeAttr(firstText(branding.quotation_validity_days, "30")) + '" /></label><label><span>Footer Text</span><input name="document_footer" value="' + escapeAttr(firstText(branding.document_footer, "")) + '" /></label><label class="form-span-2"><span>Invoice Terms &amp; Conditions</span><textarea name="invoice_payment_terms">' + escapeHtml(firstText(branding.invoice_payment_terms, "")) + '</textarea></label><label class="form-span-2"><span>Warranty Text</span><textarea name="warranty_text">' + escapeHtml(firstText(branding.warranty_text, "")) + '</textarea></label><label class="form-span-2"><span>Return Policy</span><textarea name="return_policy">' + escapeHtml(firstText(branding.return_policy, "")) + '</textarea></label><label class="form-span-2"><span>Payment Instructions</span><textarea name="payment_instructions">' + escapeHtml(firstText(branding.payment_instructions, "")) + '</textarea></label><div class="form-span-2"><button class="btn btn-primary" type="submit">Save Branding</button></div></form></section>',
       '</div>'
     ].join("");
+    bindBrandingUploadControls();
   }
 
   function renderDashboardPrimaryKpis(stats) {
@@ -2262,6 +2270,8 @@
   async function handleSettingsBrandingSubmit(event) {
     event.preventDefault();
     const payload = formToObject(event.target);
+    const logoField = event.target.elements.logo_url;
+    payload.logo_url = logoField ? String(logoField.value || "") : "";
     try {
       await apiJson("/api/settings/branding", { method: "PATCH", body: JSON.stringify(payload) });
       await Promise.all([loadBranding(), loadSettingsData()]);
@@ -2571,6 +2581,149 @@
     if (text.startsWith('/')) return text;
     if (/^https?:\/\//i.test(text)) return text;
     return '';
+  }
+
+  function normalizeHexColor(value, fallback) {
+    const text = String(value || "").trim();
+    if (/^#?[0-9a-fA-F]{6}$/.test(text)) return text.charAt(0) === "#" ? text : "#" + text;
+    return fallback;
+  }
+
+  function resolveBrandAssetUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (raw.indexOf("/objects/") === 0) return "/api/storage/objects/" + encodeURIComponent(raw.slice("/objects/".length)).replace(/%2F/g, "/");
+    if (raw.indexOf("/api/storage/objects/") === 0) return raw;
+    return "";
+  }
+
+  function brandingInitials(name) {
+    const text = String(firstText(name, "UniquePOS")).trim();
+    const parts = text.split(/\s+/).filter(Boolean).slice(0, 2);
+    const initials = parts.map(function (part) { return part.charAt(0).toUpperCase(); }).join("");
+    return initials || "UP";
+  }
+
+  function buildBrandPlaceholder(branding) {
+    const primary = normalizeHexColor(firstText(branding && (branding.primary_color || branding.primaryColor), "#083d6d"), "#083d6d");
+    const secondary = normalizeHexColor(firstText(branding && (branding.secondary_color || branding.secondaryColor), "#f7931e"), "#f7931e");
+    const label = escapeHtml(brandingInitials(branding && (branding.business_name || branding.businessName)));
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0%" stop-color="' + primary + '"/><stop offset="100%" stop-color="' + secondary + '"/></linearGradient></defs><rect width="160" height="160" rx="28" fill="url(#g)"/><text x="80" y="94" text-anchor="middle" font-family="Arial, sans-serif" font-size="52" font-weight="700" fill="#ffffff">' + label + '</text></svg>';
+    return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
+  }
+
+  function buildBrandLogoUrl(branding) {
+    return resolveBrandAssetUrl(firstText(branding && branding.logo_url, branding && branding.logoUrl, ""));
+  }
+
+  function buildBrandLogoSrc(branding) {
+    return buildBrandLogoUrl(branding) || buildBrandPlaceholder(branding || state.branding || {});
+  }
+
+  function applyBrandTheme(branding) {
+    const root = document.documentElement;
+    const primary = normalizeHexColor(firstText(branding && (branding.primary_color || branding.primaryColor), "#083d6d"), "#083d6d");
+    const secondary = normalizeHexColor(firstText(branding && (branding.secondary_color || branding.secondaryColor), "#f7931e"), "#f7931e");
+    root.style.setProperty("--brand-primary", primary);
+    root.style.setProperty("--brand-secondary", secondary);
+    root.style.setProperty("--blue", primary);
+    root.style.setProperty("--blue-soft", primary);
+    root.style.setProperty("--orange", secondary);
+    root.style.setProperty("--orange-dark", secondary);
+  }
+
+  function applyBrandLogo(node, branding) {
+    if (!node) return;
+    const activeBranding = branding || state.branding || {};
+    node.src = buildBrandLogoSrc(activeBranding);
+    node.alt = firstText(activeBranding.business_name, activeBranding.businessName, "Company") + " logo";
+    node.onerror = function () {
+      node.onerror = null;
+      node.src = buildBrandPlaceholder(activeBranding);
+    };
+  }
+
+  function brandingLogoElements() {
+    const form = document.getElementById("settingsBrandingForm");
+    return {
+      hidden: form ? form.elements.logo_url : null,
+      preview: document.getElementById("brandingLogoPreview"),
+      file: document.getElementById("brandingLogoFile"),
+      status: document.getElementById("brandingLogoStatus")
+    };
+  }
+
+  function setBrandingLogoStatus(message) {
+    const elements = brandingLogoElements();
+    if (elements.status) elements.status.textContent = message;
+  }
+
+  function syncBrandingLogoPreview() {
+    const elements = brandingLogoElements();
+    if (!elements.preview) return;
+    const nextBranding = Object.assign({}, state.branding, {
+      logo_url: elements.hidden ? elements.hidden.value : "",
+      logoUrl: elements.hidden ? elements.hidden.value : ""
+    });
+    applyBrandLogo(elements.preview, nextBranding);
+  }
+
+  function bindBrandingUploadControls() {
+    const uploadButton = document.getElementById("brandingLogoUploadBtn");
+    const clearButton = document.getElementById("brandingLogoClearBtn");
+    syncBrandingLogoPreview();
+    if (uploadButton && !uploadButton.dataset.bound) {
+      uploadButton.dataset.bound = "true";
+      uploadButton.addEventListener("click", function () {
+        uploadBrandingLogo().catch(function (error) {
+          showToast(error && error.message ? error.message : "Unable to upload logo.", "error");
+        });
+      });
+    }
+    if (clearButton && !clearButton.dataset.bound) {
+      clearButton.dataset.bound = "true";
+      clearButton.addEventListener("click", function () {
+        const elements = brandingLogoElements();
+        if (elements.hidden) elements.hidden.value = "";
+        if (elements.file) elements.file.value = "";
+        syncBrandingLogoPreview();
+        setBrandingLogoStatus("Placeholder selected. Save branding to remove the uploaded logo everywhere.");
+      });
+    }
+  }
+
+  async function uploadBrandingLogo() {
+    const elements = brandingLogoElements();
+    const file = elements.file && elements.file.files && elements.file.files[0];
+    if (!file) throw new Error("Choose an image file first.");
+    if (file.size > 2 * 1024 * 1024) throw new Error("Logo image must be 2 MB or smaller.");
+    if (!/^image\/(png|jpeg|webp|svg\+xml)$/i.test(file.type || "")) throw new Error("Logo image must be PNG, JPG, WebP, or SVG.");
+    setBrandingLogoStatus("Uploading logo…");
+    const upload = await apiJson("/api/storage/uploads/request-url", {
+      method: "POST",
+      body: JSON.stringify({
+        name: file.name,
+        size: file.size,
+        content_type: file.type || "application/octet-stream"
+      })
+    });
+    const response = await fetch(upload.upload_url, {
+      method: "PUT",
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+      body: file
+    });
+    if (!response.ok) {
+      let message = "Upload failed.";
+      try {
+        const body = await response.json();
+        message = firstText(body.error, body.message, message);
+      } catch (_error) {}
+      throw new Error(message);
+    }
+    if (elements.hidden) elements.hidden.value = upload.object_path;
+    if (elements.file) elements.file.value = "";
+    syncBrandingLogoPreview();
+    setBrandingLogoStatus("Logo uploaded. Save branding to publish it across the POS.");
   }
 
   function clampMoney(value) {
