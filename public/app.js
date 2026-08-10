@@ -509,7 +509,7 @@
           '</div></section>' +
         '</div>' : "",
       productsView === "import" ? renderProductBulkToolsCard(data) + renderProductImportPreviewCard() + renderProductImportHistoryCard(data) : "",
-      renderTableCard(productsView === "list" ? "Product List" : "Product catalogue", ["", "Code", "Name", "Category", "Brand", "Stock", "Price", "Actions"], (data.products || []).map(function (product) {
+      productsView === "list" ? renderTableCard("Product List", ["", "Code", "Name", "Category", "Brand", "Stock", "Price", "Actions"], (data.products || []).map(function (product) {
         return [
           '<input type="checkbox" class="js-product-select" data-id="' + escapeAttr(product.id) + '"' + (state.ui.selectedProducts[String(product.id)] ? ' checked' : '') + ' />',
           escapeHtml(firstText(product.product_code, "—")),
@@ -525,7 +525,7 @@
             product.barcode ? { cls: "js-label-product", label: "Label PDF", id: product.id, tone: "secondary" } : null
           ])
         ];
-      }), "No products available.")
+      }), "No products available.") : ""
     ].join("");
 
     bindRowActions(body, {
@@ -622,7 +622,7 @@
     const info = state.ui.productImport || {};
     const mapping = info.mapping || {};
     const headers = info.headers || [];
-    const importStarted = Boolean(info.job && ["queued", "processing", "completed"].includes(info.job.status));
+    const importStarted = Boolean(info.job && ["queued", "processing"].includes(info.job.status));
     return '<section class="card"><div class="section-head"><h3>Import products</h3></div><div class="stack gap-lg">' +
       '<div class="stack gap-sm">' +
         '<h4>1) Upload file</h4>' +
@@ -693,12 +693,13 @@
             escapeHtml(firstText(row.status, "preview"))
           ];
         }), "No preview rows available.") +
-        renderTableCard("3) Rows with issues", ["Row", "What needs fixing"], errorRows.slice(0, 25).map(function (row) {
+        '<div><h4>3) Rows with issues</h4>' +
+        renderTable(["Row", "What needs fixing"], errorRows.slice(0, 25).map(function (row) {
           return [
             escapeHtml(String(row.row_number)),
             escapeHtml((row.validation_errors || []).join(" ").replace(/\s+/g, " "))
           ];
-        }), "No row errors found.") +
+        }), "No row errors found.") + '</div>' +
         renderProductImportSummaryCard(info.job) +
       '</div></section>';
   }
@@ -992,7 +993,7 @@
         if (result.job && !["queued", "processing"].includes(result.job.status)) {
           stopProductImportRefresh();
           state.ui.productsView = "list";
-          setFlash("products", "success", "Import finished. Imported " + Number(result.job.created_count || 0) + ", updated " + Number(result.job.updated_count || 0) + ", skipped " + Number(result.job.skipped_rows || 0) + ", errors " + Number(result.job.error_count || 0) + ".");
+          setFlash("products", "success", "Import finished. Imported " + Number(result.job.created_count || 0) + ", updated " + Number(result.job.updated_count || 0) + ", skipped " + Number(result.job.skipped_rows || 0) + ", with " + Number(result.job.error_count || 0) + " errors.");
           loadProducts().then(renderProducts);
           return;
         }
