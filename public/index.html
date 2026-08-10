@@ -144,12 +144,25 @@
               />
             </label>
 
-            <select id="branchSelect" class="topbar-select" aria-label="Branch selector">
-              <option>Main Branch</option>
-            </select>
-            <select id="userSelect" class="topbar-select" aria-label="User selector">
-              <option>Admin</option>
-            </select>
+            <div class="topbar-select-group">
+              <label class="topbar-select-field">
+                <span>Branch</span>
+                <select id="branchSelect" class="topbar-select" aria-label="Branch selector">
+                  <option>Main Branch</option>
+                </select>
+              </label>
+              <label class="topbar-select-field">
+                <span>User</span>
+                <select id="userSelect" class="topbar-select" aria-label="User selector">
+                  <option>Admin</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="topbar-clock" aria-live="polite">
+              <span id="topbarDate">Saturday, 10 Aug 2026</span>
+              <strong id="topbarTime">12:45 PM</strong>
+            </div>
 
             <button class="icon-btn" data-action="notify" aria-label="Notifications">
               <i class="fa-regular fa-bell"></i>

@@ -120,6 +120,8 @@
     viewRoot: document.getElementById("viewRoot"),
     branchSelect: document.getElementById("branchSelect"),
     userSelect: document.getElementById("userSelect"),
+    topbarDate: document.getElementById("topbarDate"),
+    topbarTime: document.getElementById("topbarTime"),
     globalSearchInput: document.getElementById("globalSearchInput"),
     sidebarToggle: document.getElementById("sidebarToggle"),
     modalOverlay: document.getElementById("modalOverlay"),
@@ -136,6 +138,8 @@
   async function init() {
     renderSidebar();
     bindEvents();
+    updateTopbarClock();
+    window.setInterval(updateTopbarClock, 1000);
     await Promise.all([loadHealth(), loadBranding()]);
     if (state.token) await refreshSession();
     if (state.user) {
@@ -458,6 +462,24 @@
     }).join("");
   }
 
+  function updateTopbarClock() {
+    const now = new Date();
+    if (els.topbarDate) {
+      els.topbarDate.textContent = now.toLocaleDateString(undefined, {
+        weekday: "long",
+        day: "numeric",
+        month: "short",
+        year: "numeric"
+      });
+    }
+    if (els.topbarTime) {
+      els.topbarTime.textContent = now.toLocaleTimeString(undefined, {
+        hour: "numeric",
+        minute: "2-digit"
+      });
+    }
+  }
+
   function renderTopbarSelectors() {
     const branchOptions = state.branches.length
       ? state.branches.map(function (branch, index) {
@@ -711,19 +733,23 @@
 
   function renderDashboard() {
     const data = state.cache.dashboard || {};
-    const inventory = data.inventory || [];
     const recentSales = applySearch(data.sales || [], state.search, ["invoice_number", "customer_name", "payment_method", "status"]);
     const topProducts = applySearch(data.topProducts || [], state.search, ["product_name", "name"]);
     const stats = computeDashboardStats(data);
 
     els.viewRoot.innerHTML = [
-      '<div class="dashboard-grid">',
+      renderWorkspaceHero(),
+      '<div class="dashboard-showcase">',
+      '<div class="dashboard-main">',
       renderDashboardPrimaryKpis(stats),
       renderDashboardSecondaryKpis(stats),
+      '<div class="dashboard-grid">',
       '<section class="card dashboard-chart-card"><div class="section-head"><div><h3>Sales chart</h3><p>Last 7 days performance</p></div><span class="badge success">Live</span></div><div class="chart-wrap"><canvas id="salesChartCanvas"></canvas></div></section>',
       '<section class="card side-card"><div class="section-head"><div><h3>Top selling products</h3><p>Most active solar and electrical lines</p></div></div>' +
         (topProducts.length ? '<div class="list-stack">' + topProducts.slice(0, 6).map(function (product) {
-          return '<div class="list-item"><div><div class="list-item__title">' + escapeHtml(firstText(product.product_name, product.name, "Product")) + '</div><div class="list-item__meta">' + escapeHtml(firstText(product.category_name, product.category, "Sales performance")) + '</div></div><strong>' + escapeHtml(numberText(firstNumber(product.quantity_sold, product.qty_sold, product.total_quantity, 0))) + '</strong></div>';
+          const totalAmount = firstNumber(product.total_amount, product.total_sales, 0);
+          const soldCount = firstNumber(product.quantity_sold, product.qty_sold, product.total_quantity, 0);
+          return '<div class="list-item"><div class="list-item__rank">' + escapeHtml(String(topProducts.indexOf(product) + 1)) + '</div><div><div class="list-item__title">' + escapeHtml(firstText(product.product_name, product.name, "Product")) + '</div><div class="list-item__meta">' + escapeHtml(firstText(product.category_name, product.category, "Sales performance")) + '</div></div><strong>' + escapeHtml(totalAmount ? money(totalAmount) : numberText(soldCount) + ' sold') + '</strong></div>';
         }).join("") + '</div>' : renderEmptyInline("No top selling products available.")) + '</section>',
       '<section class="card recent-sales-card"><div class="section-head"><div><h3>Recent sales</h3><p>Latest invoices and receipts issued</p></div><button class="btn btn-outline" data-route="invoices">View invoices</button></div>' +
         renderTable([
@@ -738,6 +764,9 @@
           ];
         }), "No sales available.") + '</section>',
       '<section class="card quick-actions-card"><div class="section-head"><div><h3>Quick actions</h3><p>Common cashier and operations shortcuts</p></div></div>' + renderQuickActions() + '</section>',
+      '</div>',
+      '</div>',
+      renderDashboardDocumentRail(data),
       '</div>'
     ].join("");
     renderSalesChart(data.chart || [], stats.chartValues);
@@ -754,11 +783,11 @@
     els.viewRoot.innerHTML = [
       '<div class="module-toolbar"><div class="inline-group"><button class="btn btn-primary" data-action="quick-add-customer"><i class="fa-solid fa-user-plus"></i>Add Customer</button><button class="btn btn-outline" data-action="open-quotation-modal"><i class="fa-solid fa-file-signature"></i>New Quotation</button></div><div class="stats-inline"><span class="document-chip">Held Sales: ' + escapeHtml(String(state.pos.held.length)) + '</span><span class="document-chip">Basket Items: ' + escapeHtml(String(state.pos.basket.length)) + '</span></div></div>',
       '<div class="pos-layout">',
-      '<section class="card section-card pos-column"><div class="section-head"><div><h3>Products</h3><p>Search, scan barcode or browse by category</p></div></div><label class="search-field"><i class="fa-solid fa-magnifying-glass"></i><input id="posProductSearch" type="search" placeholder="Search product or scan barcode" value="' + escapeAttr(state.pos.search) + '" /></label>' + renderPosCategoryChips() + renderProductGrid(products) + '</section>',
-      '<section class="card section-card pos-column"><div class="section-head"><div><h3>Basket</h3><p>Build the sale and apply price adjustments</p></div></div>' + renderBasketTable() + '<div class="pos-summary"><div class="pos-summary-row"><span>Subtotal</span><strong>' + money(totals.subtotal) + '</strong></div><div class="pos-summary-row"><span>Discount</span><strong><input id="posDiscountInput" type="number" step="0.01" min="0" value="' + escapeAttr(String(state.pos.discount_amount)) + '" /></strong></div><div class="pos-summary-row"><span>VAT</span><strong>' + money(totals.vat) + '</strong></div><div class="pos-summary-row"><span>Shipping</span><strong><input id="posShippingInput" type="number" step="0.01" min="0" value="' + escapeAttr(String(state.pos.shipping_amount)) + '" /></strong></div><div class="pos-summary-row total"><span>Grand Total</span><strong>' + money(totals.total) + '</strong></div></div></section>',
-      '<section class="card section-card pos-column"><div class="section-head"><div><h3>Customer & Payment</h3><p>Assign buyer, payment method and notes</p></div></div><div class="inline-group"><select id="posCustomerSelect">' + customerOptions + '</select><button class="btn btn-outline" data-action="quick-add-customer"><i class="fa-solid fa-plus"></i></button></div><div class="payment-options">' + PAYMENT_METHODS.map(function (method) {
+      '<section class="card section-card pos-column pos-column--catalog"><div class="section-head"><div><h3>New Sale</h3><p>Search, scan barcode or browse by category</p></div><span class="badge warning">Counter Mode</span></div><label class="search-field search-field--compact"><i class="fa-solid fa-magnifying-glass"></i><input id="posProductSearch" type="search" placeholder="Scan barcode or search product..." value="' + escapeAttr(state.pos.search) + '" /></label><div class="pos-catalog-shell"><div class="pos-categories-panel">' + renderPosCategoryChips() + '</div><div class="pos-products-panel">' + renderProductGrid(products) + '</div></div></section>',
+      '<section class="card section-card pos-column"><div class="section-head"><div><h3>Basket</h3><p>Build the sale and apply price adjustments</p></div><span class="document-chip">Items ' + escapeHtml(String(state.pos.basket.length)) + '</span></div>' + renderBasketTable() + '<div class="pos-summary"><div class="pos-summary-row"><span>Subtotal</span><strong>' + money(totals.subtotal) + '</strong></div><div class="pos-summary-row"><span>Discount</span><strong><input id="posDiscountInput" type="number" step="0.01" min="0" value="' + escapeAttr(String(state.pos.discount_amount)) + '" /></strong></div><div class="pos-summary-row"><span>VAT (16%)</span><strong>' + money(totals.vat) + '</strong></div><div class="pos-summary-row"><span>Shipping</span><strong><input id="posShippingInput" type="number" step="0.01" min="0" value="' + escapeAttr(String(state.pos.shipping_amount)) + '" /></strong></div><div class="pos-summary-row total"><span>Grand Total</span><strong>' + money(totals.total) + '</strong></div></div></section>',
+      '<section class="card section-card pos-column pos-column--payment"><div class="section-head"><div><h3>Customer & Payment</h3><p>Assign buyer, payment method and notes</p></div></div><div class="inline-group"><select id="posCustomerSelect">' + customerOptions + '</select><button class="btn btn-outline" data-action="quick-add-customer"><i class="fa-solid fa-plus"></i></button></div><div class="payment-options">' + PAYMENT_METHODS.map(function (method) {
         return '<button class="payment-chip' + (state.pos.payment_method === method ? ' active' : '') + '" data-action="pos-payment" data-value="' + escapeAttr(method) + '">' + escapeHtml(titleize(method.replace("bank_transfer", "bank"))) + '</button>';
-      }).join("") + '</div><div class="form-grid"><label><span>Cash Received</span><input id="posAmountPaidInput" type="number" step="0.01" min="0" value="' + escapeAttr(String(state.pos.amount_paid)) + '" /></label><div class="document-chip"><strong>Balance / Change</strong><div>' + money(state.pos.amount_paid - totals.total) + '</div></div><label class="form-span-2"><span>Notes</span><textarea id="posNotesInput" placeholder="Sale notes, delivery note, installation details...">' + escapeHtml(state.pos.notes || "") + '</textarea></label></div><div class="quick-actions-grid"><button class="btn btn-outline" data-action="hold-sale">Hold Sale</button><button class="btn btn-secondary" data-action="suspend-sale">Suspend</button><button class="btn btn-danger" data-action="cancel-sale">Cancel</button><button class="btn btn-primary" data-action="complete-sale">Complete Sale</button></div>' + renderHeldSales() + '</section>',
+      }).join("") + '</div><div class="form-grid"><label><span>Cash Received</span><input id="posAmountPaidInput" type="number" step="0.01" min="0" value="' + escapeAttr(String(state.pos.amount_paid)) + '" /></label><div class="document-chip document-chip--balance"><strong>Balance / Change</strong><div>' + money(state.pos.amount_paid - totals.total) + '</div></div><label class="form-span-2"><span>Notes</span><textarea id="posNotesInput" placeholder="Sale notes, delivery note, installation details...">' + escapeHtml(state.pos.notes || "") + '</textarea></label></div><div class="pos-action-grid"><button class="btn btn-outline" data-action="hold-sale">Hold Sale</button><button class="btn btn-secondary" data-action="suspend-sale">Suspend</button><button class="btn btn-danger" data-action="cancel-sale">Cancel</button><button class="btn btn-primary" data-action="complete-sale">Complete Sale</button></div>' + renderHeldSales() + '</section>',
       '</div>',
       '<section class="card section-card" style="margin-top:20px"><div class="section-head"><div><h3>Recent POS Sales</h3><p>Latest completed transactions</p></div><button class="btn btn-outline" data-route="dashboard">Back to dashboard</button></div>' + renderTable(["Receipt", "Customer", "Amount", "Method", "Status", "Actions"], recentSales.slice(0, 8).map(function (sale) {
         return [
@@ -1072,15 +1101,15 @@
 
   function renderQuickActions() {
     const actions = [
-      ["sales", "New Sale", "fa-solid fa-cart-plus"],
-      ["quotations", "New Quotation", "fa-solid fa-file-circle-plus"],
-      ["products", "Add Product", "fa-solid fa-boxes-packing"],
-      ["inventory", "Receive Stock", "fa-solid fa-boxes-stacked"],
-      ["customers", "Add Customer", "fa-solid fa-user-plus"],
-      ["reports", "View Reports", "fa-solid fa-chart-pie"]
+      ["sales", "New Sale", "fa-solid fa-cart-plus", "Open POS counter"],
+      ["quotations", "New Quotation", "fa-solid fa-file-circle-plus", "Prepare customer quote"],
+      ["products", "Add Product", "fa-solid fa-boxes-packing", "Create stock item"],
+      ["inventory", "Receive Stock", "fa-solid fa-boxes-stacked", "Record incoming stock"],
+      ["customers", "Add Customer", "fa-solid fa-user-plus", "Register buyer"],
+      ["reports", "View Reports", "fa-solid fa-chart-pie", "Open analytics"]
     ];
-    return '<div class="quick-actions-grid">' + actions.map(function (item) {
-      return '<button class="quick-action-btn" data-route="' + item[0] + '"><i class="' + item[2] + '"></i><span>' + item[1] + '</span></button>';
+    return '<div class="dashboard-quick-actions">' + actions.map(function (item) {
+      return '<button class="quick-action-btn" data-route="' + item[0] + '"><i class="' + item[2] + '"></i><span>' + item[1] + '</span><small>' + item[3] + '</small></button>';
     }).join("") + '</div>';
   }
 
@@ -1107,9 +1136,52 @@
 
   function renderHeldSales() {
     if (!state.pos.held.length) return '<div class="empty-note">No held sales.</div>';
-    return '<div style="margin-top:18px"><h4>Held Sales</h4><div class="held-sales-list">' + state.pos.held.map(function (held, index) {
+    return '<div class="held-sales-panel"><h4>Held Sales</h4><div class="held-sales-list">' + state.pos.held.map(function (held, index) {
       return '<div class="held-sale"><div><strong>' + escapeHtml(held.label) + '</strong><div class="table-caption">' + escapeHtml(numberText(held.basket.length)) + ' items · ' + money(held.total) + '</div></div><button class="btn btn-outline" data-action="recall-held" data-index="' + escapeAttr(String(index)) + '">Recall</button></div>';
     }).join("") + '</div></div>';
+  }
+
+  function renderWorkspaceHero() {
+    const now = new Date();
+    return '<section class="workspace-hero"><div><span class="workspace-hero__eyebrow">Dashboard</span><h2>Welcome back, ' + escapeHtml(firstText(state.user && state.user.name, state.user && state.user.email, "Admin")) + '</h2><p>Live business activity, documents and counter operations in one workspace.</p></div><div class="workspace-hero__clock"><span>' + escapeHtml(now.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short", year: "numeric" })) + '</span><strong>' + escapeHtml(now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })) + '</strong></div></section>';
+  }
+
+  function renderDashboardDocumentRail(data) {
+    const invoice = (data.invoices || [])[0];
+    const receipt = (data.sales || [])[0];
+    const quotation = (data.quotations || [])[0];
+    return '<aside class="dashboard-rail">' +
+      renderDocumentPreviewCard("Invoice (A4)", invoice, "invoice", "a4", "Latest invoice preview", [
+        ["Customer", firstText(invoice && invoice.customer_name, "Walk-in Customer")],
+        ["Number", firstText(invoice && invoice.invoice_number, "Draft")],
+        ["Status", titleize(firstText(invoice && invoice.status, "sent"))],
+        ["Balance", money(firstNumber(invoice && invoice.balance_due, 0))]
+      ]) +
+      renderDocumentPreviewCard("Receipt (80mm)", receipt, "receipt", "80mm", "Latest counter receipt", [
+        ["Customer", firstText(receipt && receipt.customer_name, "Walk-in Customer")],
+        ["Number", firstText(receipt && receipt.receipt_number, receipt && receipt.invoice_number, "—")],
+        ["Method", titleize(firstText(receipt && receipt.payment_method, "cash"))],
+        ["Amount", money(firstNumber(receipt && receipt.total, receipt && receipt.amount, 0))]
+      ]) +
+      renderDocumentPreviewCard("Quotation (A4)", quotation, "quotation", "a4", "Latest quotation draft", [
+        ["Customer", firstText(quotation && quotation.customer_name, "Walk-in Customer")],
+        ["Number", firstText(quotation && quotation.quotation_number, "Draft")],
+        ["Valid Until", formatDate(quotation && quotation.valid_until)],
+        ["Total", money(firstNumber(quotation && quotation.total, 0))]
+      ]) +
+    '</aside>';
+  }
+
+  function renderDocumentPreviewCard(title, record, type, paper, caption, rows) {
+    const hasRecord = record && record.id != null;
+    const actions = hasRecord
+      ? '<div class="document-preview__actions"><button class="btn btn-secondary" data-action="open-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(record.id)) + '" data-paper="' + escapeAttr(paper) + '" data-title="' + escapeAttr(titleize(type)) + '"><i class="fa-solid fa-print"></i>Preview</button><button class="btn btn-outline" data-action="download-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(record.id)) + '" data-paper="' + escapeAttr(paper) + '"><i class="fa-solid fa-file-pdf"></i>PDF</button></div>'
+      : '<div class="document-preview__actions"><button class="btn btn-outline" data-route="' + escapeAttr(type === "receipt" ? "sales" : type + "s") + '"><i class="fa-solid fa-arrow-up-right-from-square"></i>Open Module</button></div>';
+    return '<section class="card document-preview-card"><div class="document-preview__header"><div><span class="workspace-hero__eyebrow">' + escapeHtml(title) + '</span><h3>' + escapeHtml(titleize(type)) + '</h3><p>' + escapeHtml(caption) + '</p></div><div class="document-preview__badge"><img src="/assets/unique-solar-kenya-logo.svg" alt="Unique Solar Kenya" /></div></div><div class="document-preview__body">' +
+      rows.map(function (row) {
+        return '<div class="document-preview__row"><span>' + escapeHtml(row[0]) + '</span><strong>' + escapeHtml(String(row[1])) + '</strong></div>';
+      }).join("") +
+      '<div class="document-preview__total"><span>Total</span><strong>' + money(firstNumber(record && record.total, record && record.amount, record && record.balance_due, 0)) + '</strong></div></div>' + actions + '</section>';
   }
 
   function renderDocumentButtons(type, id, paper, label) {
