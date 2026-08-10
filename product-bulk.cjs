@@ -1032,9 +1032,9 @@ function createProductBulkRouter(deps) {
     }
     const existing = safeJson(rows[0].normalized_data, {});
     const merged = Object.assign({}, existing);
-    if (updates.product_name != null) merged.product_name = trimText(String(updates.product_name));
-    if (updates.selling_price != null) merged.selling_price = toNumber(String(updates.selling_price));
-    if (updates.product_code != null) merged.product_code = trimText(String(updates.product_code));
+    if (Object.prototype.hasOwnProperty.call(updates, "product_name")) merged.product_name = trimText(String(updates.product_name ?? ""));
+    if (Object.prototype.hasOwnProperty.call(updates, "selling_price")) merged.selling_price = updates.selling_price !== null && updates.selling_price !== "" ? toNumber(String(updates.selling_price)) : null;
+    if (Object.prototype.hasOwnProperty.call(updates, "product_code")) merged.product_code = trimText(String(updates.product_code ?? ""));
     // Re-apply defaults in case product_code was cleared
     const withDefaults = applyImportDefaults(merged, rows[0].row_number);
     const validationErrors = validateImportedRow(withDefaults);
@@ -1053,8 +1053,8 @@ function createProductBulkRouter(deps) {
     }).length;
     const validCount = allRows.length - errorCount;
     await pool.query(
-      `UPDATE product_import_jobs SET invalid_rows = $2, valid_rows = $3, error_count = $2 WHERE id = $1`,
-      [jobId, errorCount, validCount]
+      `UPDATE product_import_jobs SET invalid_rows = $2, valid_rows = $3, error_count = $4 WHERE id = $1`,
+      [jobId, errorCount, validCount, errorCount]
     );
     res.json({
       row: serializeImportRow(Object.assign({}, rows[0], {

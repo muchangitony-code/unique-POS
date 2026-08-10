@@ -1077,7 +1077,16 @@
     const priceInput = container.querySelector(".import-fix-price");
     const updates = {};
     if (nameInput) updates.product_name = nameInput.value.trim();
-    if (priceInput) updates.selling_price = priceInput.value.trim() !== "" ? Number(priceInput.value) : null;
+    if (priceInput) {
+      var rawPrice = priceInput.value.trim();
+      if (rawPrice !== "") {
+        var parsedPrice = parseFloat(rawPrice);
+        if (!isFinite(parsedPrice)) throw new Error("Selling Price must be a valid number.");
+        updates.selling_price = parsedPrice;
+      } else {
+        updates.selling_price = null;
+      }
+    }
     button.disabled = true;
     button.textContent = "Saving\u2026";
     try {
