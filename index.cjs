@@ -71358,38 +71358,95 @@ async function formatSale(sale) {
   };
 }
 router14.post("/pos/sale", async (req, res) => {
-  const { customer_id, items, discount_amount = 0, amount_paid, payment_method } = req.body;
+  const { customer_id, items, discount_amount = 0, amount_paid, payment_method, shipping_amount = 0 } = req.body;
   if (!items?.length || amount_paid === void 0 || !payment_method) {
     res.status(400).json({ error: "items, amount_paid, and payment_method required" });
     return;
   }
   const branchId = await resolveWriteBranchId(req);
-  const receiptNumber = `RCP-${Date.now()}`;
-  let subtotal = 0;
+  // Validate stock availability before saving
   for (const item of items) {
-    subtotal += item.quantity * item.unit_price;
+    const stockRow = await getBranchStockRow(branchId, item.product_id);
+    const available = Number(stockRow?.currentStock ?? 0);
+    if (available < item.quantity) {
+      const [prod] = await db.select({ name: productsTable.productName }).from(productsTable).where(eq(productsTable.id, item.product_id));
+      res.status(422).json({ error: `Insufficient stock for "${prod?.name ?? "product " + item.product_id}": available ${available}, requested ${item.quantity}` });
+      return;
+    }
   }
-  const total = subtotal - Number(discount_amount);
+  const receiptNumber = `RCP-${Date.now()}`;
+  const cashierName = req.user?.name ?? null;
+  let subtotal = 0;
+  let taxAmount = 0;
+  for (const item of items) {
+    const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
+    subtotal += lineBase;
+    taxAmount += lineBase * (Number(item.vat_rate ?? 0) / 100);
+  }
+  const shippingAmt = Number(shipping_amount || 0);
+  const total = Math.max(0, subtotal - Number(discount_amount) + taxAmount + shippingAmt);
   const change = Math.max(0, Number(amount_paid) - total);
   const [sale] = await db.insert(salesTable).values({
     receiptNumber,
     branchId,
-    customerId: customer_id,
+    customerId: customer_id ?? null,
     subtotal: subtotal.toString(),
     discountAmount: discount_amount.toString(),
+    taxAmount: taxAmount.toString(),
     total: total.toString(),
     amountPaid: amount_paid.toString(),
     change: change.toString(),
-    paymentMethod: payment_method
+    paymentMethod: payment_method,
+    cashierName
   }).returning();
   for (const item of items) {
-    const lineTotal = item.quantity * item.unit_price;
+    const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
+    const lineVat = lineBase * (Number(item.vat_rate ?? 0) / 100);
+    const lineTotal = lineBase + lineVat;
     await db.insert(saleItemsTable).values({ saleId: sale.id, productId: item.product_id, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: (item.discount ?? 0).toString(), vatRate: (item.vat_rate ?? 16).toString(), total: lineTotal.toString() });
     const { before, after } = await adjustBranchStock(branchId, item.product_id, (b) => Math.max(0, b - item.quantity));
     await db.insert(stockMovementsTable).values({ branchId, productId: item.product_id, type: "sale", quantity: -item.quantity, quantityBefore: before, quantityAfter: after, reference: receiptNumber });
   }
   await logAudit(req, { action: "sale.created", entityType: "sale", entityId: sale.id, description: `Sale ${receiptNumber} \u2014 KES ${total.toLocaleString()} (${items.length} item${items.length !== 1 ? "s" : ""}) via ${payment_method}`, metadata: { receipt: receiptNumber } });
-  res.status(201).json(await formatSale(sale));
+  // Auto-generate invoice for this POS sale
+  const invoiceNumber = await nextDocumentNumber("invoice");
+  const invStatus = payment_method === "credit" ? "partial" : Number(amount_paid) >= total ? "paid" : "partial";
+  const balanceDue = Math.max(0, total - Number(amount_paid));
+  const [invoice] = await db.insert(invoicesTable).values({
+    invoiceNumber,
+    branchId,
+    customerId: customer_id ?? null,
+    subtotal: subtotal.toString(),
+    discountAmount: discount_amount.toString(),
+    taxAmount: taxAmount.toString(),
+    total: total.toString(),
+    amountPaid: amount_paid.toString(),
+    balanceDue: balanceDue.toString(),
+    status: invStatus
+  }).returning();
+  for (const item of items) {
+    const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
+    const lineVat = lineBase * (Number(item.vat_rate ?? 0) / 100);
+    await db.insert(invoiceItemsTable).values({
+      invoiceId: invoice.id,
+      productId: item.product_id,
+      quantity: item.quantity,
+      unitPrice: item.unit_price.toString(),
+      discount: (item.discount ?? 0).toString(),
+      vatRate: (item.vat_rate ?? 16).toString(),
+      total: (lineBase + lineVat).toString()
+    });
+  }
+  if (Number(amount_paid) > 0) {
+    const pmVal = ["cash", "mpesa", "bank_transfer", "card", "credit", "split"].includes(payment_method) ? payment_method : "cash";
+    await db.insert(invoicePaymentsTable).values({
+      invoiceId: invoice.id,
+      amount: amount_paid.toString(),
+      method: pmVal
+    });
+  }
+  const saleData = await formatSale(sale);
+  res.status(201).json({ ...saleData, invoice_id: invoice.id, invoice_number: invoice.invoiceNumber });
 });
 router14.get("/pos/sales", async (req, res) => {
   const { page = "1", limit = "50" } = req.query;
