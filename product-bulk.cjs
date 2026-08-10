@@ -248,8 +248,8 @@ function createProductBulkRouter(deps) {
 
   function validateImportedRow(normalized) {
     const errors = [];
-    if (!normalized.product_name) errors.push("Product Name is required.");
-    if (!normalized.product_code) errors.push("Product Code / SKU is required.");
+    if (!normalized.product_name) errors.push("Product Name is required — every product must have a name.");
+    if (normalized.selling_price == null) errors.push("Selling Price is required — enter the price this product is sold for.");
     if (normalized.cost_price != null && normalized.cost_price < 0) errors.push("Cost Price must be zero or greater.");
     if (normalized.selling_price != null && normalized.selling_price < 0) errors.push("Selling Price must be zero or greater.");
     if (normalized.vat_rate != null && normalized.vat_rate < 0) errors.push("VAT must be zero or greater.");
@@ -414,7 +414,7 @@ function createProductBulkRouter(deps) {
     const prepared = source.rows.map((row) => ({
       row_number: row.row_number,
       raw_data: row.raw_data,
-      normalized_data: normalizeImportedRow(row.raw_data, mapping),
+      normalized_data: applyImportDefaults(normalizeImportedRow(row.raw_data, mapping), row.row_number),
       validation_errors: [],
       action: "create"
     }));
@@ -496,7 +496,7 @@ function createProductBulkRouter(deps) {
     const rows = (await pool.query(`SELECT id, row_number, raw_data FROM product_import_rows WHERE job_id = $1 ORDER BY row_number`, [jobId])).rows;
     const prepared = rows.map((row) => {
       const rawData = safeJson(row.raw_data, {});
-      const normalized = normalizeImportedRow(rawData, mapping);
+      const normalized = applyImportDefaults(normalizeImportedRow(rawData, mapping), row.row_number);
       const validationErrors = validateImportedRow(normalized);
       return { id: row.id, normalized, validationErrors };
     });
@@ -596,6 +596,30 @@ function createProductBulkRouter(deps) {
 
   function uniqueDuplicateCode(productCode, jobId, rowNumber) {
     return `${trimText(productCode).slice(0, 40)}-DUP-${jobId}-${rowNumber}`.replace(/\s+/g, "-").slice(0, 64);
+  }
+
+  function generateSku(category, productName, rowNumber) {
+    const catPrefix = (trimText(category) || "GEN")
+      .replace(/[^A-Za-z0-9]/g, "")
+      .slice(0, 3)
+      .toUpperCase() || "GEN";
+    const nameSlug = (trimText(productName) || "PRODUCT")
+      .replace(/[^A-Za-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 20)
+      .toUpperCase();
+    return `${catPrefix}-${nameSlug}-${String(rowNumber).padStart(3, "0")}`.slice(0, 64);
+  }
+
+  function applyImportDefaults(normalized, rowNumber) {
+    const result = Object.assign({}, normalized);
+    if (!result.product_code) {
+      result.product_code = generateSku(result.category, result.product_name, rowNumber);
+    }
+    if (result.vat_rate == null) result.vat_rate = 16;
+    if (result.current_stock == null) result.current_stock = 0;
+    if (result.min_stock == null) result.min_stock = 0;
+    return result;
   }
 
   async function processImportJob(jobId, actor) {
@@ -987,6 +1011,61 @@ function createProductBulkRouter(deps) {
     await ensureSchema();
     const { rows } = await pool.query(`SELECT * FROM product_import_jobs ORDER BY created_at DESC LIMIT 50`);
     res.json({ data: rows.map(serializeJob) });
+  });
+
+  router.patch("/products/imports/:id/rows/:rowId", async (req, res) => {
+    await ensureSchema();
+    const jobId = Number(req.params.id);
+    const rowId = Number(req.params.rowId);
+    if (!Number.isInteger(jobId) || jobId <= 0 || !Number.isInteger(rowId) || rowId <= 0) {
+      res.status(400).json({ error: "Invalid import job or row id." });
+      return;
+    }
+    const updates = req.body || {};
+    const { rows } = await pool.query(
+      `SELECT id, row_number, normalized_data FROM product_import_rows WHERE id = $1 AND job_id = $2`,
+      [rowId, jobId]
+    );
+    if (!rows[0]) {
+      res.status(404).json({ error: "Import row not found." });
+      return;
+    }
+    const existing = safeJson(rows[0].normalized_data, {});
+    const merged = Object.assign({}, existing);
+    if (Object.prototype.hasOwnProperty.call(updates, "product_name")) merged.product_name = trimText(String(updates.product_name ?? ""));
+    if (Object.prototype.hasOwnProperty.call(updates, "selling_price")) merged.selling_price = updates.selling_price !== null && updates.selling_price !== "" ? toNumber(String(updates.selling_price)) : null;
+    if (Object.prototype.hasOwnProperty.call(updates, "product_code")) merged.product_code = trimText(String(updates.product_code ?? ""));
+    // Re-apply defaults in case product_code was cleared
+    const withDefaults = applyImportDefaults(merged, rows[0].row_number);
+    const validationErrors = validateImportedRow(withDefaults);
+    const action = withDefaults.existing_match ? "update" : "create";
+    await pool.query(
+      `UPDATE product_import_rows SET normalized_data = $2::jsonb, validation_errors = $3::jsonb, action = $4 WHERE id = $1`,
+      [rowId, JSON.stringify(withDefaults), JSON.stringify(validationErrors), action]
+    );
+    // Update job-level counts
+    const allRows = (await pool.query(
+      `SELECT validation_errors FROM product_import_rows WHERE job_id = $1`, [jobId]
+    )).rows;
+    const errorCount = allRows.filter((r) => {
+      const errs = safeJson(r.validation_errors, []);
+      return errs.length > 0;
+    }).length;
+    const validCount = allRows.length - errorCount;
+    await pool.query(
+      `UPDATE product_import_jobs SET invalid_rows = $2, valid_rows = $3, error_count = $4 WHERE id = $1`,
+      [jobId, errorCount, validCount, errorCount]
+    );
+    res.json({
+      row: serializeImportRow(Object.assign({}, rows[0], {
+        normalized_data: JSON.stringify(withDefaults),
+        validation_errors: JSON.stringify(validationErrors),
+        action
+      })),
+      valid: validationErrors.length === 0,
+      job_valid_rows: validCount,
+      job_error_count: errorCount
+    });
   });
 
   function serializeImportRow(row) {
