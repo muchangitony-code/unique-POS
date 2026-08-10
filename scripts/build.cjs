@@ -8,8 +8,10 @@ const repoRoot = path.resolve(__dirname, "..");
 const requiredFiles = [
   "app.js",
   "index.cjs",
+  "product-bulk.cjs",
   "public/index.html",
   "public/app.js",
+  "public/styles.css",
   "scripts/bootstrap-db.cjs",
   "scripts/database-url.cjs",
   "scripts/run-migrations.cjs",

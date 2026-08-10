@@ -3,122 +3,199 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>UniquePOS</title>
-    <meta name="description" content="UniquePOS web client" />
+    <title>Unique Solar Kenya POS</title>
+    <meta
+      name="description"
+      content="Unique Solar Kenya point of sale, inventory, invoicing and quotation dashboard."
+    />
+    <link rel="icon" type="image/svg+xml" href="/assets/unique-solar-kenya-logo.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css"
+      integrity="sha512-Kc323vGBEqzTmouAECnVceyQqyqdsSiqLQISBL29aUW4U/M7pSPVf9QQf0RO11hHqR/2x1uw4U1xXvTMJzG0dg=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    />
     <link rel="stylesheet" href="/styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" defer></script>
+    <script src="/app.js" defer></script>
   </head>
   <body>
-    <div class="app-shell" id="loginShell">
-      <aside class="hero">
-        <div class="hero__badge"><img id="loginBrandLogo" class="brand-logo brand-logo--sm hidden" alt="Company logo" /> <span>UniquePOS</span></div>
-        <h1 id="brandName">Business management that is ready to open.</h1>
+    <div class="login-shell" id="loginShell">
+      <section class="login-hero">
+        <div class="brand-pill">
+          <img id="brandMark" src="/assets/unique-solar-kenya-logo.svg" alt="Unique Solar Kenya" class="brand-mark" />
+          <span id="brandPillLabel">Unique Solar Kenya</span>
+        </div>
+        <h1 id="brandHeadline">Powering sales, inventory and customer service from one counter.</h1>
         <p id="brandSummary">
-          Sign in to access your POS workspace, or confirm the service is online before finishing setup.
+          Modern POS operations for solar panels, inverters, batteries, accessories and electrical stock.
         </p>
-        <div class="hero__status" id="apiStatus" aria-live="polite">Checking service status…</div>
-      </aside>
 
-      <main class="panel">
-        <section class="card" id="loginCard">
-          <h2>Sign in</h2>
-          <p class="muted">Use your username or email and password to open the app.</p>
+        <div class="hero-grid">
+          <article class="hero-card">
+            <span class="hero-card__icon"><i class="fa-solid fa-chart-line"></i></span>
+            <div>
+              <strong>Live operations</strong>
+              <p>Track sales, till balances, quotations and stock movement in real time.</p>
+            </div>
+          </article>
+          <article class="hero-card">
+            <span class="hero-card__icon"><i class="fa-solid fa-receipt"></i></span>
+            <div>
+              <strong>Professional documents</strong>
+              <p>Issue A4 invoices, quotations and 80mm thermal receipts instantly.</p>
+            </div>
+          </article>
+          <article class="hero-card">
+            <span class="hero-card__icon"><i class="fa-solid fa-solar-panel"></i></span>
+            <div>
+              <strong>Solar-focused retail</strong>
+              <p>Built for product-rich solar and electrical merchandising workflows.</p>
+            </div>
+          </article>
+        </div>
 
-          <form id="loginForm" class="form">
+        <div class="service-status" id="apiStatus">Checking service status…</div>
+      </section>
+
+      <section class="login-panel">
+        <div class="login-card">
+          <div class="login-card__header">
+            <h2>Sign in</h2>
+            <p>Use your account to open the POS workspace.</p>
+          </div>
+
+          <form id="loginForm" class="stack-form">
             <label>
               <span>Email or username</span>
               <input id="email" name="email" type="text" autocomplete="username" required />
             </label>
-
             <label>
               <span>Password</span>
               <input id="password" name="password" type="password" autocomplete="current-password" required />
             </label>
-
             <label id="totpWrap" class="hidden">
               <span>Authentication code</span>
               <input id="totp" name="totp" type="text" inputmode="numeric" autocomplete="one-time-code" />
             </label>
-
-            <button id="submitBtn" type="submit">Sign in</button>
+            <button id="submitBtn" type="submit" class="btn btn-primary btn-block">Sign in</button>
           </form>
 
-          <div id="message" class="message hidden" aria-live="polite"></div>
-        </section>
-      </main>
+          <div id="loginMessage" class="inline-message hidden"></div>
+        </div>
+      </section>
     </div>
 
-    <div class="pos-shell hidden" id="posShell">
-      <nav class="pos-nav" id="posNav" aria-label="Main navigation">
-        <div class="pos-nav__brand"><img id="posNavLogo" class="brand-logo brand-logo--sm hidden" alt="Company logo" /> <span id="posNavBrand">UniquePOS</span></div>
-        <ul class="pos-nav__list">
-          <li><button class="pos-nav__item active" data-module="dashboard"><span class="pos-nav__icon">⌂</span> Dashboard</button></li>
-          <li><button class="pos-nav__item" data-module="products"><span class="pos-nav__icon">▣</span> Products</button></li>
-          <li><button class="pos-nav__item" data-module="inventory"><span class="pos-nav__icon">☷</span> Inventory</button></li>
-          <li><button class="pos-nav__item" data-module="sales"><span class="pos-nav__icon">🧾</span> Sales</button></li>
-          <li><button class="pos-nav__item" data-module="customers"><span class="pos-nav__icon">☺</span> Customers</button></li>
-          <li><button class="pos-nav__item" data-module="suppliers"><span class="pos-nav__icon">⌘</span> Suppliers</button></li>
-          <li><button class="pos-nav__item" data-module="purchases"><span class="pos-nav__icon">⇅</span> Purchases</button></li>
-          <li><button class="pos-nav__item" data-module="expenses"><span class="pos-nav__icon">¤</span> Expenses</button></li>
-          <li><button class="pos-nav__item" data-module="reports"><span class="pos-nav__icon">◫</span> Reports</button></li>
-          <li><button class="pos-nav__item" data-module="users"><span class="pos-nav__icon">♟</span> Users</button></li>
-          <li><button class="pos-nav__item" data-module="settings"><span class="pos-nav__icon">⚙</span> Settings</button></li>
-          <li><button class="pos-nav__item" data-module="branches"><span class="pos-nav__icon">☰</span> Branches</button></li>
-        </ul>
-        <div class="pos-nav__footer">
-          <div class="pos-nav__user" id="posNavUser"></div>
-          <button class="pos-nav__item pos-nav__logout" id="posSignOutBtn" type="button">
-            <span class="pos-nav__icon">↻</span> Logout
+    <div class="app-shell hidden" id="appShell">
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar__brand">
+          <img id="sidebarLogo" src="/assets/unique-solar-kenya-logo.svg" alt="Unique Solar Kenya" class="sidebar__logo" />
+          <div>
+            <strong id="sidebarBrandName">Unique Solar Kenya</strong>
+            <span>Point of Sale Suite</span>
+          </div>
+        </div>
+
+        <nav class="sidebar__nav" aria-label="Sidebar Navigation">
+          <ul id="sidebarNav"></ul>
+        </nav>
+
+        <div class="sidebar__footer">
+          <div class="user-card">
+            <div class="user-card__avatar" id="sidebarUserInitials">US</div>
+            <div>
+              <strong id="sidebarUserName">Admin</strong>
+              <span id="sidebarUserRole">Administrator</span>
+            </div>
+          </div>
+          <button class="btn btn-ghost btn-block" data-action="logout">
+            <i class="fa-solid fa-right-from-bracket"></i>
+            Logout
           </button>
         </div>
-      </nav>
+      </aside>
 
-      <div class="pos-body">
-        <header class="pos-header">
-          <button class="pos-hamburger" id="posMenuToggle" aria-label="Toggle navigation" type="button">☰</button>
-          <div>
-            <h1 class="pos-header__title" id="posModuleTitle">Dashboard</h1>
-            <p class="pos-header__subtitle" id="posHeaderSubtitle">Operational overview and live business activity.</p>
+      <div class="main-shell">
+        <header class="topbar">
+          <div class="topbar__left">
+            <button class="icon-btn mobile-only" id="sidebarToggle" aria-label="Open menu" type="button">
+              <i class="fa-solid fa-bars"></i>
+            </button>
+            <div>
+              <h1 id="pageTitle">Dashboard</h1>
+              <p id="pageSubtitle">Operational overview and live business activity.</p>
+            </div>
+          </div>
+
+          <div class="topbar__right">
+            <label class="search-field">
+              <i class="fa-solid fa-magnifying-glass"></i>
+              <input
+                id="globalSearchInput"
+                type="search"
+                placeholder="Search products, invoices, customers..."
+              />
+            </label>
+
+            <div class="topbar-select-group">
+              <label class="topbar-select-field">
+                <span>Branch</span>
+                <select id="branchSelect" class="topbar-select" aria-label="Branch selector">
+                  <option>Main Branch</option>
+                </select>
+              </label>
+              <label class="topbar-select-field">
+                <span>User</span>
+                <select id="userSelect" class="topbar-select" aria-label="User selector">
+                  <option>Admin</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="topbar-clock" aria-live="polite">
+              <span id="topbarDate">Saturday, 10 Aug 2026</span>
+              <strong id="topbarTime">12:45 PM</strong>
+            </div>
+
+            <button class="icon-btn" data-action="notify" aria-label="Notifications">
+              <i class="fa-regular fa-bell"></i>
+            </button>
+            <button class="icon-btn" data-route="settings" aria-label="Settings">
+              <i class="fa-solid fa-gear"></i>
+            </button>
+            <button class="icon-btn" data-action="logout" aria-label="Logout">
+              <i class="fa-solid fa-arrow-right-from-bracket"></i>
+            </button>
           </div>
         </header>
 
-        <main class="pos-content" id="posContent">
-          <section class="pos-module active" id="mod-dashboard">
-            <div class="pos-stats" id="posStats">
-              <div class="pos-stat-card">
-                <span class="pos-stat-label">Today Sales</span>
-                <span class="pos-stat-value" id="statTodaySalesVal">—</span>
-              </div>
-              <div class="pos-stat-card">
-                <span class="pos-stat-label">Monthly Sales</span>
-                <span class="pos-stat-value" id="statMonthlySalesVal">—</span>
-              </div>
-              <div class="pos-stat-card">
-                <span class="pos-stat-label">Gross Profit</span>
-                <span class="pos-stat-value" id="statGrossProfitVal">—</span>
-              </div>
-              <div class="pos-stat-card">
-                <span class="pos-stat-label">Low Stock Items</span>
-                <span class="pos-stat-value" id="statLowStockVal">—</span>
-              </div>
-            </div>
-            <div class="pos-module-body" id="body-dashboard"></div>
-          </section>
-
-          <section class="pos-module" id="mod-products"><div class="pos-module-body" id="body-products"></div></section>
-          <section class="pos-module" id="mod-inventory"><div class="pos-module-body" id="body-inventory"></div></section>
-          <section class="pos-module" id="mod-sales"><div class="pos-module-body" id="body-sales"></div></section>
-          <section class="pos-module" id="mod-customers"><div class="pos-module-body" id="body-customers"></div></section>
-          <section class="pos-module" id="mod-suppliers"><div class="pos-module-body" id="body-suppliers"></div></section>
-          <section class="pos-module" id="mod-purchases"><div class="pos-module-body" id="body-purchases"></div></section>
-          <section class="pos-module" id="mod-expenses"><div class="pos-module-body" id="body-expenses"></div></section>
-          <section class="pos-module" id="mod-reports"><div class="pos-module-body" id="body-reports"></div></section>
-          <section class="pos-module" id="mod-users"><div class="pos-module-body" id="body-users"></div></section>
-          <section class="pos-module" id="mod-settings"><div class="pos-module-body" id="body-settings"></div></section>
-          <section class="pos-module" id="mod-branches"><div class="pos-module-body" id="body-branches"></div></section>
-        </main>
+        <main class="view-root" id="viewRoot"></main>
       </div>
     </div>
 
-    <script src="/app.js" defer></script>
+    <div class="modal-overlay hidden" id="modalOverlay">
+      <div class="modal-window" id="modalWindow" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div class="modal-header">
+          <div>
+            <h3 id="modalTitle">Modal</h3>
+            <p id="modalSubtitle"></p>
+          </div>
+          <button class="icon-btn" data-action="close-modal" aria-label="Close modal">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <div class="modal-actions" id="modalActions"></div>
+        <div class="modal-body" id="modalBody"></div>
+      </div>
+    </div>
+
+    <div class="toast hidden" id="toast"></div>
   </body>
 </html>
