@@ -2292,12 +2292,12 @@
       openDocumentPrint("receipt", saleId, paper || "80mm");
     });
     bindClick("posEmailReceiptBtn", function () {
-      var invoiceId = (document.getElementById("posLastInvoiceId") || {}).value;
-      if (invoiceId) Promise.resolve(emailDocument("invoice", invoiceId)).catch(handleActionError);
+      var saleId = (document.getElementById("posLastSaleId") || {}).value;
+      if (saleId) Promise.resolve(emailDocument("receipt", saleId)).catch(handleActionError);
     });
     bindClick("posWhatsappBtn", function () {
-      var invoiceId = (document.getElementById("posLastInvoiceId") || {}).value;
-      if (invoiceId) shareDocumentWhatsapp("invoice", invoiceId);
+      var saleId = (document.getElementById("posLastSaleId") || {}).value;
+      if (saleId) shareDocumentWhatsapp("receipt", saleId);
     });
     bindClick("posNewSaleBtn", function () {
       posClearBasket(true);
@@ -2699,9 +2699,12 @@
           '<div class="pos-invoice-modal-actions">',
             '<button type="button" class="pos-inv-btn pos-inv-btn--primary" id="posInvPrintA4">🖨 Print A4</button>',
             '<button type="button" class="pos-inv-btn pos-inv-btn--primary" id="posInvPrint80">🧾 Print Receipt (80mm)</button>',
-            '<button type="button" class="pos-inv-btn" id="posInvDownloadPdf">⬇ Download PDF</button>',
-            '<button type="button" class="pos-inv-btn" id="posInvWhatsapp">💬 WhatsApp</button>',
-            '<button type="button" class="pos-inv-btn" id="posInvEmail">✉ Email</button>',
+            '<button type="button" class="pos-inv-btn" id="posInvDownloadPdf">⬇ Invoice PDF</button>',
+            '<button type="button" class="pos-inv-btn" id="posRecDownloadPdf">⬇ Receipt PDF</button>',
+            '<button type="button" class="pos-inv-btn" id="posInvWhatsapp">💬 Share Invoice</button>',
+            '<button type="button" class="pos-inv-btn" id="posRecWhatsapp">💬 Share Receipt</button>',
+            '<button type="button" class="pos-inv-btn" id="posInvEmail">✉ Email Invoice</button>',
+            '<button type="button" class="pos-inv-btn" id="posRecEmail">✉ Email Receipt</button>',
             '<button type="button" class="pos-inv-btn" id="posInvCopyLink">🔗 Copy Link</button>',
             '<button type="button" class="pos-inv-btn pos-inv-btn--success" id="posInvNewSale">＋ New Sale</button>',
             '<button type="button" class="pos-inv-btn pos-inv-btn--secondary" id="posInvClose">✓ Save & Close</button>',
@@ -2739,15 +2742,27 @@
     if (pdfBtn) pdfBtn.addEventListener("click", function () {
       if (invoiceId) openDocumentPdf("invoice", invoiceId);
     });
+    var recPdfBtn = document.getElementById("posRecDownloadPdf");
+    if (recPdfBtn) recPdfBtn.addEventListener("click", function () {
+      if (saleId) openDocumentPdf("receipt", saleId);
+    });
 
     var waBtn = document.getElementById("posInvWhatsapp");
     if (waBtn) waBtn.addEventListener("click", function () {
       if (invoiceId) shareDocumentWhatsapp("invoice", invoiceId);
     });
+    var recWaBtn = document.getElementById("posRecWhatsapp");
+    if (recWaBtn) recWaBtn.addEventListener("click", function () {
+      if (saleId) shareDocumentWhatsapp("receipt", saleId);
+    });
 
     var emailBtn = document.getElementById("posInvEmail");
     if (emailBtn) emailBtn.addEventListener("click", function () {
       if (invoiceId) Promise.resolve(emailDocument("invoice", invoiceId)).catch(handleActionError);
+    });
+    var recEmailBtn = document.getElementById("posRecEmail");
+    if (recEmailBtn) recEmailBtn.addEventListener("click", function () {
+      if (saleId) Promise.resolve(emailDocument("receipt", saleId)).catch(handleActionError);
     });
 
     var copyBtn = document.getElementById("posInvCopyLink");
