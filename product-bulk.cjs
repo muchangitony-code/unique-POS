@@ -231,7 +231,10 @@ function createProductBulkRouter(deps) {
       "application/octet-stream"
     ]);
     const pdfMimes = new Set(["application/pdf"]);
-    if (extension === ".csv" || hint === "csv" || (csvMimes.has(mime) && looksLikeDelimitedText(buffer))) {
+    if (extension === ".csv" || hint === "csv" || csvMimes.has(mime)) {
+      if (!looksLikeDelimitedText(buffer)) {
+        throw importValidationError("The uploaded CSV file could not be parsed. Ensure it is comma- or tab-delimited text with a header row.");
+      }
       return { sourceType: "csv", extension: extension || ".csv", mimeType: mime || "text/csv" };
     }
     if (extension === ".xlsx" || extension === ".xls" || hint === "xlsx" || hint === "xls" || (xlsxMimes.has(mime) && (isZipBuffer(buffer) || isOleBuffer(buffer)))) {
