@@ -79,6 +79,7 @@
       salesTab: "sales",
       reportsRange: defaultDateRange(),
       selectedProducts: {},
+      productsView: "list",
       productImport: { job: null, headers: [], mapping: {}, preview: [], total: 0 },
       productImportFile: null,
       posCheckout: {
@@ -476,41 +477,39 @@
     const edit = state.ui.productEdit || {};
     const categoryEdit = state.ui.categoryEdit || {};
     const brandEdit = state.ui.brandEdit || {};
+    const productsView = state.ui.productsView || "list";
     body.innerHTML = [
       renderFlash("products"),
-      '<div class="module-grid two">',
-      '<section class="card"><div class="section-head"><h3>' + (edit.id ? "Edit product" : "New product") + '</h3></div>' +
-        '<form id="productForm" class="form-grid two">' +
-          hiddenInput("id", edit.id) +
-          textField("Product code", "product_code", edit.product_code, true) +
-          textField("Product name", "product_name", edit.product_name, true) +
-          textField("Barcode", "barcode", edit.barcode) +
-          textField("Unit", "unit", edit.unit, false, "pcs") +
-          textField("Image URL", "image_url", edit.image_url) +
-          textAreaField("Description", "description", edit.description) +
-          selectField("Category", "category_id", data.categories, edit.category_id) +
-          selectField("Brand", "brand_id", data.brands, edit.brand_id) +
-          selectField("Supplier", "supplier_id", data.suppliers, edit.supplier_id) +
-          numberField("Cost price", "cost_price", edit.cost_price, "0.01") +
-          numberField("Selling price", "selling_price", edit.selling_price, "0.01") +
-          numberField("VAT rate", "vat_rate", valueOrDefault(edit.vat_rate, 16), "0.01") +
-          numberField("Opening stock", "current_stock", valueOrDefault(edit.current_stock, 0), "1") +
-          numberField("Minimum stock", "min_stock", valueOrDefault(edit.min_stock, 0), "1") +
-          '<div class="form-actions span-2"><button type="submit">' + (edit.id ? "Update product" : "Create product") + '</button><button type="button" class="secondary" id="productResetBtn">Clear</button></div>' +
-        '</form></section>',
-      renderProductBulkToolsCard(data),
-      '</div>',
-      '<div class="module-grid two">',
-      '<section class="card"><div class="section-head"><h3>Reference data</h3></div>' +
-        '<div class="stack gap-lg">' +
-          '<div><h4>Categories</h4><form id="categoryForm" class="inline-form">' + hiddenInput("category_id", categoryEdit.id) + '<input name="name" placeholder="Category name" value="' + escapeAttr(categoryEdit.name) + '" required /><button type="submit">' + (categoryEdit.id ? "Update" : "Add") + '</button><button type="button" class="secondary" id="categoryResetBtn">Clear</button></form>' + renderSimpleList(data.categories, "category") + '</div>' +
-          '<div><h4>Brands</h4><form id="brandForm" class="inline-form">' + hiddenInput("brand_id", brandEdit.id) + '<input name="name" placeholder="Brand name" value="' + escapeAttr(brandEdit.name) + '" required /><button type="submit">' + (brandEdit.id ? "Update" : "Add") + '</button><button type="button" class="secondary" id="brandResetBtn">Clear</button></form>' + renderSimpleList(data.brands, "brand") + '</div>' +
-        '</div></section>',
-      renderProductImportHistoryCard(data) +
-      '</div>' +
-      renderProductImportPreviewCard() +
-      renderProductDuplicatesCard(data) +
-      renderTableCard("Product catalogue", ["", "Code", "Name", "Category", "Brand", "Stock", "Price", "Actions"], (data.products || []).map(function (product) {
+      renderProductsBreadcrumb(productsView),
+      renderProductsActionCard(productsView),
+      productsView === "add" ? '<div class="module-grid two">' +
+        '<section class="card"><div class="section-head"><h3>' + (edit.id ? "Edit product" : "Add product") + '</h3></div>' +
+          '<form id="productForm" class="form-grid two">' +
+            hiddenInput("id", edit.id) +
+            textField("Product code", "product_code", edit.product_code, true) +
+            textField("Product name", "product_name", edit.product_name, true) +
+            textField("Barcode", "barcode", edit.barcode) +
+            textField("Unit", "unit", edit.unit, false, "pcs") +
+            textField("Image URL", "image_url", edit.image_url) +
+            textAreaField("Description", "description", edit.description) +
+            selectField("Category", "category_id", data.categories, edit.category_id) +
+            selectField("Brand", "brand_id", data.brands, edit.brand_id) +
+            selectField("Supplier", "supplier_id", data.suppliers, edit.supplier_id) +
+            numberField("Cost price", "cost_price", edit.cost_price, "0.01") +
+            numberField("Selling price", "selling_price", edit.selling_price, "0.01") +
+            numberField("VAT rate", "vat_rate", valueOrDefault(edit.vat_rate, 16), "0.01") +
+            numberField("Opening stock", "current_stock", valueOrDefault(edit.current_stock, 0), "1") +
+            numberField("Minimum stock", "min_stock", valueOrDefault(edit.min_stock, 0), "1") +
+            '<div class="form-actions span-2"><button type="submit">' + (edit.id ? "Update product" : "Create product") + '</button><button type="button" class="secondary" id="productResetBtn">Clear</button></div>' +
+          '</form></section>' +
+        '<section class="card"><div class="section-head"><h3>Reference data</h3></div>' +
+          '<div class="stack gap-lg">' +
+            '<div><h4>Categories</h4><form id="categoryForm" class="inline-form">' + hiddenInput("category_id", categoryEdit.id) + '<input name="name" placeholder="Category name" value="' + escapeAttr(categoryEdit.name) + '" required /><button type="submit">' + (categoryEdit.id ? "Update" : "Add") + '</button><button type="button" class="secondary" id="categoryResetBtn">Clear</button></form>' + renderSimpleList(data.categories, "category") + '</div>' +
+            '<div><h4>Brands</h4><form id="brandForm" class="inline-form">' + hiddenInput("brand_id", brandEdit.id) + '<input name="name" placeholder="Brand name" value="' + escapeAttr(brandEdit.name) + '" required /><button type="submit">' + (brandEdit.id ? "Update" : "Add") + '</button><button type="button" class="secondary" id="brandResetBtn">Clear</button></form>' + renderSimpleList(data.brands, "brand") + '</div>' +
+          '</div></section>' +
+        '</div>' : "",
+      productsView === "import" ? renderProductBulkToolsCard(data) + renderProductImportPreviewCard() + renderProductImportHistoryCard(data) : "",
+      renderTableCard(productsView === "list" ? "Product List" : "Product catalogue", ["", "Code", "Name", "Category", "Brand", "Stock", "Price", "Actions"], (data.products || []).map(function (product) {
         return [
           '<input type="checkbox" class="js-product-select" data-id="' + escapeAttr(product.id) + '"' + (state.ui.selectedProducts[String(product.id)] ? ' checked' : '') + ' />',
           escapeHtml(firstText(product.product_code, "—")),
@@ -529,6 +528,12 @@
       }), "No products available.")
     ].join("");
 
+    bindRowActions(body, {
+      ".js-products-view": function (event) {
+        state.ui.productsView = event.currentTarget.dataset.view || "list";
+        renderProducts();
+      }
+    });
     bindForm("productForm", handleProductSave);
     bindClick("productResetBtn", function () { state.ui.productEdit = null; renderProducts(); });
     bindForm("categoryForm", handleCategorySave);
@@ -539,6 +544,7 @@
       ".js-edit-product": function (event) {
         const item = findById(data.products, event.currentTarget.dataset.id);
         state.ui.productEdit = item || null;
+        state.ui.productsView = "add";
         renderProducts();
       },
       ".js-delete-product": function (event) {
@@ -582,6 +588,7 @@
     bindClick("productImportParseBtn", handleProductImportParse);
     bindClick("productImportRemapBtn", handleProductImportRemap);
     bindClick("productImportStartBtn", handleProductImportStart);
+    bindClick("productQuickPrintBtn", openSelectedBarcodeLabels);
     bindClick("productBulkPriceBtn", handleBulkPriceUpdate);
     bindClick("productBulkStockBtn", handleBulkStockUpdate);
     bindClick("productBulkCategoryBtn", handleBulkCategoryReassign);
@@ -591,19 +598,59 @@
     bindProductImportFileHandlers();
   }
 
+  function renderProductsBreadcrumb(view) {
+    const trail = ["Dashboard", "Inventory", "Products"];
+    if (view === "import") trail.push("Import");
+    if (view === "add") trail.push("Add Product");
+    return '<div class="products-breadcrumb">' + trail.map(escapeHtml).join(' <span>→</span> ') + '</div>';
+  }
+
+  function renderProductsActionCard(view) {
+    function actionButton(target, icon, label) {
+      return '<button type="button" class="products-action-btn js-products-view ' + (view === target ? "active" : "") + '" data-view="' + escapeAttr(target) + '">' + icon + " " + escapeHtml(label) + '</button>';
+    }
+    return '<section class="card"><div class="section-head"><h3>Products</h3></div><div class="products-action-grid">' +
+      actionButton("list", "📋", "Product List") +
+      actionButton("add", "➕", "Add Product") +
+      actionButton("import", "📥", "Import Products") +
+      '<a class="products-action-btn products-action-link" href="/api/products/export.xlsx">📤 Export Products</a>' +
+      '<button type="button" class="products-action-btn secondary" id="productQuickPrintBtn">🏷️ Print Barcode Labels</button>' +
+    '</div></section>';
+  }
+
   function renderProductBulkToolsCard(data) {
-    const selectedCount = selectedProductIds().length;
-    return '<section class="card"><div class="section-head"><h3>Bulk import & tools</h3></div><div class="stack gap-lg">' +
+    const info = state.ui.productImport || {};
+    const mapping = info.mapping || {};
+    const headers = info.headers || [];
+    const importStarted = Boolean(info.job && ["queued", "processing", "completed"].includes(info.job.status));
+    return '<section class="card"><div class="section-head"><h3>Import products</h3></div><div class="stack gap-lg">' +
       '<div class="stack gap-sm">' +
-        '<h4>Bulk product import</h4>' +
-        '<div class="dropzone" id="productImportDropzone">Drop Excel, CSV, or PDF here, or use the file picker below.</div>' +
+        '<h4>1) Upload file</h4>' +
+        '<div class="dropzone" id="productImportDropzone">Drop Excel, CSV, or PDF here.</div>' +
         '<input id="productImportFile" type="file" accept=\".xlsx,.csv,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\" />' +
-        '<textarea id="productImportPaste" placeholder=\"Paste rows directly from Microsoft Excel or Google Sheets\"></textarea>' +
-        '<div class="form-actions"><button type="button" id="productImportParseBtn">Prepare import preview</button><a class="button-link" href=\"/api/products/imports/templates/csv\">CSV template</a><a class="button-link" href=\"/api/products/imports/templates/xlsx\">Excel template</a></div>' +
-        '<p class="muted small">The importer auto-detects Product Code, Barcode, Product Name, Category, Brand, Unit, pricing, VAT, stock, supplier, location, description, and image URLs.</p>' +
+        '<p class="muted small">Columns are auto-detected and mapped for you.</p>' +
       '</div>' +
+      '<div class="form-actions"><button type="button" id="productImportStartBtn"' + (!info.job || importStarted ? " disabled" : "") + '>Import Products</button><a class="button-link" href="/api/products/imports/templates/csv">CSV template</a><a class="button-link" href="/api/products/imports/templates/xlsx">Excel template</a></div>' +
+      '<details class="advanced-settings"><summary>Advanced Settings</summary>' +
+        '<div class="stack gap-sm advanced-settings__body">' +
+          '<label><span>Paste rows from a spreadsheet</span><textarea id="productImportPaste" placeholder="Paste rows directly from Excel or Google Sheets"></textarea></label>' +
+          '<div class="form-actions"><button type="button" id="productImportParseBtn">Preview pasted rows</button></div>' +
+          '<div class="inline-form">' +
+            '<label><span>Duplicate handling</span><select id="productImportDuplicateMode"><option value="update">Update existing</option><option value="skip">Skip duplicates</option><option value="duplicate">Create duplicates</option></select></label>' +
+            checkField("Create missing categories, brands, and suppliers automatically", "productImportAutoCreate", true) +
+          '</div>' +
+          '<div class="module-grid three">' + Object.keys(PRODUCT_IMPORT_FIELDS).map(function (field) {
+            return '<label><span>' + escapeHtml(mapFieldLabel(field)) + '</span><select class="js-import-map" data-field="' + escapeAttr(field) + '"><option value="">Auto detect</option>' + headers.map(function (header) {
+              return '<option value="' + escapeAttr(header) + '"' + (mapping[field] === header ? ' selected' : '') + '>' + escapeHtml(header) + '</option>';
+            }).join("") + '</select></label>';
+          }).join("") + '</div>' +
+          '<div class="form-actions"><button type="button" id="productImportRemapBtn">Revalidate mapping</button></div>' +
+          renderProductDuplicatesCard(data) +
+        '</div>' +
+      '</details>' +
+      (renderProductImportSummaryCard(info.job, true) || "") +
       '<div class="stack gap-sm">' +
-        '<h4>Selected products: ' + escapeHtml(String(selectedCount)) + '</h4>' +
+        '<h4>Other bulk tools</h4>' +
         '<div class="inline-form">' +
           '<label><span>Price update</span><select id="productBulkPriceMode"><option value=\"percentage\">Percentage</option><option value=\"amount\">Amount</option></select></label>' +
           '<label><span>Target</span><select id="productBulkPriceTarget"><option value=\"selling_price\">Selling price</option><option value=\"cost_price\">Cost price</option><option value=\"both\">Both</option></select></label>' +
@@ -632,31 +679,39 @@
   function renderProductImportPreviewCard() {
     const info = state.ui.productImport || {};
     if (!info.job) return "";
-    const headers = info.headers || [];
-    const mapping = info.mapping || {};
     const previewRows = info.preview || [];
-    return '<section class="card"><div class="section-head"><h3>Import preview #' + escapeHtml(String(info.job.id)) + '</h3></div>' +
+    const errorRows = previewRows.filter(function (row) { return Array.isArray(row.validation_errors) && row.validation_errors.length; });
+    return '<section class="card"><div class="section-head"><h3>2) Preview products</h3></div>' +
       '<div class="stack gap-lg">' +
-        '<div class="module-grid three">' + Object.keys(PRODUCT_IMPORT_FIELDS).map(function (field) {
-          return '<label><span>' + escapeHtml(mapFieldLabel(field)) + '</span><select class="js-import-map" data-field="' + escapeAttr(field) + '"><option value="">Ignore</option>' + headers.map(function (header) {
-            return '<option value="' + escapeAttr(header) + '"' + (mapping[field] === header ? ' selected' : '') + '>' + escapeHtml(header) + '</option>';
-          }).join("") + '</select></label>';
-        }).join("") + '</div>' +
-        '<div class="inline-form">' +
-          '<label><span>Duplicate handling</span><select id="productImportDuplicateMode"><option value="update">Update existing</option><option value="skip">Skip</option><option value="duplicate">Create duplicate</option></select></label>' +
-          checkField("Create missing categories, brands, and suppliers automatically", "productImportAutoCreate", true) +
-          '<div class="form-actions"><button type="button" id="productImportRemapBtn">Revalidate mapping</button><button type="button" id="productImportStartBtn">Start background import</button></div>' +
-        '</div>' +
-        renderTable(["Row", "Action", "Status", "Errors", "Product"], previewRows.slice(0, 25).map(function (row) {
+        '<p class="muted small">Review the products below, then click <strong>Import Products</strong>.</p>' +
+        renderTable(["Row", "SKU", "Product", "Action", "Status"], previewRows.slice(0, 25).map(function (row) {
           return [
             escapeHtml(String(row.row_number)),
+            escapeHtml(firstText(row.normalized_data && row.normalized_data.product_code, row.raw_data && row.raw_data["Product Code"], "—")),
+            escapeHtml(firstText(row.normalized_data && row.normalized_data.product_name, row.raw_data && row.raw_data["Product Name"], "—")),
             escapeHtml(firstText(row.action, "create")),
-            escapeHtml(firstText(row.status, "preview")),
-            escapeHtml((row.validation_errors || []).join(" | ") || "—"),
-            escapeHtml(firstText(row.normalized_data && row.normalized_data.product_name, row.raw_data && row.raw_data["Product Name"], "—"))
+            escapeHtml(firstText(row.status, "preview"))
           ];
         }), "No preview rows available.") +
+        renderTableCard("3) Rows with issues", ["Row", "What needs fixing"], errorRows.slice(0, 25).map(function (row) {
+          return [
+            escapeHtml(String(row.row_number)),
+            escapeHtml((row.validation_errors || []).join(" ").replace(/\s+/g, " "))
+          ];
+        }), "No row errors found.") +
+        renderProductImportSummaryCard(info.job) +
       '</div></section>';
+  }
+
+  function renderProductImportSummaryCard(job, compact) {
+    if (!job) return "";
+    return '<div class="import-summary' + (compact ? " compact" : "") + '">' +
+      '<span class="badge badge-' + escapeAttr(firstText(job.status, "draft").toLowerCase()) + '">' + escapeHtml(titleize(firstText(job.status, "draft"))) + '</span>' +
+      '<span><strong>Imported:</strong> ' + escapeHtml(String(Number(job.created_count || 0))) + '</span>' +
+      '<span><strong>Updated:</strong> ' + escapeHtml(String(Number(job.updated_count || 0))) + '</span>' +
+      '<span><strong>Skipped:</strong> ' + escapeHtml(String(Number(job.skipped_rows || 0))) + '</span>' +
+      '<span><strong>Errors:</strong> ' + escapeHtml(String(Number(job.error_count || 0))) + '</span>' +
+    '</div>';
   }
 
   function renderProductImportHistoryCard(data) {
@@ -782,6 +837,9 @@
     if (fileInput) {
       fileInput.addEventListener("change", function () {
         state.ui.productImportFile = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+        if (state.ui.productImportFile) {
+          Promise.resolve(handleProductImportParse()).catch(handleActionError);
+        }
       });
     }
     if (dropzone) {
@@ -804,6 +862,7 @@
           if (fileInput) {
             try { fileInput.files = event.dataTransfer.files; } catch (_error) {}
           }
+          Promise.resolve(handleProductImportParse()).catch(handleActionError);
         }
       });
     }
@@ -856,7 +915,7 @@
       preview: normalizeList(result.preview || result.rows || []),
       total: Number(result.job && result.job.total_rows || 0)
     };
-    setFlash("products", "success", "Import preview prepared. Review the mapping, then start the background import.");
+    setFlash("products", "success", "Preview ready. Review products and click Import Products.");
     await loadProducts();
     renderProducts();
   }
@@ -914,7 +973,7 @@
     });
     state.ui.productImport.job = result.job;
     scheduleProductImportRefresh(info.job.id);
-    setFlash("products", "success", "Background import started.");
+    setFlash("products", "success", "Import started. We are processing your products.");
     await loadProducts();
     renderProducts();
   }
@@ -932,6 +991,8 @@
         };
         if (result.job && !["queued", "processing"].includes(result.job.status)) {
           stopProductImportRefresh();
+          state.ui.productsView = "list";
+          setFlash("products", "success", "Import finished. Imported " + Number(result.job.created_count || 0) + ", updated " + Number(result.job.updated_count || 0) + ", skipped " + Number(result.job.skipped_rows || 0) + ", errors " + Number(result.job.error_count || 0) + ".");
           loadProducts().then(renderProducts);
           return;
         }
