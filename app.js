@@ -4,7 +4,7 @@
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+const { validateStartupEnv } = require("./scripts/validate-startup-env.cjs");
 
 // Load .env (simple KEY=VALUE parser; no external dependency).
 const envPath = path.join(__dirname, ".env");
@@ -19,6 +19,7 @@ if (fs.existsSync(envPath)) {
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
     }
+    if (key === "DATABASE_URL") continue;
     if (!(key in process.env)) process.env[key] = val;
   }
 }
@@ -26,72 +27,49 @@ if (fs.existsSync(envPath)) {
 // On-disk defaults (resolved next to this file).
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
 const _defaultClientDir = path.join(__dirname, "public");
-if (!process.env.SERVE_CLIENT_DIR) {
-  // Only set SERVE_CLIENT_DIR when the public/ folder actually exists so the
-  // server starts cleanly as an API-only deployment when the built frontend
-  // has not been committed to the repository.
-  if (fs.existsSync(_defaultClientDir)) {
+const _configuredClientDir = process.env.SERVE_CLIENT_DIR ? path.resolve(process.env.SERVE_CLIENT_DIR) : "";
+const _configuredClientIndex = _configuredClientDir ? path.join(_configuredClientDir, "index.html") : "";
+const _defaultClientIndex = path.join(_defaultClientDir, "index.html");
+if (_configuredClientDir && !fs.existsSync(_configuredClientIndex)) {
+  // Fall back to the bundled frontend when SERVE_CLIENT_DIR points to a stale
+  // or missing directory (for example after deployment environment drift).
+  if (fs.existsSync(_defaultClientIndex)) {
+    process.env.SERVE_CLIENT_DIR = _defaultClientDir;
+    console.warn(`[startup] SERVE_CLIENT_DIR "${_configuredClientDir}" missing index.html; falling back to "${_defaultClientDir}".`);
+  } else {
+    delete process.env.SERVE_CLIENT_DIR;
+    console.warn(`[startup] SERVE_CLIENT_DIR "${_configuredClientDir}" missing index.html and no bundled frontend found; starting API-only.`);
+  }
+} else if (!_configuredClientDir) {
+  // Only set SERVE_CLIENT_DIR when the bundled frontend entry file exists so
+  // the server starts cleanly as an API-only deployment when frontend assets
+  // have not been committed to the repository.
+  if (fs.existsSync(_defaultClientIndex)) {
     process.env.SERVE_CLIENT_DIR = _defaultClientDir;
   }
 }
 process.env.BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups");
 process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dirname, "storage");
 
-const isLocalStartup = require.main === module;
-if (isLocalStartup && !process.env.PORT) {
-  process.env.PORT = "3000";
+if (!process.env.PORT) {
+  process.env.PORT = "8080";
 }
 
-// Direct local runs without a configured database should still start the app
-// shell instead of failing during bundled bootstrap or startup migrations.
-if (isLocalStartup && !process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = "postgresql://localhost:5432/local-startup-placeholder";
-  process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT = "1";
-}
-
-function hasPsqlBinary() {
-  const check = spawnSync("psql", ["--version"], { encoding: "utf8" });
-  return !check.error && check.status === 0;
-}
-
-function runPsql(args) {
-  return spawnSync("psql", args, { encoding: "utf8", env: process.env });
-}
-
-function ensureDatabaseBootstrap() {
-  if (!process.env.DATABASE_URL) return;
-  if (process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT === "1") return;
-  if (process.env.UNIQUEPOS_AUTO_DB_BOOTSTRAP === "0") return;
-  if (!hasPsqlBinary()) return;
-  const sqlPath = path.join(__dirname, "database.sql");
-  if (!fs.existsSync(sqlPath)) return;
-
-  const existsCheck = runPsql([
-    process.env.DATABASE_URL,
-    "-tAc",
-    "SELECT to_regclass('public.business_settings') IS NOT NULL"
-  ]);
-  if (existsCheck.status === 0 && existsCheck.stdout.trim() === "t") return;
-
-  const restore = runPsql([
-    process.env.DATABASE_URL,
-    "-v",
-    "ON_ERROR_STOP=1",
-    "-f",
-    sqlPath
-  ]);
-  if (restore.status !== 0) {
-    const details = [restore.stdout, restore.stderr].filter(Boolean).join("\n").trim();
-    const error = new Error(
-      `Automatic PostgreSQL bootstrap failed.${details ? `\n${details}` : ""}`
-    );
-    if (process.env.UNIQUEPOS_AUTO_DB_BOOTSTRAP_REQUIRED === "1") {
-      throw error;
+async function start() {
+  try {
+    validateStartupEnv();
+    const { bootstrapDatabaseIfNeeded } = require("./scripts/bootstrap-db.cjs");
+    const result = await bootstrapDatabaseIfNeeded();
+    process.env.UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS = "1";
+    console.log("[startup] Database bootstrap complete", result);
+    if (result.adminBootstrapped) {
+      console.log("[bootstrap-db] Admin account ensured");
     }
-    console.warn(error.message);
+    require("./index.cjs");
+  } catch (err) {
+    console.error("[startup] Startup failed", err);
+    process.exit(1);
   }
 }
 
-ensureDatabaseBootstrap();
-
-require("./index.cjs");
+start();

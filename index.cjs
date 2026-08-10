@@ -42204,7 +42204,7 @@ var require_jsonwebtoken = __commonJS({
 
 // artifacts/api-server/src/app.ts
 var import_path = __toESM(require("path"), 1);
-var import_express26 = __toESM(require_express2(), 1);
+var import_express_backups = __toESM(require_express2(), 1);
 var import_cors = __toESM(require_lib3(), 1);
 var import_pino_http = __toESM(require_logger(), 1);
 
@@ -69458,31 +69458,88 @@ function publicUser(user) {
     created_at: user.createdAt
   };
 }
+async function findLoginUser(loginId) {
+  const normalized = String(loginId).trim();
+  try {
+    const lookup = await db.execute(sql`
+      SELECT
+        id,
+        name,
+        email,
+        password_hash AS "passwordHash",
+        role,
+        branch,
+        branch_id AS "branchId",
+        phone,
+        is_active AS "isActive",
+        created_at AS "createdAt",
+        totp_secret AS "totpSecret",
+        totp_enabled AS "totpEnabled",
+        failed_login_attempts AS "failedLoginAttempts",
+        locked_until AS "lockedUntil",
+        password_changed_at AS "passwordChangedAt"
+      FROM users
+      WHERE lower(email) = lower(${normalized}) OR lower(name) = lower(${normalized})
+      ORDER BY CASE WHEN lower(email) = lower(${normalized}) THEN 0 ELSE 1 END, id ASC
+      LIMIT 1
+    `);
+    const rows = lookup.rows ?? lookup;
+    return rows[0];
+  } catch (err) {
+    if (err?.code !== "42703") throw err;
+    logger.warn({ err }, "Legacy users schema detected during login lookup; using compatibility query");
+    const fallback = await db.execute(sql`
+      SELECT
+        id,
+        name,
+        email,
+        password_hash AS "passwordHash",
+        role,
+        branch,
+        NULL::integer AS "branchId",
+        phone,
+        is_active AS "isActive",
+        created_at AS "createdAt",
+        NULL::text AS "totpSecret",
+        FALSE AS "totpEnabled",
+        0 AS "failedLoginAttempts",
+        NULL::timestamptz AS "lockedUntil",
+        NULL::timestamptz AS "passwordChangedAt"
+      FROM users
+      WHERE lower(email) = lower(${normalized}) OR lower(name) = lower(${normalized})
+      ORDER BY CASE WHEN lower(email) = lower(${normalized}) THEN 0 ELSE 1 END, id ASC
+      LIMIT 1
+    `);
+    const rows = fallback.rows ?? fallback;
+    return rows[0];
+  }
+}
 router2.post("/auth/login", async (req, res) => {
   const { email: email3, password, totp_code } = req.body ?? {};
   if (!email3 || !password) {
     res.status(400).json({ error: "Email and password required" });
     return;
   }
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email3));
+  const loginId = String(email3).trim();
+  const user = await findLoginUser(loginId);
   if (!user || !user.isActive) {
-    await recordLogin(req, { userId: user?.id ?? null, email: email3, success: false, reason: user ? "inactive" : "unknown_user" });
-    await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user?.id, description: `Failed login attempt for "${email3}" \u2014 user not found or inactive` });
+    await recordLogin(req, { userId: user?.id ?? null, email: loginId, success: false, reason: user ? "inactive" : "unknown_user" });
+    await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user?.id, description: `Failed login attempt for "${loginId}" \u2014 user not found or inactive` });
     res.status(401).json({ error: "Invalid credentials" });
     return;
   }
   const policy = await getSecurityPolicy();
   if (user.lockedUntil && new Date(user.lockedUntil).getTime() > Date.now()) {
     const mins = Math.ceil((new Date(user.lockedUntil).getTime() - Date.now()) / 6e4);
-    await recordLogin(req, { userId: user.id, email: email3, success: false, reason: "account_locked" });
+    await recordLogin(req, { userId: user.id, email: loginId, success: false, reason: "account_locked" });
     res.status(423).json({ error: `Account locked due to failed login attempts. Try again in ${mins} minute${mins === 1 ? "" : "s"}.` });
     return;
   }
   const valid = await comparePassword(password, user.passwordHash);
   if (!valid) {
     await registerFailedAttempt(user.id, policy);
-    await recordLogin(req, { userId: user.id, email: email3, success: false, reason: "wrong_password" });
-    await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user.id, description: `Failed login attempt for "${email3}" \u2014 wrong password` });
+    await recordLogin(req, { userId: user.id, email: loginId, success: false, reason: "wrong_password" });
+    await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user.id, description: `Failed login attempt for "${loginId}" \u2014 wrong password` });
     res.status(401).json({ error: "Invalid credentials" });
     return;
   }
@@ -69493,20 +69550,20 @@ router2.post("/auth/login", async (req, res) => {
     }
     if (!verifyTotp(user.totpSecret, String(totp_code))) {
       await registerFailedAttempt(user.id, policy);
-      await recordLogin(req, { userId: user.id, email: email3, success: false, reason: "invalid_2fa" });
-      await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user.id, description: `Failed 2FA for "${email3}"` });
+      await recordLogin(req, { userId: user.id, email: loginId, success: false, reason: "invalid_2fa" });
+      await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user.id, description: `Failed 2FA for "${loginId}"` });
       res.status(401).json({ error: "Invalid authentication code" });
       return;
     }
   }
   await db.update(usersTable).set({ failedLoginAttempts: 0, lockedUntil: null }).where(eq(usersTable.id, user.id));
-  await recordLogin(req, { userId: user.id, email: email3, success: true });
+  await recordLogin(req, { userId: user.id, email: loginId, success: true });
   await logAudit(req, { action: "auth.login", entityType: "user", entityId: user.id, description: `"${user.name}" logged in (${user.role})` });
   const token = signToken(
     { userId: user.id, email: user.email, role: user.role, name: user.name, branchId: user.branchId ?? null },
     policy.sessionTimeoutMinutes * 60
   );
-  res.json({ token, user: publicUser(user) });
+  res.json({ token, user: publicUser(user), force_password_change: !user.passwordChangedAt });
 });
 async function registerFailedAttempt(userId, policy) {
   const lockoutMs = policy.lockoutMinutes * 6e4;
@@ -69746,22 +69803,22 @@ async function loadStockMap(opts) {
   }
   return map2;
 }
-async function getBranchStockRow(branchId, productId) {
-  const [row] = await db.select().from(productStockTable).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
+async function getBranchStockRow(branchId, productId, executor = db) {
+  const [row] = await executor.select().from(productStockTable).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
   return row ?? null;
 }
 async function getBranchCurrentStock(branchId, productId) {
   const row = await getBranchStockRow(branchId, productId);
   return row?.currentStock ?? 0;
 }
-async function adjustBranchStock(branchId, productId, computeAfter) {
-  const row = await getBranchStockRow(branchId, productId);
+async function adjustBranchStock(branchId, productId, computeAfter, executor = db) {
+  const row = await getBranchStockRow(branchId, productId, executor);
   const before = row?.currentStock ?? 0;
   const after = computeAfter(before);
   if (row) {
-    await db.update(productStockTable).set({ currentStock: after }).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
+    await executor.update(productStockTable).set({ currentStock: after }).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
   } else {
-    await db.insert(productStockTable).values({ branchId, productId, currentStock: after, minStock: 0 });
+    await executor.insert(productStockTable).values({ branchId, productId, currentStock: after, minStock: 0 });
   }
   return { before, after };
 }
@@ -69999,8 +70056,10 @@ router6.get("/products", async (req, res) => {
   const l = Math.min(200, parseInt(limit, 10));
   const conditions = [];
   if (search) conditions.push(ilike(productsTable.productName, `%${search}%`));
-  if (category_id) conditions.push(eq(productsTable.categoryId, parseInt(category_id, 10)));
-  if (brand_id) conditions.push(eq(productsTable.brandId, parseInt(brand_id, 10)));
+  const catId = category_id ? parseInt(category_id, 10) : NaN;
+  if (!Number.isNaN(catId)) conditions.push(eq(productsTable.categoryId, catId));
+  const brandId = brand_id ? parseInt(brand_id, 10) : NaN;
+  if (!Number.isNaN(brandId)) conditions.push(eq(productsTable.brandId, brandId));
   const where = conditions.length ? and(...conditions) : void 0;
   const allProducts = await db.select().from(productsTable).where(where).orderBy(productsTable.productName);
   const scope = getBranchScope(req);
@@ -70021,14 +70080,42 @@ router6.get("/products", async (req, res) => {
   const offset = (p - 1) * l;
   res.json({ data: formatted.slice(offset, offset + l), total, page: p, limit: l });
 });
-router6.post("/products", async (req, res) => {
+async function generateUniqueProductCode(dbConn) {
+  const prefix = "P";
+  const rows = await dbConn.execute(
+    sql`SELECT product_code FROM products WHERE product_code ~ ${`^${prefix}[0-9]{6,}$`} ORDER BY length(product_code) DESC, product_code DESC LIMIT 1`
+  );
+  let next = 1;
+  if (rows.rows && rows.rows.length > 0) {
+    const last = rows.rows[0].product_code;
+    const num = parseInt(last.slice(prefix.length), 10);
+    if (!isNaN(num)) next = num + 1;
+  }
+  let candidate = prefix + String(next).padStart(6, "0");
+  while (true) {
+    const [existing] = await dbConn.select({ code: productsTable.productCode }).from(productsTable).where(eq(productsTable.productCode, candidate));
+    if (!existing) break;
+    next = next + 1;
+    candidate = prefix + String(next).padStart(6, "0");
+  }
+  return candidate;
+}
+router6.post("/products", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
   const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, current_stock, min_stock, image_url, unit } = req.body;
-  if (!product_code || !product_name) {
-    res.status(400).json({ error: "product_code and product_name required" });
+  if (!product_name) {
+    res.status(400).json({ error: "product_name required" });
     return;
   }
+  const user = req.user;
+  const isPostSuperAdmin = user && SUPER_ADMIN_ROLES.includes(user.role);
+  let resolvedCode;
+  if (product_code && isPostSuperAdmin) {
+    resolvedCode = product_code;
+  } else {
+    resolvedCode = await generateUniqueProductCode(db);
+  }
   const [p] = await db.insert(productsTable).values({
-    productCode: product_code,
+    productCode: resolvedCode,
     barcode,
     productName: product_name,
     description,
@@ -70134,7 +70221,7 @@ router6.get("/products/:id", async (req, res) => {
   const map2 = await loadStockMap({ branchId: scope.branchId, all: scope.mode === "all" });
   res.json(formatProduct(p, void 0, void 0, void 0, stockFor(map2, p)));
 });
-router6.patch("/products/:id", async (req, res) => {
+router6.patch("/products/:id", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
   const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, current_stock, min_stock, image_url, unit } = req.body;
   const [before] = await db.select().from(productsTable).where(eq(productsTable.id, id));
@@ -70142,8 +70229,10 @@ router6.patch("/products/:id", async (req, res) => {
     res.status(404).json({ error: "Product not found" });
     return;
   }
+  const patchUser = req.user;
+  const isPatchSuperAdmin = patchUser && SUPER_ADMIN_ROLES.includes(patchUser.role);
   const updateData = {};
-  if (product_code !== void 0) updateData.productCode = product_code;
+  if (product_code !== void 0 && isPatchSuperAdmin) updateData.productCode = product_code;
   if (barcode !== void 0) updateData.barcode = barcode;
   if (product_name !== void 0) updateData.productName = product_name;
   if (description !== void 0) updateData.description = description;
@@ -70170,7 +70259,7 @@ router6.patch("/products/:id", async (req, res) => {
   await logAudit(req, { action: "product.updated", entityType: "product", entityId: p.id, description: `Updated product "${p.productName}" (${p.productCode})`, metadata: { before: beforeSnap, after: afterSnap } });
   res.json(afterSnap);
 });
-router6.delete("/products/:id", async (req, res) => {
+router6.delete("/products/:id", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
   const [p] = await db.select().from(productsTable).where(eq(productsTable.id, id));
   await db.delete(productsTable).where(eq(productsTable.id, id));
@@ -70186,6 +70275,7 @@ var import_express7 = __toESM(require_express2(), 1);
 var PREFIX = {
   quotation: "QTN",
   invoice: "INV",
+  receipt: "RCP",
   transfer: "TRF"
 };
 async function nextDocumentNumber(docType, when = /* @__PURE__ */ new Date()) {
@@ -70569,7 +70659,8 @@ router7.get("/inventory/stock-count", async (req, res) => {
     return;
   }
   const prodConditions = [];
-  if (category_id) prodConditions.push(eq(productsTable.categoryId, parseInt(category_id, 10)));
+  const stockCatId = category_id ? parseInt(category_id, 10) : NaN;
+  if (!Number.isNaN(stockCatId)) prodConditions.push(eq(productsTable.categoryId, stockCatId));
   const products = await db.select().from(productsTable).where(prodConditions.length ? and(...prodConditions) : void 0).orderBy(productsTable.productName);
   const stockRows = scope.mode === "single" ? await db.select().from(productStockTable).where(eq(productStockTable.branchId, scope.branchId)) : await db.select().from(productStockTable);
   const stockMap = /* @__PURE__ */ new Map();
@@ -71268,38 +71359,103 @@ async function formatSale(sale) {
   };
 }
 router14.post("/pos/sale", async (req, res) => {
-  const { customer_id, items, discount_amount = 0, amount_paid, payment_method } = req.body;
+  const { customer_id, items, discount_amount = 0, amount_paid, payment_method, shipping_amount = 0 } = req.body;
   if (!items?.length || amount_paid === void 0 || !payment_method) {
     res.status(400).json({ error: "items, amount_paid, and payment_method required" });
     return;
   }
   const branchId = await resolveWriteBranchId(req);
-  const receiptNumber = `RCP-${Date.now()}`;
+  // Validate stock availability before saving
+  for (const item of items) {
+    const stockRow = await getBranchStockRow(branchId, item.product_id);
+    const available = Number(stockRow?.currentStock ?? 0);
+    if (available < item.quantity) {
+      const [prod] = await db.select({ name: productsTable.productName }).from(productsTable).where(eq(productsTable.id, item.product_id));
+      res.status(422).json({ error: `Insufficient stock for "${prod?.name ?? "product " + item.product_id}": available ${available}, requested ${item.quantity}` });
+      return;
+    }
+  }
+  const cashierName = req.user?.name ?? null;
   let subtotal = 0;
+  let taxAmount = 0;
   for (const item of items) {
-    subtotal += item.quantity * item.unit_price;
+    const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
+    subtotal += lineBase;
+    taxAmount += lineBase * (Number(item.vat_rate ?? 0) / 100);
   }
-  const total = subtotal - Number(discount_amount);
+  const shippingAmt = Number(shipping_amount || 0);
+  const total = Math.max(0, subtotal - Number(discount_amount) + taxAmount + shippingAmt);
   const change = Math.max(0, Number(amount_paid) - total);
-  const [sale] = await db.insert(salesTable).values({
-    receiptNumber,
-    branchId,
-    customerId: customer_id,
-    subtotal: subtotal.toString(),
-    discountAmount: discount_amount.toString(),
-    total: total.toString(),
-    amountPaid: amount_paid.toString(),
-    change: change.toString(),
-    paymentMethod: payment_method
-  }).returning();
-  for (const item of items) {
-    const lineTotal = item.quantity * item.unit_price;
-    await db.insert(saleItemsTable).values({ saleId: sale.id, productId: item.product_id, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: (item.discount ?? 0).toString(), vatRate: (item.vat_rate ?? 16).toString(), total: lineTotal.toString() });
-    const { before, after } = await adjustBranchStock(branchId, item.product_id, (b) => Math.max(0, b - item.quantity));
-    await db.insert(stockMovementsTable).values({ branchId, productId: item.product_id, type: "sale", quantity: -item.quantity, quantityBefore: before, quantityAfter: after, reference: receiptNumber });
-  }
-  await logAudit(req, { action: "sale.created", entityType: "sale", entityId: sale.id, description: `Sale ${receiptNumber} \u2014 KES ${total.toLocaleString()} (${items.length} item${items.length !== 1 ? "s" : ""}) via ${payment_method}`, metadata: { receipt: receiptNumber } });
-  res.status(201).json(await formatSale(sale));
+  const invStatus = payment_method === "credit" ? "partial" : Number(amount_paid) >= total ? "paid" : "partial";
+  const balanceDue = Math.max(0, total - Number(amount_paid));
+  const result = await db.transaction(async (tx) => {
+    const receiptNumber = await nextDocumentNumber("receipt");
+    const invoiceNumber = await nextDocumentNumber("invoice");
+    const [sale] = await tx.insert(salesTable).values({
+      receiptNumber,
+      branchId,
+      customerId: customer_id ?? null,
+      subtotal: subtotal.toString(),
+      discountAmount: discount_amount.toString(),
+      taxAmount: taxAmount.toString(),
+      total: total.toString(),
+      amountPaid: amount_paid.toString(),
+      change: change.toString(),
+      paymentMethod: payment_method,
+      cashierName
+    }).returning();
+    for (const item of items) {
+      const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
+      const lineVat = lineBase * (Number(item.vat_rate ?? 0) / 100);
+      const lineTotal = lineBase + lineVat;
+      await tx.insert(saleItemsTable).values({ saleId: sale.id, productId: item.product_id, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: (item.discount ?? 0).toString(), vatRate: (item.vat_rate ?? 16).toString(), total: lineTotal.toString() });
+      const { before, after } = await adjustBranchStock(branchId, item.product_id, (b) => Math.max(0, b - item.quantity), tx);
+      await tx.insert(stockMovementsTable).values({ branchId, productId: item.product_id, type: "sale", quantity: -item.quantity, quantityBefore: before, quantityAfter: after, reference: receiptNumber });
+    }
+    const [invoice] = await tx.insert(invoicesTable).values({
+      invoiceNumber,
+      branchId,
+      customerId: customer_id ?? null,
+      subtotal: subtotal.toString(),
+      discountAmount: discount_amount.toString(),
+      taxAmount: taxAmount.toString(),
+      total: total.toString(),
+      amountPaid: amount_paid.toString(),
+      balanceDue: balanceDue.toString(),
+      status: invStatus
+    }).returning();
+    for (const item of items) {
+      const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
+      const lineVat = lineBase * (Number(item.vat_rate ?? 0) / 100);
+      await tx.insert(invoiceItemsTable).values({
+        invoiceId: invoice.id,
+        productId: item.product_id,
+        quantity: item.quantity,
+        unitPrice: item.unit_price.toString(),
+        discount: (item.discount ?? 0).toString(),
+        vatRate: (item.vat_rate ?? 16).toString(),
+        total: (lineBase + lineVat).toString()
+      });
+    }
+    if (Number(amount_paid) > 0) {
+      const pmVal = ["cash", "mpesa", "bank_transfer", "card", "credit", "split"].includes(payment_method) ? payment_method : "cash";
+      await tx.insert(invoicePaymentsTable).values({
+        invoiceId: invoice.id,
+        amount: amount_paid.toString(),
+        method: pmVal
+      });
+    }
+    const receiptInsert = await tx.execute(sql`
+      INSERT INTO receipts (sale_id, invoice_id, receipt_number, issued_to, amount)
+      VALUES (${sale.id}, ${invoice.id}, ${receiptNumber}, ${cashierName || "Cash sale"}, ${total})
+      RETURNING id
+    `);
+    const receiptRows = receiptInsert.rows ?? receiptInsert;
+    return { sale, invoice, receiptId: Number(receiptRows?.[0]?.id || 0), receiptNumber };
+  });
+  await logAudit(req, { action: "sale.created", entityType: "sale", entityId: result.sale.id, description: `Sale ${result.receiptNumber} \u2014 KES ${total.toLocaleString()} (${items.length} item${items.length !== 1 ? "s" : ""}) via ${payment_method}`, metadata: { receipt: result.receiptNumber, invoice: result.invoice.invoiceNumber } });
+  const saleData = await formatSale(result.sale);
+  res.status(201).json({ ...saleData, invoice_id: result.invoice.id, invoice_number: result.invoice.invoiceNumber, receipt_id: result.receiptId });
 });
 router14.get("/pos/sales", async (req, res) => {
   const { page = "1", limit = "50" } = req.query;
@@ -71406,7 +71562,7 @@ function fmt5(s) {
     currency: s.currency,
     currency_symbol: s.currencySymbol,
     vat_rate: Number(s.vatRate),
-    logo_url: s.logoUrl,
+    logo_url: normalizeLogoUrl(s.logoUrl),
     receipt_footer: s.receiptFooter,
     fiscal_year_start: s.fiscalYearStart,
     country: s.country,
@@ -71469,7 +71625,7 @@ function fmtBranding(s) {
     business_phone2: s.businessPhone2 ?? null,
     business_email: s.businessEmail ?? null,
     website: s.website ?? null,
-    logo_url: s.logoUrl ?? null,
+    logo_url: normalizeLogoUrl(s.logoUrl),
     primary_color: s.primaryColor ?? null,
     secondary_color: s.secondaryColor ?? null,
     tax_number: s.taxNumber ?? null,
@@ -71497,21 +71653,11 @@ var PAYMENT_FIELDS = [
   ["payment_instructions", "paymentInstructions"]
 ];
 router16.get("/settings", async (_req, res) => {
-  const [settings] = await db.select().from(businessSettingsTable);
-  if (!settings) {
-    const [s] = await db.insert(businessSettingsTable).values({}).returning();
-    res.json(fmt5(s));
-    return;
-  }
+  const settings = await ensureBusinessSettingsWithDefaults();
   res.json(fmt5(settings));
 });
 router16.get("/settings/branding", async (_req, res) => {
-  const [settings] = await db.select().from(businessSettingsTable);
-  if (!settings) {
-    const [s] = await db.insert(businessSettingsTable).values({}).returning();
-    res.json(fmtBranding(s));
-    return;
-  }
+  const settings = await ensureBusinessSettingsWithDefaults();
   res.json(fmtBranding(settings));
 });
 router16.patch("/settings", requireRole("administrator"), async (req, res) => {
@@ -71718,14 +71864,644 @@ router16.patch("/settings/security", requireSuperAdmin, async (req, res) => {
 });
 var settings_default = router16;
 
-// artifacts/api-server/src/routes/reports.ts
+// artifacts/api-server/src/routes/documents.ts
 var import_express17 = __toESM(require_express2(), 1);
+var import_pdfkit = __toESM(require("pdfkit"), 1);
 var router17 = (0, import_express17.Router)();
+var DEFAULT_COMPANY_LOGO_URL = "/assets/unique-solar-kenya-logo.svg";
+var PDF_EOF_MARKER = Buffer.from("%%EOF");
+var PDF_GENERATION_TIMEOUT_MS = 30000;
+function safeNum(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+function fmtCurrency2(value, currency = "KES") {
+  return safeNum(value).toLocaleString("en-KE", { style: "currency", currency, maximumFractionDigits: 2 });
+}
+function normalizePaper(raw, fallback = "a4") {
+  const paper = String(raw || fallback).toLowerCase();
+  if (paper === "58mm" || paper === "80mm" || paper === "a4") return paper;
+  return fallback;
+}
+function paperToPdfSize(paper) {
+  if (paper === "58mm") return [164.4, 900];
+  if (paper === "80mm") return [226.8, 900];
+  return "A4";
+}
+async function ensureBusinessSettingsWithDefaults() {
+  const [settings] = await db.select().from(businessSettingsTable);
+  if (!settings) {
+    const [created] = await db.insert(businessSettingsTable).values({ logoUrl: DEFAULT_COMPANY_LOGO_URL }).returning();
+    return created;
+  }
+  if (!settings.logoUrl) {
+    const [updated] = await db.update(businessSettingsTable).set({ logoUrl: DEFAULT_COMPANY_LOGO_URL }).where(sql`${businessSettingsTable.id} = ${settings.id}`).returning();
+    return updated;
+  }
+  return settings;
+}
+async function getDocSettings() {
+  return await ensureBusinessSettingsWithDefaults();
+}
+async function getBranchDetails(branchId) {
+  if (!branchId) return null;
+  const [branch] = await db.select().from(branchesTable).where(eq(branchesTable.id, branchId));
+  return branch ?? null;
+}
+async function getBranchName(branchId) {
+  const branch = await getBranchDetails(branchId);
+  if (!branchId) return "Main Branch";
+  return branch?.name ?? `Branch ${branchId}`;
+}
+function htmlEscape2(v) {
+  return String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function safeHex2(value, fallback) {
+  return value && /^#?[0-9a-fA-F]{6}$/.test(value) ? value.startsWith("#") ? value : `#${value}` : fallback;
+}
+function brandInitials2(name) {
+  const parts = String(name || "UniquePOS").trim().split(/\s+/).filter(Boolean).slice(0, 2);
+  const initials = parts.map((part) => part[0]?.toUpperCase() || "").join("");
+  return initials || "UP";
+}
+function placeholderLogoDataUri(name, primaryColor, secondaryColor) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${primaryColor}"/><stop offset="100%" stop-color="${secondaryColor}"/></linearGradient></defs><rect width="160" height="160" rx="28" fill="url(#g)"/><text x="80" y="94" text-anchor="middle" font-family="Arial, sans-serif" font-size="52" font-weight="700" fill="#ffffff">${htmlEscape2(brandInitials2(name))}</text></svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+function resolveStoredAssetUrl(rawPath) {
+  const raw = String(rawPath || "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("/objects/")) return `/api/storage/objects/${encodeURIComponent(raw.slice("/objects/".length)).replace(/%2F/g, "/")}`;
+  if (raw.startsWith("/api/storage/objects/")) return raw;
+  return "";
+}
+function assetMimeType(rawPath) {
+  const lower = String(rawPath || "").toLowerCase();
+  if (lower.endsWith(".svg")) return "image/svg+xml";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  return "image/png";
+}
+function selectDocumentLogoPath(settings, branch) {
+  return settings?.logoUrl || branch?.logoUrl || null;
+}
+function buildDocumentFooter(settings) {
+  const sections = [
+    settings?.documentFooter || settings?.receiptFooter || "",
+    settings?.invoicePaymentTerms ? `Terms: ${settings.invoicePaymentTerms}` : "",
+    settings?.warrantyText ? `Warranty: ${settings.warrantyText}` : "",
+    settings?.returnPolicy ? `Returns: ${settings.returnPolicy}` : "",
+    settings?.paymentInstructions ? `Payment: ${settings.paymentInstructions}` : ""
+  ].filter(Boolean);
+  return sections.join("\n\n") || "Thank you for your business.";
+}
+function branchDetailsText(branch) {
+  if (!branch) return "";
+  return [
+    branch.name,
+    branch.address,
+    [branch.phone, branch.phone2].filter(Boolean).join(" / "),
+    branch.email,
+    branch.kraPin ? `KRA PIN: ${branch.kraPin}` : ""
+  ].filter(Boolean).join("\n");
+}
+async function loadStoredAssetBuffer(rawPath) {
+  if (!rawPath || !String(rawPath).startsWith("/objects/")) return null;
+  try {
+    const file2 = await objectStorageService.getObjectEntityFile(String(rawPath));
+    const [buf] = await file2.download();
+    return buf;
+  } catch {
+    return null;
+  }
+}
+function dateText2(value) {
+  if (!value) return "—";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString("en-KE", { timeZone: "Africa/Nairobi" });
+}
+function normalizeLogoUrl(logoUrl) {
+  const value = typeof logoUrl === "string" ? logoUrl.trim() : "";
+  return value || DEFAULT_COMPANY_LOGO_URL;
+}
+function absoluteLogoUrl(req, logoUrl) {
+  const resolved = normalizeLogoUrl(logoUrl);
+  if (/^https?:\/\//i.test(resolved)) return resolved;
+  const protocol = req.get("x-forwarded-proto") || req.protocol || "https";
+  return `${protocol}://${req.get("host")}${resolved.startsWith("/") ? "" : "/"}${resolved}`;
+}
+async function loadLogoBuffer(logoUrl) {
+  const resolved = normalizeLogoUrl(logoUrl);
+  if (resolved.startsWith("/objects/")) {
+    try {
+      const file2 = await objectStorageService.getObjectEntityFile(resolved);
+      const [buf] = await file2.download();
+      return buf;
+    } catch {
+      return null;
+    }
+  }
+  if (!resolved.startsWith("/")) return null;
+  const path3 = require("node:path");
+  const fs3 = require("node:fs/promises");
+  const publicRoot = path3.resolve(process.env.SERVE_CLIENT_DIR || path3.join(process.cwd(), "public"));
+  const abs = path3.resolve(publicRoot, `.${resolved}`);
+  if (abs !== publicRoot && !abs.startsWith(`${publicRoot}${path3.sep}`)) return null;
+  try {
+    return await fs3.readFile(abs);
+  } catch {
+    return null;
+  }
+}
+function documentFooterForType(settings, documentType) {
+  if (documentType === "invoice" || documentType === "delivery_note" || documentType === "credit_note") {
+    return settings.documentFooter || settings.invoiceFooter || settings.receiptFooter || "Thank you for your business.";
+  }
+  if (documentType === "quotation") {
+    return settings.documentFooter || settings.quotationFooter || settings.receiptFooter || "Thank you for your business.";
+  }
+  return settings.documentFooter || settings.receiptFooter || "Thank you for your business.";
+}
+async function loadProductNameMap(productIds) {
+  const ids = [...new Set((productIds || []).map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0))];
+  if (!ids.length) return /* @__PURE__ */ new Map();
+  const products = await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(inArray(productsTable.id, ids));
+  return new Map(products.map((product) => [product.id, product.name]));
+}
+async function formatDocumentRows(items, options = {}) {
+  const productNameMap = await loadProductNameMap((items || []).map((item) => item?.productId ?? item?.product_id));
+  const resolveDescription = options.resolveDescription || ((item) => item?.description || productNameMap.get(Number(item?.productId ?? item?.product_id)) || `Product #${item?.productId ?? item?.product_id ?? "?"}`);
+  return (items || []).map((item) => ({
+    description: resolveDescription(item),
+    quantity: safeNum(item?.quantity),
+    unitPrice: safeNum(item?.unitPrice ?? item?.unitPrice2 ?? item?.unit_price ?? item?.unitCost ?? item?.unit_cost),
+    total: safeNum(item?.total)
+  }));
+}
+function assertPdfBuffer(pdf) {
+  if (!Buffer.isBuffer(pdf) || pdf.length < 32) {
+    throw new Error("PDF generation returned an empty file.");
+  }
+  if (pdf.subarray(0, 4).toString("utf8") !== "%PDF") {
+    throw new Error("PDF generation returned invalid output.");
+  }
+  if (!pdf.includes(PDF_EOF_MARKER)) {
+    throw new Error("PDF generation returned a truncated file.");
+  }
+  return pdf;
+}
+function buildDocumentHtml(opts) {
+  const { settings, documentType, documentNumber, partyName, partyEmail, partyPhone, branchName, branch, rows, totals, notes, generatedAt, paper, requestedType } = opts;
+  const currency = settings.currency || "KES";
+  const primary = safeHex2(settings.primaryColor, "#0F172A");
+  const secondary = safeHex2(settings.secondaryColor, "#38BDF8");
+  const logoPath = selectDocumentLogoPath(settings, branch);
+  const logo = `<img src="${htmlEscape2(resolveStoredAssetUrl(logoPath) || placeholderLogoDataUri(settings.businessName || branchName || "UniquePOS", primary, secondary))}" alt="logo" class="doc-logo" />`;
+  const widthCss = paper === "58mm" ? "58mm" : paper === "80mm" ? "80mm" : "210mm";
+  const logoSize = paper === "a4" ? "96px" : paper === "80mm" ? "68px" : "54px";
+  const companyName = htmlEscape2(settings.businessName || "UniquePOS");
+  const companyAddress = htmlEscape2(settings.businessAddress || "");
+  const companyPhone = htmlEscape2([settings.businessPhone, settings.businessPhone2].filter(Boolean).join(" / "));
+  const companyEmail = htmlEscape2(settings.businessEmail || "");
+  const website = htmlEscape2(settings.website || "");
+  const taxPin = htmlEscape2(settings.taxNumber || "");
+  const vat = htmlEscape2(settings.vatNumber || "");
+  const branchInfo = htmlEscape2(branchDetailsText(branch) || branchName || "Main Branch").replace(/\n/g, "<br/>");
+  const footer = htmlEscape2(buildDocumentFooter(settings)).replace(/\n/g, "<br/>");
+  const tableRows = (rows || []).map(
+    (row, idx) => `<tr><td>${idx + 1}</td><td>${htmlEscape2(row.description)}</td><td style="text-align:right;">${safeNum(row.quantity).toLocaleString()}</td><td style="text-align:right;">${fmtCurrency2(row.unitPrice, currency)}</td><td style="text-align:right;">${fmtCurrency2(row.total, currency)}</td></tr>`
+  ).join("");
+  const notesBlock = htmlEscape2(notes || "").replace(/\n/g, "<br/>");
+  return `<!doctype html><html><head><meta charset="utf-8"/><title>${companyName} - ${htmlEscape2(documentType)} ${htmlEscape2(documentNumber || "")}</title><style>
+  @page { size: ${paper === "a4" ? "A4" : widthCss} auto; margin: 10mm; }
+  body { font-family: Arial, sans-serif; color: #0f172a; }
+  .doc { width: min(${widthCss}, 100%); margin: 0 auto; }
+  .head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; border-bottom:2px solid ${secondary}; padding-bottom:10px; }
+  .brand-head { display:flex; gap:12px; align-items:flex-start; }
+  .doc-logo { width:${logoSize}; max-width:100%; max-height:${logoSize}; object-fit:contain; border-radius:12px; background:#fff; }
+  .small { color:#475569; font-size:12px; line-height:1.45; }
+  .meta { margin:12px 0; font-size:13px; }
+  table { width:100%; border-collapse: collapse; font-size:12px; }
+  th,td { border:1px solid #cbd5e1; padding:6px; vertical-align:top; }
+  th { background:${primary}; color:#fff; text-align:left; }
+  .totals { margin-top:10px; font-size:13px; }
+  .footer { margin-top:14px; border-top:1px dashed ${secondary}; padding-top:8px; font-size:12px; color:#334155; white-space:pre-wrap; }
+  .actions { margin: 14px 0; }
+  .branch-block { margin-top:8px; padding:8px 10px; background:#f8fafc; border-left:4px solid ${secondary}; }
+  .doc-title { margin:0; text-transform:uppercase; color:${primary}; }
+  @media print { .actions { display:none; } }
+  @media (max-width: 640px) { .head,.brand-head { flex-direction:column; } .doc-logo { width:min(${logoSize}, 40vw); max-height:min(${logoSize}, 40vw); } }
+  </style></head><body><div class="doc">
+  <div class="actions"><button onclick="window.print()">Print</button></div>
+  <div class="head"><div class="brand-head">${logo}<div><h2 style="margin:0;">${companyName}</h2><div class="small">${companyAddress}<br/>Tel: ${companyPhone}<br/>Email: ${companyEmail}<br/>Web: ${website}<br/>KRA PIN: ${taxPin}<br/>VAT: ${vat}</div><div class="small branch-block"><strong>Branch details</strong><br/>${branchInfo}</div></div></div>
+  <div><h3 class="doc-title">${htmlEscape2(documentType)}</h3><div class="small">No: ${htmlEscape2(documentNumber || "—")}<br/>Generated: ${htmlEscape2(generatedAt)}<br/>Party: ${htmlEscape2(partyName || "Walk-in")}<br/>Phone: ${htmlEscape2(partyPhone || "—")}<br/>Email: ${htmlEscape2(partyEmail || "—")}</div></div></div>
+  <div class="meta">${notesBlock}</div>
+  <table><thead><tr><th>#</th><th>Description</th><th>Qty</th><th>Unit</th><th>Total</th></tr></thead><tbody>${tableRows || '<tr><td colspan="5">No line items</td></tr>'}</tbody></table>
+  <div class="totals"><strong>Subtotal:</strong> ${fmtCurrency2(totals.subtotal, currency)} &nbsp; <strong>Tax:</strong> ${fmtCurrency2(totals.tax, currency)} &nbsp; <strong>Discount:</strong> ${fmtCurrency2(totals.discount, currency)} &nbsp; <strong>Grand Total:</strong> ${fmtCurrency2(totals.total, currency)}</div>
+  <div class="footer">${footer}</div></div></body></html>`;
+}
+async function resolveDocumentPayload(req, type, id) {
+  const settings = await getDocSettings();
+  const requestedType = type;
+  const mappedType = type === "payment_receipt" ? "receipt" : type === "delivery_note" ? "invoice" : type === "credit_note" ? "invoice" : type;
+  type = mappedType;
+  if (type === "invoice") {
+    const [invoice] = await db.select().from(invoicesTable).where(eq(invoicesTable.id, id));
+    if (!invoice || !isBranchInScope(req, invoice.branchId)) return null;
+    const items = await db.select().from(invoiceItemsTable).where(eq(invoiceItemsTable.invoiceId, invoice.id));
+    const [customer] = invoice.customerId ? await db.select().from(customersTable).where(eq(customersTable.id, invoice.customerId)) : [null];
+    const branch = await getBranchDetails(invoice.branchId);
+    const invoiceTotals = {
+      subtotal: invoice.subtotal,
+      tax: invoice.taxAmount,
+      discount: invoice.discountAmount,
+      total: requestedType === "credit_note" ? -safeNum(invoice.total) : invoice.total
+    };
+    return {
+      settings,
+      documentType: requestedType === "delivery_note" ? "Delivery Note" : requestedType === "credit_note" ? "Credit Note" : "Invoice",
+      documentNumber: invoice.invoiceNumber,
+      branchName: branch?.name ?? await getBranchName(invoice.branchId),
+      branch,
+      partyName: customer?.name ?? "Walk-in",
+      partyEmail: customer?.email ?? "",
+      partyPhone: customer?.phone ?? "",
+      notes: [invoice.notes, settings.invoicePaymentTerms].filter(Boolean).join("\n"),
+      requestedType,
+      rows: await formatDocumentRows(items),
+      totals: invoiceTotals
+    };
+  }
+  if (type === "quotation") {
+    const [quotation] = await db.select().from(quotationsTable).where(eq(quotationsTable.id, id));
+    if (!quotation || !isBranchInScope(req, quotation.branchId)) return null;
+    const items = await db.select().from(quotationItemsTable).where(eq(quotationItemsTable.quotationId, quotation.id));
+    const [customer] = quotation.customerId ? await db.select().from(customersTable).where(eq(customersTable.id, quotation.customerId)) : [null];
+    const branch = await getBranchDetails(quotation.branchId);
+    return {
+      settings,
+      documentType: "Quotation",
+      documentNumber: quotation.quotationNumber,
+      branchName: branch?.name ?? await getBranchName(quotation.branchId),
+      branch,
+      partyName: customer?.name ?? "Walk-in",
+      partyEmail: customer?.email ?? "",
+      partyPhone: customer?.phone ?? "",
+      notes: [quotation.notes, quotation.paymentTerms, settings.invoicePaymentTerms, settings.quotationValidityDays ? `Quotation validity: ${settings.quotationValidityDays} day(s)` : ""].filter(Boolean).join("\n"),
+      requestedType,
+      rows: await formatDocumentRows(items),
+      totals: { subtotal: quotation.subtotal, tax: quotation.taxAmount, discount: quotation.discountAmount, total: quotation.total }
+    };
+  }
+  if (type === "receipt") {
+    const [sale] = await db.select().from(salesTable).where(eq(salesTable.id, id));
+    if (!sale || !isBranchInScope(req, sale.branchId)) return null;
+    const items = await db.select().from(saleItemsTable).where(eq(saleItemsTable.saleId, sale.id));
+    const [customer] = sale.customerId ? await db.select().from(customersTable).where(eq(customersTable.id, sale.customerId)) : [null];
+    const branch = await getBranchDetails(sale.branchId);
+    return {
+      settings,
+      documentType: "Receipt",
+      documentNumber: sale.receiptNumber,
+      branchName: branch?.name ?? await getBranchName(sale.branchId),
+      branch,
+      partyName: customer?.name ?? "Walk-in",
+      partyEmail: customer?.email ?? "",
+      partyPhone: customer?.phone ?? "",
+      notes: `Payment method: ${sale.paymentMethod || "cash"}`,
+      requestedType,
+      rows: await formatDocumentRows(items),
+      totals: { subtotal: sale.subtotal, tax: sale.taxAmount ?? 0, discount: sale.discountAmount, total: sale.total }
+    };
+  }
+  if (type === "customer_statement") {
+    const [customer] = await db.select().from(customersTable).where(eq(customersTable.id, id));
+    if (!customer || !isBranchInScope(req, customer.branchId)) return null;
+    const invoices = await db.select().from(invoicesTable).where(eq(invoicesTable.customerId, id)).orderBy(sql`${invoicesTable.createdAt} desc`).limit(200);
+    const branch = await getBranchDetails(customer.branchId);
+    return {
+      settings,
+      documentType: "Customer Statement",
+      documentNumber: `CST-${customer.id}`,
+      branchName: branch?.name ?? await getBranchName(customer.branchId),
+      branch,
+      partyName: customer.name,
+      partyEmail: customer.email ?? "",
+      partyPhone: customer.phone ?? "",
+      notes: "Outstanding invoices and balances.",
+      requestedType,
+      rows: invoices.map((i) => ({ description: `${i.invoiceNumber} (${dateText2(i.createdAt)})`, quantity: 1, unitPrice: i.total, total: i.balanceDue })),
+      totals: {
+        subtotal: invoices.reduce((sum, i) => sum + safeNum(i.total), 0),
+        tax: 0,
+        discount: 0,
+        total: invoices.reduce((sum, i) => sum + safeNum(i.balanceDue), 0)
+      }
+    };
+  }
+  if (type === "supplier_statement") {
+    const [supplier] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, id));
+    if (!supplier || !isBranchInScope(req, supplier.branchId)) return null;
+    const purchases = await db.select().from(purchasesTable).where(eq(purchasesTable.supplierId, id)).orderBy(sql`${purchasesTable.createdAt} desc`).limit(200);
+    const branch = await getBranchDetails(supplier.branchId);
+    return {
+      settings,
+      documentType: "Supplier Statement",
+      documentNumber: `SST-${supplier.id}`,
+      branchName: branch?.name ?? await getBranchName(supplier.branchId),
+      branch,
+      partyName: supplier.name,
+      partyEmail: supplier.email ?? "",
+      partyPhone: supplier.phone ?? "",
+      notes: "Purchase order history and balances.",
+      requestedType,
+      rows: purchases.map((p) => ({ description: `${p.purchaseNumber} (${dateText2(p.createdAt)})`, quantity: 1, unitPrice: p.total, total: p.total })),
+      totals: {
+        subtotal: purchases.reduce((sum, p) => sum + safeNum(p.total), 0),
+        tax: purchases.reduce((sum, p) => sum + safeNum(p.taxAmount), 0),
+        discount: 0,
+        total: purchases.reduce((sum, p) => sum + safeNum(p.total), 0)
+      }
+    };
+  }
+  if (type === "purchase_order" || type === "goods_received_note") {
+    const [purchase] = await db.select().from(purchasesTable).where(eq(purchasesTable.id, id));
+    if (!purchase || !isBranchInScope(req, purchase.branchId)) return null;
+    const [supplier] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, purchase.supplierId));
+    const items = await db.select().from(purchaseItemsTable).where(eq(purchaseItemsTable.purchaseId, purchase.id));
+    const branch = await getBranchDetails(purchase.branchId);
+    return {
+      settings,
+      documentType: type === "purchase_order" ? "Purchase Order" : "Goods Received Note",
+      documentNumber: purchase.purchaseNumber,
+      branchName: branch?.name ?? await getBranchName(purchase.branchId),
+      branch,
+      partyName: supplier?.name ?? "Supplier",
+      partyEmail: supplier?.email ?? "",
+      partyPhone: supplier?.phone ?? "",
+      notes: [purchase.notes, type === "goods_received_note" ? `Received date: ${purchase.receivedDate || "Pending"}` : `Expected date: ${purchase.expectedDate || "—"}`].filter(Boolean).join("\n"),
+      requestedType,
+      rows: await formatDocumentRows(items),
+      totals: { subtotal: purchase.subtotal, tax: purchase.taxAmount, discount: 0, total: purchase.total }
+    };
+  }
+  if (type === "stock_transfer_note") {
+    const [transfer] = await db.select().from(stockTransfersTable).where(eq(stockTransfersTable.id, id));
+    if (!transfer || (!isBranchInScope(req, transfer.sourceBranchId) && !isBranchInScope(req, transfer.destinationBranchId))) return null;
+    const [product] = await db.select().from(productsTable).where(eq(productsTable.id, transfer.productId));
+    const branch = await getBranchDetails(transfer.sourceBranchId);
+    return {
+      settings,
+      documentType: "Stock Transfer Note",
+      documentNumber: transfer.transferNumber,
+      branchName: `${await getBranchName(transfer.sourceBranchId)} → ${await getBranchName(transfer.destinationBranchId)}`,
+      branch,
+      partyName: "Internal Transfer",
+      partyEmail: "",
+      partyPhone: "",
+      notes: [transfer.notes, transfer.status ? `Status: ${transfer.status}` : ""].filter(Boolean).join("\n"),
+      requestedType,
+      rows: [{ description: product?.productName || `Product #${transfer.productId}`, quantity: transfer.quantity, unitPrice: 0, total: 0 }],
+      totals: { subtotal: 0, tax: 0, discount: 0, total: 0 }
+    };
+  }
+  if (type === "stock_adjustment_report") {
+    const movements = await db.select().from(stockMovementsTable).where(and(eq(stockMovementsTable.type, "adjust"), branchCondition(stockMovementsTable.branchId, req))).orderBy(sql`${stockMovementsTable.createdAt} desc`).limit(200);
+    const productIds = movements.map((m) => m.productId).filter(Boolean);
+    const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(inArray(productsTable.id, productIds)) : [];
+    const map2 = new Map(products.map((p) => [p.id, p.name]));
+    const branch = movements[0] ? await getBranchDetails(movements[0].branchId) : null;
+    const branchName = branch?.name ?? (movements[0] ? await getBranchName(movements[0].branchId) : "All branches");
+    return {
+      settings,
+      documentType: "Stock Adjustment Report",
+      documentNumber: `SAR-${new Date().toISOString().slice(0, 10)}`,
+      branchName,
+      branch,
+      partyName: "Internal",
+      partyEmail: "",
+      partyPhone: "",
+      notes: "Latest stock adjustments",
+      requestedType,
+      rows: movements.map((m) => ({ description: `${map2.get(m.productId) || `Product #${m.productId}`} (${dateText2(m.createdAt)})`, quantity: m.quantity, unitPrice: 0, total: 0 })),
+      totals: { subtotal: 0, tax: 0, discount: 0, total: 0 }
+    };
+  }
+  return null;
+}
+async function renderPdfBuffer(payload, paper) {
+  const primary = safeHex2(payload.settings.primaryColor, "#0F172A");
+  const secondary = safeHex2(payload.settings.secondaryColor, "#38BDF8");
+  const logoPath = selectDocumentLogoPath(payload.settings, payload.branch);
+  const logoBuffer = await loadStoredAssetBuffer(logoPath);
+  const footerText = buildDocumentFooter(payload.settings);
+  const branchText = branchDetailsText(payload.branch) || payload.branchName || "Main Branch";
+  const logoSize = paper === "a4" ? 72 : paper === "80mm" ? 54 : 42;
+  const headerHeight = paper === "a4" ? 104 : 90;
+  let doc;
+  let timeoutTimer;
+  return await new Promise((resolve4, reject) => {
+    let settled = false;
+    function settle(fn, value) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutTimer);
+      fn(value);
+    }
+    timeoutTimer = setTimeout(() => {
+      try { if (doc) doc.end(); } catch {}
+      settle(reject, new Error("PDF generation timed out"));
+    }, PDF_GENERATION_TIMEOUT_MS);
+    if (timeoutTimer.unref) timeoutTimer.unref();
+    const chunks = [];
+    doc = new import_pdfkit.default({ margin: 28, size: paperToPdfSize(paper) });
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("error", (err) => settle(reject, err));
+    doc.on("end", () => settle(resolve4, Buffer.concat(chunks)));
+    const currency = payload.settings.currency || "KES";
+    const left = doc.page.margins.left;
+    const top = doc.page.margins.top;
+    const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    doc.roundedRect(left, top, contentWidth, headerHeight, 16).fill(primary);
+    const logoX = left + 14;
+    const logoY = top + 16;
+    if (logoBuffer) {
+      try {
+        doc.image(logoBuffer, logoX, logoY, { fit: [logoSize, logoSize], align: "center", valign: "center" });
+      } catch {
+        doc.roundedRect(logoX, logoY, logoSize, logoSize, 12).fill(secondary);
+        doc.fillColor("white").font("Helvetica-Bold").fontSize(Math.max(14, Math.round(logoSize / 2.2))).text(brandInitials2(payload.settings.businessName), logoX, logoY + logoSize / 3, { width: logoSize, align: "center" });
+      }
+    } else {
+      doc.roundedRect(logoX, logoY, logoSize, logoSize, 12).fill(secondary);
+      doc.fillColor("white").font("Helvetica-Bold").fontSize(Math.max(14, Math.round(logoSize / 2.2))).text(brandInitials2(payload.settings.businessName), logoX, logoY + logoSize / 3, { width: logoSize, align: "center" });
+    }
+    const textX = logoX + logoSize + 16;
+    doc.fillColor("white").font("Helvetica-Bold").fontSize(paper === "a4" ? 18 : 13).text(payload.settings.businessName || "UniquePOS", textX, top + 14, { width: contentWidth - (textX - left) - 12 });
+    doc.font("Helvetica").fontSize(9).fillColor("#D6E4F0").text(payload.settings.businessAddress || "-", textX, top + 40, { width: contentWidth - (textX - left) - 12 });
+    doc.text(`Tel: ${[payload.settings.businessPhone, payload.settings.businessPhone2].filter(Boolean).join(" / ") || "-"}`, textX, doc.y + 2, { width: contentWidth - (textX - left) - 12 });
+    doc.text(`Email: ${payload.settings.businessEmail || "-"}  Web: ${payload.settings.website || "-"}`, textX, doc.y + 2, { width: contentWidth - (textX - left) - 12 });
+    doc.text(`KRA PIN: ${payload.settings.taxNumber || "-"}   VAT: ${payload.settings.vatNumber || "-"}`, textX, doc.y + 2, { width: contentWidth - (textX - left) - 12 });
+    doc.y = top + headerHeight + 12;
+    doc.fillColor(primary).font("Helvetica-Bold").fontSize(13).text(`${payload.documentType.toUpperCase()}  ${payload.documentNumber || ""}`, { align: "left" });
+    doc.moveDown(0.2);
+    doc.font("Helvetica").fontSize(10).fillColor("#111827").text(`Branch: ${payload.branchName}  Generated: ${dateText2(/* @__PURE__ */ new Date())}`);
+    doc.text(branchText.replace(/\n/g, " • "));
+    doc.text(`Party: ${payload.partyName || "Walk-in"}  Phone: ${payload.partyPhone || "-"}  Email: ${payload.partyEmail || "-"}`);
+    doc.moveDown(0.3);
+    (payload.rows || []).forEach((row, index) => {
+      doc.fontSize(9).text(`${index + 1}. ${row.description} | Qty ${safeNum(row.quantity)} | Unit ${fmtCurrency2(row.unitPrice, currency)} | Total ${fmtCurrency2(row.total, currency)}`);
+    });
+    doc.moveDown(0.5);
+    doc.fontSize(10).text(`Subtotal: ${fmtCurrency2(payload.totals.subtotal, currency)}`);
+    doc.text(`Tax: ${fmtCurrency2(payload.totals.tax, currency)}`);
+    doc.text(`Discount: ${fmtCurrency2(payload.totals.discount, currency)}`);
+    doc.fillColor(primary).font("Helvetica-Bold").fontSize(11).text(`Grand Total: ${fmtCurrency2(payload.totals.total, currency)}`);
+    doc.moveDown(0.4);
+    doc.fillColor("#111827").font("Helvetica").fontSize(9);
+    if (payload.notes) doc.text(`Notes: ${payload.notes}`);
+    doc.moveDown(0.4);
+    doc.fillColor(secondary).font("Helvetica-Bold").fontSize(9).text("Terms, warranty & footer");
+    doc.fillColor("#111827").font("Helvetica").fontSize(9).text(footerText);
+    doc.end();
+  });
+}
+router17.get("/documents/:type/:id/preview", async (req, res) => {
+  try {
+    const type = String(req.params.type || "").toLowerCase();
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: "invalid document id" });
+      return;
+    }
+    const payload = await resolveDocumentPayload(req, type, id);
+    if (!payload) {
+      res.status(404).json({ error: "document not found" });
+      return;
+    }
+    const paper = normalizePaper(req.query.paper, type === "receipt" ? "80mm" : "a4");
+    const html = buildDocumentHtml({
+      ...payload,
+      logoSrc: absoluteLogoUrl(req, payload.settings.logoUrl),
+      paper,
+      generatedAt: dateText2(/* @__PURE__ */ new Date())
+    });
+    res.json({ html });
+  } catch (error40) {
+    console.error("[documents.preview] Failed to build preview", error40);
+    res.status(500).json({ error: "Unable to build document preview." });
+  }
+});
+router17.get("/documents/:type/:id/pdf", async (req, res) => {
+  try {
+    const type = String(req.params.type || "").toLowerCase();
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: "invalid document id" });
+      return;
+    }
+    const payload = await resolveDocumentPayload(req, type, id);
+    if (!payload) {
+      res.status(404).json({ error: "document not found" });
+      return;
+    }
+    const paper = normalizePaper(req.query.paper, type === "receipt" ? "80mm" : "a4");
+    const pdf = assertPdfBuffer(await renderPdfBuffer(payload, paper));
+    const fileBase = `${type}-${payload.documentNumber || id}`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+    const disposition = String(req.query.disposition || "").toLowerCase() === "attachment" || String(req.query.download || "") === "1" ? "attachment" : "inline";
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `${disposition}; filename="${fileBase}.pdf"`);
+    res.setHeader("Content-Length", String(pdf.length));
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.send(pdf);
+  } catch (error40) {
+    console.error("[documents.pdf] Failed to generate PDF", error40);
+    res.status(500).json({ error: "Unable to generate document PDF." });
+  }
+});
+router17.post("/documents/:type/:id/email", async (req, res) => {
+  try {
+    const type = String(req.params.type || "").toLowerCase();
+    const id = Number(req.params.id);
+    const to = String(req.body?.to || "").trim();
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: "invalid document id" });
+      return;
+    }
+    if (!to) {
+      res.status(400).json({ error: "recipient email is required" });
+      return;
+    }
+    const payload = await resolveDocumentPayload(req, type, id);
+    if (!payload) {
+      res.status(404).json({ error: "document not found" });
+      return;
+    }
+    const smtpHost = payload.settings.smtpHost;
+    if (!smtpHost) {
+      res.status(400).json({ error: "SMTP host is not configured in settings" });
+      return;
+    }
+    const pdf = await renderPdfBuffer(payload, type === "receipt" ? "80mm" : "a4");
+    const transport = createTransport({
+      host: smtpHost,
+      port: payload.settings.smtpPort ?? 587,
+      user: payload.settings.smtpUser ?? "",
+      from: payload.settings.smtpFrom ?? payload.settings.smtpUser ?? ""
+    });
+    const subject = `${payload.settings.businessName || "UniquePOS"} ${payload.documentType} ${payload.documentNumber || ""}`.trim();
+    const emailPrimary = safeHex2(payload.settings.primaryColor, "#0F172A");
+    const emailSecondary = safeHex2(payload.settings.secondaryColor, "#38BDF8");
+    const emailLogoPath = selectDocumentLogoPath(payload.settings, payload.branch);
+    const emailLogoBuffer = await loadStoredAssetBuffer(emailLogoPath);
+    const emailLogoSrc = emailLogoBuffer ? `data:${assetMimeType(emailLogoPath)};base64,${emailLogoBuffer.toString("base64")}` : resolveStoredAssetUrl(emailLogoPath) || placeholderLogoDataUri(payload.settings.businessName || payload.branchName || "UniquePOS", emailPrimary, emailSecondary);
+    const emailFooter = htmlEscape2(buildDocumentFooter(payload.settings)).replace(/\n/g, "<br/>");
+    const emailBranch = htmlEscape2(branchDetailsText(payload.branch) || payload.branchName || "Main Branch").replace(/\n/g, "<br/>");
+    const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5;">
+  <div style="max-width:680px;margin:0 auto;border:1px solid #dbe4ef;border-radius:18px;overflow:hidden;">
+  <div style="background:${emailPrimary};padding:20px;color:#fff;">
+  <table role="presentation" style="width:100%;border-collapse:collapse;"><tr><td style="vertical-align:top;width:84px;"><img src="${emailLogoSrc}" alt="Company logo" style="width:72px;height:72px;object-fit:contain;border-radius:14px;background:#fff;display:block;" /></td><td style="vertical-align:top;padding-left:12px;"><h2 style="margin:0;color:#fff;">${htmlEscape2(payload.settings.businessName || "UniquePOS")}</h2><div style="font-size:13px;line-height:1.5;color:#d6e4f0;">${htmlEscape2(payload.settings.businessAddress || "")}<br/>Tel: ${htmlEscape2([payload.settings.businessPhone, payload.settings.businessPhone2].filter(Boolean).join(" / ") || "-")}<br/>Email: ${htmlEscape2(payload.settings.businessEmail || "-")}<br/>Web: ${htmlEscape2(payload.settings.website || "-")}<br/>KRA PIN: ${htmlEscape2(payload.settings.taxNumber || "-")}<br/>VAT: ${htmlEscape2(payload.settings.vatNumber || "-")}</div></td></tr></table>
+  </div>
+  <div style="padding:20px 22px;">
+  <h2 style="margin:0 0 10px;color:${emailPrimary};">${htmlEscape2(payload.documentType)} ${htmlEscape2(payload.documentNumber || "")}</h2>
+  <p>Hello ${htmlEscape2(payload.partyName || "Customer")},</p>
+  <p>Please find your ${htmlEscape2(payload.documentType.toLowerCase())} attached as PDF.</p>
+  <p>Total: <strong>${fmtCurrency2(payload.totals.total, payload.settings.currency || "KES")}</strong></p>
+  <p style="margin:0 0 14px;"><strong>Branch details</strong><br/>${emailBranch}</p>
+  <div style="padding:14px 16px;background:#f8fafc;border-left:4px solid ${emailSecondary};font-size:13px;">${emailFooter}</div>
+  <p style="margin:16px 0 0;">${htmlEscape2(payload.settings.businessName || "UniquePOS")}<br/>${htmlEscape2(payload.settings.businessPhone || "")}</p>
+  </div></div></body></html>`;
+    const fileBase = `${type}-${payload.documentNumber || id}`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+    await transport.sendMail({
+      from: payload.settings.smtpFrom || payload.settings.smtpUser,
+      to,
+      subject,
+      html,
+      text: `${payload.documentType} ${payload.documentNumber || ""}\nTotal: ${fmtCurrency2(payload.totals.total, payload.settings.currency || "KES")}\nBranch: ${branchDetailsText(payload.branch) || payload.branchName || "Main Branch"}\n\n${buildDocumentFooter(payload.settings)}`,
+      attachments: [{ filename: `${fileBase}.pdf`, content: pdf, contentType: "application/pdf" }]
+    });
+    await logAudit(req, {
+      action: "document.email_sent",
+      entityType: "document",
+      description: `Emailed ${type} ${payload.documentNumber || id} to ${to}`
+    });
+    res.json({ ok: true });
+  } catch (error40) {
+    console.error("[documents.email] Failed to send document email", error40);
+    res.status(500).json({ error: "Unable to send document email." });
+  }
+});
+var documents_default = router17;
+
+// artifacts/api-server/src/routes/reports.ts
+var import_express18 = __toESM(require_express2(), 1);
+var router18 = (0, import_express18.Router)();
 function combine2(...conds) {
   const list = conds.filter((c) => c !== void 0);
   return list.length ? and(...list) : void 0;
 }
-router17.get("/reports/sales-summary", async (req, res) => {
+router18.get("/reports/sales-summary", async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) {
     res.status(400).json({ error: "from and to dates required" });
@@ -71759,7 +72535,7 @@ router17.get("/reports/sales-summary", async (req, res) => {
     daily_breakdown: daily.map((d) => ({ date: d.date, total: Number(d.total), count: Number(d.count) }))
   });
 });
-router17.get("/reports/profit-loss", async (req, res) => {
+router18.get("/reports/profit-loss", async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) {
     res.status(400).json({ error: "from and to dates required" });
@@ -71793,7 +72569,7 @@ router17.get("/reports/profit-loss", async (req, res) => {
     expense_breakdown: expenseByCategory.map((e) => ({ category: e.category, amount: Number(e.amount) }))
   });
 });
-router17.get("/reports/inventory-valuation", async (req, res) => {
+router18.get("/reports/inventory-valuation", async (req, res) => {
   const products = await db.select().from(productsTable).orderBy(productsTable.productName);
   const categories = await db.select().from(categoriesTable);
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c.name]));
@@ -71823,7 +72599,7 @@ router17.get("/reports/inventory-valuation", async (req, res) => {
   });
   res.json({ total_cost_value: totalCostValue, total_selling_value: totalSellingValue, potential_profit: totalSellingValue - totalCostValue, items });
 });
-router17.get("/reports/branch-comparison", requireSuperAdmin, async (req, res) => {
+router18.get("/reports/branch-comparison", requireSuperAdmin, async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) {
     res.status(400).json({ error: "from and to dates required" });
@@ -71885,12 +72661,12 @@ router17.get("/reports/branch-comparison", requireSuperAdmin, async (req, res) =
   });
   res.json({ branches: rows });
 });
-var reports_default = router17;
+var reports_default = router18;
 
 // artifacts/api-server/src/routes/admin.ts
-var import_express18 = __toESM(require_express2(), 1);
-var router18 = (0, import_express18.Router)();
-router18.post("/admin/reset-transactional-data", async (req, res) => {
+var import_express19 = __toESM(require_express2(), 1);
+var router19 = (0, import_express19.Router)();
+router19.post("/admin/reset-transactional-data", async (req, res) => {
   const user = req.user;
   if (!user || user.role !== "super_admin") {
     res.status(403).json({ error: "super_admin role required" });
@@ -71934,10 +72710,10 @@ router18.post("/admin/reset-transactional-data", async (req, res) => {
     res.status(500).json({ error: "Reset failed", detail: message });
   }
 });
-var admin_default = router18;
+var admin_default = router19;
 
 // artifacts/api-server/src/routes/backups.ts
-var import_express19 = __toESM(require_express2(), 1);
+var import_express26 = __toESM(require_express2(), 1);
 
 // artifacts/api-server/src/lib/backup.local.ts
 var import_child_process = require("child_process");
@@ -72086,7 +72862,7 @@ async function getBackupStream(filename) {
 }
 
 // artifacts/api-server/src/routes/backups.ts
-var router19 = (0, import_express19.Router)();
+var router_backups = (0, import_express_backups.Router)();
 var ADMIN_ROLES = /* @__PURE__ */ new Set(["super_admin", "business_owner"]);
 function sanitizeFilename(raw) {
   return raw.replace(/[^a-zA-Z0-9._-]/g, "");
@@ -72108,7 +72884,7 @@ function nowEAT() {
     timeStyle: "short"
   });
 }
-router19.get("/admin/backups/status", async (req, res) => {
+router_backups.get("/admin/backups/status", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -72128,7 +72904,7 @@ router19.get("/admin/backups/status", async (req, res) => {
     res.status(500).json({ error: "Failed to get backup status" });
   }
 });
-router19.get("/admin/backups", async (req, res) => {
+router_backups.get("/admin/backups", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -72141,7 +72917,7 @@ router19.get("/admin/backups", async (req, res) => {
     res.status(500).json({ error: "Failed to list backups" });
   }
 });
-router19.post("/admin/backups/run", async (req, res) => {
+router_backups.post("/admin/backups/run", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -72203,7 +72979,7 @@ router19.post("/admin/backups/run", async (req, res) => {
     }
   }
 });
-router19.post("/admin/backups/test-email", async (req, res) => {
+router_backups.post("/admin/backups/test-email", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -72241,7 +73017,7 @@ router19.post("/admin/backups/test-email", async (req, res) => {
     res.status(500).json({ error: "Failed to send test email", detail: message });
   }
 });
-router19.post("/admin/backups/:filename/restore", async (req, res) => {
+router_backups.post("/admin/backups/:filename/restore", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -72270,7 +73046,7 @@ router19.post("/admin/backups/:filename/restore", async (req, res) => {
     res.status(500).json({ error: "Restore failed", detail: message });
   }
 });
-router19.get("/admin/backups/:filename/download", async (req, res) => {
+router_backups.get("/admin/backups/:filename/download", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -72298,7 +73074,7 @@ router19.get("/admin/backups/:filename/download", async (req, res) => {
     res.status(404).json({ error: message });
   }
 });
-var backups_default = router19;
+var backups_default = router_backups;
 
 // artifacts/api-server/src/routes/audit-log.ts
 var import_express20 = __toESM(require_express2(), 1);
@@ -72338,8 +73114,32 @@ var CONTENT_TYPES = {
   ".jpeg": "image/jpeg",
   ".gif": "image/gif",
   ".webp": "image/webp",
-  ".svg": "image/svg+xml"
+  ".svg": "image/svg+xml",
+  ".csv": "text/csv; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".pdf": "application/pdf",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 };
+var ALLOWED_UPLOAD_EXTENSIONS = new Map([
+  ["image/png", ".png"],
+  ["image/jpeg", ".jpg"],
+  ["image/webp", ".webp"],
+  ["image/gif", ".gif"],
+  ["image/svg+xml", ".svg"],
+  ["text/csv", ".csv"],
+  ["text/plain", ".txt"],
+  ["application/pdf", ".pdf"],
+  ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"]
+]);
+function resolveUploadExtension(name, contentType) {
+  const fromType = ALLOWED_UPLOAD_EXTENSIONS.get(String(contentType || "").toLowerCase()) || "";
+  if (fromType) return fromType;
+  const rawExt = path2.extname(String(name || "")).toLowerCase();
+  for (const ext of ALLOWED_UPLOAD_EXTENSIONS.values()) {
+    if (rawExt === ext) return ext;
+  }
+  throw new Error("Unsupported upload file type");
+}
 var ObjectNotFoundError = class _ObjectNotFoundError extends Error {
   constructor() {
     super("Object not found");
@@ -72366,8 +73166,9 @@ var ObjectStorageService = class {
    * Returns a relative URL the browser PUTs the file bytes to. The matching
    * handler is `PUT /storage/upload/:id` (routes/storage.local.ts).
    */
-  async getObjectEntityUploadURL() {
-    const objectId = (0, import_crypto3.randomUUID)();
+  async getObjectEntityUploadURL(extension = "") {
+    const safeExtension = typeof extension === "string" && /^\.[a-z0-9]+$/.test(extension) ? extension.toLowerCase() : "";
+    const objectId = `${(0, import_crypto3.randomUUID)()}${safeExtension}`;
     const exp = String(Date.now() + UPLOAD_TTL_MS);
     const sig = signUpload(objectId, exp);
     return `/api/storage/upload/${objectId}?exp=${exp}&sig=${sig}`;
@@ -72562,16 +73363,7 @@ router20.get("/audit-log/export-pdf", async (req, res) => {
   const companyName = biz?.businessName ?? "UniquePOS";
   const companyPhone = biz?.businessPhone ?? "";
   const companyEmail = biz?.businessEmail ?? "";
-  let logoBuffer = null;
-  if (biz?.logoUrl && biz.logoUrl.startsWith("/objects/")) {
-    try {
-      const file2 = await objectStorageService.getObjectEntityFile(biz.logoUrl);
-      const [buf] = await file2.download();
-      logoBuffer = buf;
-    } catch {
-      logoBuffer = null;
-    }
-  }
+  const logoBuffer = await loadLogoBuffer(biz?.logoUrl);
   const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   const rangeLabel = from || to ? `${from || "beginning"} to ${to || today}` : `All records up to ${today}`;
   const doc = new import_pdfkit.default({ margin: 40, size: "A4" });
@@ -72591,8 +73383,14 @@ router20.get("/audit-log/export-pdf", async (req, res) => {
       doc.image(logoBuffer, 40, 15, { fit: [40, 40] });
       textX = 92;
     } catch {
+      logoBuffer = null;
       textX = 40;
     }
+  }
+  if (!logoBuffer) {
+    doc.roundedRect(40, 15, 40, 40, 10).fill(GOLD);
+    doc.fillColor("white").font("Helvetica-Bold").fontSize(16).text(brandInitials2(companyName), 40, 28, { width: 40, align: "center" });
+    textX = 92;
   }
   doc.fillColor("white").font("Helvetica-Bold").fontSize(18).text(companyName, textX, 20);
   const contactParts = [companyPhone, companyEmail].filter(Boolean);
@@ -72765,12 +73563,13 @@ router22.post(
       return;
     }
     try {
-      const uploadURL = await objectStorageService2.getObjectEntityUploadURL();
+      const uploadURL = await objectStorageService2.getObjectEntityUploadURL(resolveUploadExtension(name, content_type));
       const objectPath = objectStorageService2.normalizeObjectEntityPath(uploadURL);
       res.json({ upload_url: uploadURL, object_path: objectPath });
     } catch (error40) {
       req.log?.error?.({ err: error40 }, "Error generating upload URL");
-      res.status(500).json({ error: "Failed to generate upload URL" });
+      const message = error40 instanceof Error ? error40.message : "Failed to generate upload URL";
+      res.status(message === "Unsupported upload file type" ? 400 : 500).json({ error: message });
     }
   }
 );
@@ -73009,6 +73808,15 @@ router24.get("/security/login-history", async (req, res) => {
   });
 });
 var security_default = router24;
+var { createProductBulkRouter } = require("./product-bulk.cjs");
+var product_bulk_default = createProductBulkRouter({
+  Router: import_express25.Router,
+  pool,
+  logAudit,
+  makeBarcode,
+  requireRole,
+  resolveWriteBranchId
+});
 
 // artifacts/api-server/src/routes/index.ts
 var router25 = (0, import_express25.Router)();
@@ -73021,12 +73829,13 @@ router25.use("/expenses", requireRole("administrator"));
 router25.use("/audit-log", requireRole("administrator"));
 router25.use("/security", requireRole("administrator"));
 router25.use("/reports", requireRole("administrator", "manager"));
-router25.use("/products", requireRole("administrator", "manager", "storekeeper"));
+router25.use("/documents", requireRole("administrator", "manager", "sales_cashier", "storekeeper", "accountant"));
+router25.use("/products", requireRole("administrator", "manager", "storekeeper", "sales_cashier"));
 router25.use("/inventory", requireRole("administrator", "manager", "storekeeper"));
 router25.use("/purchases", requireRole("administrator", "manager", "storekeeper"));
 router25.use("/suppliers", requireRole("administrator", "manager", "storekeeper"));
-router25.use("/brands", requireRole("administrator", "manager", "storekeeper"));
-router25.use("/categories", requireRole("administrator", "manager", "storekeeper"));
+router25.use("/brands", requireRole("administrator", "manager", "storekeeper", "sales_cashier"));
+router25.use("/categories", requireRole("administrator", "manager", "storekeeper", "sales_cashier"));
 router25.use("/customers", requireRole("administrator", "manager", "sales_cashier"));
 router25.use("/quotations", requireRole("administrator", "manager", "sales_cashier"));
 router25.use("/invoices", requireRole("administrator", "manager", "sales_cashier"));
@@ -73039,6 +73848,7 @@ router25.use(backups_default);
 router25.use(dashboard_default);
 router25.use(categories_default);
 router25.use(brands_default);
+router25.use(product_bulk_default);
 router25.use(products_default);
 router25.use(inventory_default);
 router25.use(purchases_default);
@@ -73050,6 +73860,7 @@ router25.use(expenses_default);
 router25.use(pos_default);
 router25.use(users_default);
 router25.use(settings_default);
+router25.use(documents_default);
 router25.use(reports_default);
 router25.use(branches_default);
 router25.use(security_default);
@@ -75096,13 +75907,14 @@ var port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
-app_default.listen(port, (err) => {
+var listenHost = process.env.HOST || "0.0.0.0";
+app_default.listen(port, listenHost, (err) => {
   if (err) {
-    logger.error({ err }, "Error listening on port");
+    logger.error({ err, port, host: listenHost }, "Error listening on port");
     process.exit(1);
   }
   startScheduler();
-  logger.info({ port }, "Server listening");
+  logger.info({ port, host: listenHost }, "Server listening");
 });
 if (process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT === "1") {
   const originalRunStartupMigrations = runStartupMigrations;
@@ -75121,10 +75933,28 @@ if (process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT === "1") {
     }
   };
 }
-runStartupMigrations().catch((err) => {
-  logger.error({ err }, "Startup migrations failed \u2014 aborting");
-  process.exit(1);
-});
+var abortOnMigrationFailure = process.env.UNIQUEPOS_ABORT_ON_MIGRATION_FAILURE === "1";
+var startupMigrationRetryMsRaw = Number(process.env.UNIQUEPOS_STARTUP_MIGRATION_RETRY_MS || "30000");
+var startupMigrationRetryMs = Number.isFinite(startupMigrationRetryMsRaw) && startupMigrationRetryMsRaw > 0 ? startupMigrationRetryMsRaw : 3e4;
+var disableInternalStartupMigrations = process.env.UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS === "1";
+function startMigrationsWithRetry() {
+  runStartupMigrations().then(() => {
+    logger.info("Startup migrations complete");
+  }).catch((err) => {
+    if (abortOnMigrationFailure) {
+      logger.error({ err }, "Startup migrations failed \u2014 aborting");
+      process.exit(1);
+      return;
+    }
+    logger.error({ err, retryMs: startupMigrationRetryMs }, "Startup migrations failed \u2014 keeping server alive and retrying");
+    setTimeout(startMigrationsWithRetry, startupMigrationRetryMs);
+  });
+}
+if (disableInternalStartupMigrations) {
+  logger.info("Skipping bundled startup migrations; external bootstrap already completed.");
+} else {
+  startMigrationsWithRetry();
+}
 /*! Bundled license information:
 
 depd/index.js:
