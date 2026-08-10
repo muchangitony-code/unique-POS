@@ -209,7 +209,15 @@ function createProductBulkRouter(deps) {
   function looksLikeDelimitedText(buffer) {
     const sample = buffer.subarray(0, Math.min(buffer.length, 4096)).toString("utf8").trim();
     if (!sample) return false;
-    return sample.includes(",") || sample.includes("\t");
+    const lines = sample.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 10);
+    if (lines.length < 2) return false;
+    for (const delimiter of [",", "\t"]) {
+      const counts = lines.map((line) => line.split(delimiter).length - 1).filter((count) => count > 0);
+      if (counts.length >= 2 && counts.every((count) => count === counts[0])) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function detectImportFormat({ fileName, mimeType, sourceTypeHint, buffer }) {
