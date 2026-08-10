@@ -304,17 +304,20 @@ function createProductBulkRouter(deps) {
     return new Promise((resolve, reject) => {
       const chunks = [];
       let size = 0;
+      let aborted = false;
       req.on("data", (chunk) => {
+        if (aborted) return;
         size += chunk.length;
         if (size > max) {
+          aborted = true;
           reject(new Error("Upload too large. Maximum file size is 10 MB."));
           req.destroy();
           return;
         }
         chunks.push(chunk);
       });
-      req.on("end", () => resolve(Buffer.concat(chunks)));
-      req.on("error", reject);
+      req.on("end", () => { if (!aborted) resolve(Buffer.concat(chunks)); });
+      req.on("error", (err) => { if (!aborted) { aborted = true; reject(err); } });
     });
   }
 
@@ -841,7 +844,20 @@ function createProductBulkRouter(deps) {
     await ensureSchema();
     const fileName = trimText(String(req.query.filename || req.headers["x-filename"] || ""));
     const extension = path.extname(fileName).toLowerCase();
-    let sourceType = extension === ".csv" ? "csv" : extension === ".pdf" ? "pdf" : "xlsx";
+    let sourceType;
+    if (extension === ".csv") {
+      sourceType = "csv";
+    } else if (extension === ".pdf") {
+      sourceType = "pdf";
+    } else if (extension === ".xlsx" || extension === ".xls") {
+      sourceType = "xlsx";
+    } else if (!extension) {
+      // No extension — try to sniff: fall back to xlsx (common default)
+      sourceType = "xlsx";
+    } else {
+      res.status(400).json({ error: "Unsupported file type \u201c" + extension + "\u201d. Please upload an Excel (.xlsx), CSV (.csv), or PDF (.pdf) file." });
+      return;
+    }
     const sourceName = fileName || "Uploaded file";
 
     const buffer = await collectRawBody(req, 10 * 1024 * 1024);
