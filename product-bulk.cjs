@@ -1404,7 +1404,7 @@ function createProductBulkRouter(deps) {
       { value: product.unit || "", type: String },
       { value: Number(product.cost_price || 0), type: Number },
       { value: Number(product.selling_price || 0), type: Number },
-      { value: product.wholesale_price != null ? Number(product.wholesale_price) : "", type: product.wholesale_price != null ? Number : String },
+      { value: product.wholesale_price != null ? Number(product.wholesale_price) : 0, type: Number },
       { value: Number(product.vat_rate || 0), type: Number },
       { value: Number(product.min_stock || 0), type: Number },
       { value: Number(product.current_stock || 0), type: Number },
