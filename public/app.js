@@ -1584,7 +1584,7 @@
           URL.revokeObjectURL(pdfDocument.objectUrl);
         }, 1000);
       }
-      showToast("File sharing is not available in this browser. PDF downloaded instead.", "error");
+      showToast("File sharing is not available in this browser. PDF downloaded instead.", "success");
     } catch (error) {
       showToast(error.message || "Unable to share document.", "error");
     }
@@ -1751,82 +1751,82 @@
         clearSession();
         showLogin();
       }
-
-      function defaultDocumentPaper(type) {
-        return documentType(type) === "receipt" ? "80mm" : "a4";
-      }
-
-      function parseDocumentFileName(res, fallback) {
-        const header = firstText(res && res.headers && res.headers.get("Content-Disposition"), "");
-        const match = header.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
-        if (!match || !match[1]) return fallback;
-        try {
-          return decodeURIComponent(String(match[1]).replace(/"/g, "").trim()) || fallback;
-        } catch (error) {
-          return String(match[1]).replace(/"/g, "").trim() || fallback;
-        }
-      }
-
-      function buildDocumentPdfEndpoint(type, id, paper) {
-        return "/api/documents/" + encodeURIComponent(documentType(type)) + "/" + encodeURIComponent(id) + "/pdf?paper=" + encodeURIComponent(paper || defaultDocumentPaper(type));
-      }
-
-      async function fetchDocumentPdf(type, id, paper) {
-        const url = buildDocumentPdfEndpoint(type, id, paper);
-        const res = await authorizedFetch(url, { headers: { Accept: "application/pdf" } });
-        if (res.status === 401) {
-          clearSession();
-          showLogin();
-          throw new Error("Your session expired. Please sign in again.");
-        }
-        if (!res.ok) {
-          const errorBody = await res.json().catch(function () { return {}; });
-          throw new Error(firstText(errorBody.error, errorBody.message, res.statusText, "Unable to generate PDF"));
-        }
-        const contentType = firstText(res.headers.get("Content-Type"), "");
-        if (contentType.toLowerCase().indexOf("application/pdf") === -1) {
-          throw new Error("The server returned an invalid PDF response.");
-        }
-        const blob = await res.blob();
-        if (!blob || !blob.size) {
-          throw new Error("The generated PDF was empty.");
-        }
-        const fallback = documentType(type) + "-" + String(id) + ".pdf";
-        return {
-          blob: blob,
-          objectUrl: URL.createObjectURL(blob),
-          fileName: parseDocumentFileName(res, fallback)
-        };
-      }
-
-      async function ensureDocumentPdf(type, id, paper) {
-        if (state.modalDocument && state.modalDocument.objectUrl && state.modalDocument.type === documentType(type) && String(state.modalDocument.id) === String(id) && state.modalDocument.paper === (paper || defaultDocumentPaper(type))) {
-          return state.modalDocument;
-        }
-        return fetchDocumentPdf(type, id, paper || defaultDocumentPaper(type));
-      }
-
-      function triggerBlobDownload(objectUrl, fileName) {
-        const link = document.createElement("a");
-        link.href = objectUrl;
-        link.download = fileName || "document.pdf";
-        link.rel = "noopener";
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-      }
-
-      function resetModalDocument() {
-        if (state.modalDocument && state.modalDocument.objectUrl) {
-          URL.revokeObjectURL(state.modalDocument.objectUrl);
-        }
-        state.modalDocument = null;
-      }
       throw new Error(firstText(errorBody.error, errorBody.message, res.statusText, 'Request failed'));
     }
     if (res.status === 204) return null;
     const text = await res.text();
     return text ? JSON.parse(text) : null;
+  }
+
+  function defaultDocumentPaper(type) {
+    return documentType(type) === "receipt" ? "80mm" : "a4";
+  }
+
+  function parseDocumentFileName(res, fallback) {
+    const header = firstText(res && res.headers && res.headers.get("Content-Disposition"), "");
+    const match = header.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
+    if (!match || !match[1]) return fallback;
+    try {
+      return decodeURIComponent(String(match[1]).replace(/"/g, "").trim()) || fallback;
+    } catch (error) {
+      return String(match[1]).replace(/"/g, "").trim() || fallback;
+    }
+  }
+
+  function buildDocumentPdfEndpoint(type, id, paper) {
+    return "/api/documents/" + encodeURIComponent(documentType(type)) + "/" + encodeURIComponent(id) + "/pdf?paper=" + encodeURIComponent(paper || defaultDocumentPaper(type));
+  }
+
+  async function fetchDocumentPdf(type, id, paper) {
+    const url = buildDocumentPdfEndpoint(type, id, paper);
+    const res = await authorizedFetch(url, { headers: { Accept: "application/pdf" } });
+    if (res.status === 401) {
+      clearSession();
+      showLogin();
+      throw new Error("Your session expired. Please sign in again.");
+    }
+    if (!res.ok) {
+      const errorBody = await res.json().catch(function () { return {}; });
+      throw new Error(firstText(errorBody.error, errorBody.message, res.statusText, "Unable to generate PDF"));
+    }
+    const contentType = firstText(res.headers.get("Content-Type"), "");
+    if (contentType.toLowerCase().indexOf("application/pdf") === -1) {
+      throw new Error("The server returned an invalid PDF response.");
+    }
+    const blob = await res.blob();
+    if (!blob || !blob.size) {
+      throw new Error("The generated PDF was empty.");
+    }
+    const fallback = documentType(type) + "-" + String(id) + ".pdf";
+    return {
+      blob: blob,
+      objectUrl: URL.createObjectURL(blob),
+      fileName: parseDocumentFileName(res, fallback)
+    };
+  }
+
+  async function ensureDocumentPdf(type, id, paper) {
+    if (state.modalDocument && state.modalDocument.objectUrl && state.modalDocument.type === documentType(type) && String(state.modalDocument.id) === String(id) && state.modalDocument.paper === (paper || defaultDocumentPaper(type))) {
+      return state.modalDocument;
+    }
+    return fetchDocumentPdf(type, id, paper || defaultDocumentPaper(type));
+  }
+
+  function triggerBlobDownload(objectUrl, fileName) {
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = fileName || "document.pdf";
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  function resetModalDocument() {
+    if (state.modalDocument && state.modalDocument.objectUrl) {
+      URL.revokeObjectURL(state.modalDocument.objectUrl);
+    }
+    state.modalDocument = null;
   }
 
   function fetchWithJson(url, options) {
