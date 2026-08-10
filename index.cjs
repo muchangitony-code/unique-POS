@@ -70080,14 +70080,42 @@ router6.get("/products", async (req, res) => {
   const offset = (p - 1) * l;
   res.json({ data: formatted.slice(offset, offset + l), total, page: p, limit: l });
 });
+async function generateUniqueProductCode(dbConn) {
+  const prefix = "P";
+  const rows = await dbConn.execute(
+    sql`SELECT product_code FROM products WHERE product_code ~ ${`^${prefix}[0-9]{6,}$`} ORDER BY length(product_code) DESC, product_code DESC LIMIT 1`
+  );
+  let next = 1;
+  if (rows.rows && rows.rows.length > 0) {
+    const last = rows.rows[0].product_code;
+    const num = parseInt(last.slice(prefix.length), 10);
+    if (!isNaN(num)) next = num + 1;
+  }
+  let candidate = prefix + String(next).padStart(6, "0");
+  while (true) {
+    const [existing] = await dbConn.select({ code: productsTable.productCode }).from(productsTable).where(eq(productsTable.productCode, candidate));
+    if (!existing) break;
+    next = next + 1;
+    candidate = prefix + String(next).padStart(6, "0");
+  }
+  return candidate;
+}
 router6.post("/products", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
   const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, current_stock, min_stock, image_url, unit } = req.body;
-  if (!product_code || !product_name) {
-    res.status(400).json({ error: "product_code and product_name required" });
+  if (!product_name) {
+    res.status(400).json({ error: "product_name required" });
     return;
   }
+  const user = req.user;
+  const isPostSuperAdmin = user && SUPER_ADMIN_ROLES.includes(user.role);
+  let resolvedCode;
+  if (product_code && isPostSuperAdmin) {
+    resolvedCode = product_code;
+  } else {
+    resolvedCode = await generateUniqueProductCode(db);
+  }
   const [p] = await db.insert(productsTable).values({
-    productCode: product_code,
+    productCode: resolvedCode,
     barcode,
     productName: product_name,
     description,
@@ -70201,8 +70229,10 @@ router6.patch("/products/:id", requireRole("administrator", "manager", "storekee
     res.status(404).json({ error: "Product not found" });
     return;
   }
+  const patchUser = req.user;
+  const isPatchSuperAdmin = patchUser && SUPER_ADMIN_ROLES.includes(patchUser.role);
   const updateData = {};
-  if (product_code !== void 0) updateData.productCode = product_code;
+  if (product_code !== void 0 && isPatchSuperAdmin) updateData.productCode = product_code;
   if (barcode !== void 0) updateData.barcode = barcode;
   if (product_name !== void 0) updateData.productName = product_name;
   if (description !== void 0) updateData.description = description;
