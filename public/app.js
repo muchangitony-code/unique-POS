@@ -1268,7 +1268,11 @@
         state.importer.selectedRow = null;
         state.importer.sourceName = firstText(data.job && data.job.file_name, data.job && data.job.source_name, state.importer.sourceName);
         if (data.job && data.job.column_mapping) state.importer.mapping = data.job.column_mapping;
-        location.hash = "bulk-import";
+        if (state.activeRoute === "bulk-import") {
+          renderBulkImportPage();
+        } else {
+          location.hash = "bulk-import";
+        }
       } catch (error) {
         showToast(error.message || "Unable to load import job.", "error");
       }
@@ -1351,13 +1355,13 @@
   // Returns the DOM container where bulk import UI should be queried (modal body or page root).
   function getBulkImportContainer() {
     if (!els.modalOverlay.classList.contains("hidden")) return els.modalBody;
-    if (state.activeRoute === "bulk-import") return els.viewRoot;
+    if (state.activeRoute === "bulk-import" || state.activeRoute === "import-history") return els.viewRoot;
     return els.modalBody;
   }
 
   // Re-render whichever bulk import surface is currently visible.
   function refreshBulkImportView() {
-    renderBulkImportModal();
+    if (!els.modalOverlay.classList.contains("hidden")) renderBulkImportModal();
     if (state.activeRoute === "bulk-import") renderBulkImportPage();
     else if (state.activeRoute === "import-history") renderImportHistoryPage();
   }
