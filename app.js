@@ -4,6 +4,7 @@
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
 // Load .env (simple KEY=VALUE parser; no external dependency).
 const envPath = path.join(__dirname, ".env");
@@ -47,5 +48,50 @@ if (isLocalStartup && !process.env.DATABASE_URL) {
   process.env.DATABASE_URL = "postgresql://localhost:5432/local-startup-placeholder";
   process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT = "1";
 }
+
+function hasPsqlBinary() {
+  const check = spawnSync("psql", ["--version"], { encoding: "utf8" });
+  return !check.error && check.status === 0;
+}
+
+function runPsql(args) {
+  return spawnSync("psql", args, { encoding: "utf8", env: process.env });
+}
+
+function ensureDatabaseBootstrap() {
+  if (!process.env.DATABASE_URL) return;
+  if (process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT === "1") return;
+  if (process.env.UNIQUEPOS_AUTO_DB_BOOTSTRAP === "0") return;
+  if (!hasPsqlBinary()) return;
+  const sqlPath = path.join(__dirname, "database.sql");
+  if (!fs.existsSync(sqlPath)) return;
+
+  const existsCheck = runPsql([
+    process.env.DATABASE_URL,
+    "-tAc",
+    "SELECT to_regclass('public.business_settings') IS NOT NULL"
+  ]);
+  if (existsCheck.status === 0 && existsCheck.stdout.trim() === "t") return;
+
+  const restore = runPsql([
+    process.env.DATABASE_URL,
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-f",
+    sqlPath
+  ]);
+  if (restore.status !== 0) {
+    const details = [restore.stdout, restore.stderr].filter(Boolean).join("\n").trim();
+    const error = new Error(
+      `Automatic PostgreSQL bootstrap failed.${details ? `\n${details}` : ""}`
+    );
+    if (process.env.UNIQUEPOS_AUTO_DB_BOOTSTRAP_REQUIRED === "1") {
+      throw error;
+    }
+    console.warn(error.message);
+  }
+}
+
+ensureDatabaseBootstrap();
 
 require("./index.cjs");

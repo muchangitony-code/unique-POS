@@ -22,7 +22,7 @@ connection string.
 Load the included dump (schema + starter data, including the admin login):
 
 ```bash
-psql "YOUR_DATABASE_URL" -f db/database.sql
+psql "YOUR_DATABASE_URL" -f database.sql
 ```
 
 Default login: `admin@uniquepos.com` / `Test1234!` — change this password
@@ -60,11 +60,14 @@ Application Startup File to `app.js`, add the environment variables, then click
    - `SESSION_SECRET` — a long random string (e.g. 32+ random characters) (**required**)
    - `NODE_ENV` — `production` (Railway sets this automatically; you can leave it unset)
 5. Railway injects `PORT` automatically — do **not** set it manually.
-6. Load the database schema once (from your local machine or Railway's shell):
+6. Deploy. On startup, the app automatically attempts to restore `database.sql`
+   if `business_settings` is missing and `psql` is available in PATH.
+   You can disable this with `UNIQUEPOS_AUTO_DB_BOOTSTRAP=0`.
+7. If you disable auto-bootstrap (or `psql` is unavailable), load schema manually:
    ```bash
    psql "$DATABASE_URL" -f database.sql
    ```
-7. Click **Deploy**. Railway will run `npm install --omit=dev` (via `railway.json`) and
+8. Railway will run `npm install --omit=dev` (via `railway.json`) and
    then `node app.js`.
 
 > **Note on the web frontend:** If the `public/` directory is not present in the
