@@ -32,6 +32,30 @@
     "Others"
   ];
   const PAYMENT_METHODS = ["cash", "mpesa", "bank_transfer", "card", "credit"];
+  const IMPORT_FIELDS = [
+    ["product_code", "Product Code / SKU"],
+    ["barcode", "Barcode"],
+    ["product_name", "Product Name"],
+    ["category", "Category"],
+    ["brand", "Brand"],
+    ["unit", "Unit"],
+    ["cost_price", "Cost Price"],
+    ["selling_price", "Selling Price"],
+    ["vat_rate", "Tax / VAT"],
+    ["min_stock", "Reorder Level"],
+    ["current_stock", "Current Stock"],
+    ["supplier", "Supplier"],
+    ["location", "Location"],
+    ["description", "Description"],
+    ["image_url", "Image URL"]
+  ];
+  const IMPORT_NUMERIC_FIELDS = {
+    cost_price: true,
+    selling_price: true,
+    vat_rate: true,
+    min_stock: true,
+    current_stock: true
+  };
   const NAV_ITEMS = [
     ["dashboard", "Dashboard", "fa-solid fa-gauge-high"],
     ["sales", "Sales", "fa-solid fa-cart-shopping"],
@@ -79,6 +103,20 @@
     chart: null,
     toastTimer: null,
     modalDocument: null,
+    importer: {
+      history: [],
+      loading: false,
+      job: null,
+      headers: [],
+      mapping: {},
+      preview: [],
+      sourceName: "",
+      duplicateMode: "update",
+      selectedRow: null,
+      savingRow: false,
+      lastFileName: "",
+      pollTimer: null
+    },
     pos: {
       products: [],
       categories: [],
@@ -245,9 +283,41 @@
       case "quick-add-product":
         openProductModal();
         return;
-      case "quick-add-customer":
-        openCustomerModal();
+      case "bulk-import-products":
+      openBulkImportModal();
         return;
+      case "bulk-import-pick-file":
+      pickBulkImportFile();
+      return;
+      case "bulk-import-apply-mapping":
+      await applyBulkImportMapping();
+      return;
+      case "bulk-import-start":
+      await startBulkImport();
+      return;
+      case "bulk-import-refresh-history":
+      await loadBulkImportHistory();
+      if (!els.modalOverlay.classList.contains("hidden")) renderBulkImportModal();
+      if (state.activeRoute === "products") renderCurrentRoute();
+      return;
+      case "bulk-import-open-job":
+      await openBulkImportJob(button.dataset.jobId);
+      return;
+      case "bulk-import-edit-row":
+      selectBulkImportRow(button.dataset.rowId);
+      return;
+      case "bulk-import-save-row":
+      await saveBulkImportRow(button.dataset.rowId);
+      return;
+      case "bulk-import-download-errors":
+      await downloadBulkImportErrors(button.dataset.jobId);
+      return;
+      case "bulk-import-download-template":
+      await downloadAuthorizedFile(button.dataset.url, button.dataset.name);
+      return;
+      case "quick-add-customer":
+      openCustomerModal();
+      return;
       case "quick-receive-stock":
         openReceiveStockModal();
         return;
@@ -588,11 +658,18 @@
   }
 
   async function loadProductsData() {
-    const [products, categories] = await Promise.all([
+    const requests = [
       apiJson("/api/products?limit=200").catch(function () { return { data: [] }; }),
       apiJson("/api/categories").catch(function () { return []; })
-    ]);
+    ];
+    if (canBulkImportProducts()) {
+      requests.push(apiJson("/api/products/imports").catch(function () { return { data: [] }; }));
+    }
+    const responses = await Promise.all(requests);
+    const products = responses[0];
+    const categories = responses[1];
     state.cache.products = { products: normalizeList(products), categories: normalizeList(categories) };
+    state.importer.history = canBulkImportProducts() ? normalizeList(responses[2]) : [];
   }
 
   async function loadCustomersData() {
@@ -805,14 +882,17 @@
   function renderProducts() {
     const products = applySearch((state.cache.products || {}).products || [], state.search, ["product_name", "product_code", "barcode", "category_name"]);
     const summary = productSummary(products);
+    const canImport = canBulkImportProducts();
+    const history = (state.importer.history || []).slice(0, 5);
     els.viewRoot.innerHTML = [
-      '<div class="module-toolbar"><div class="inline-group"><button class="btn btn-primary" data-action="quick-add-product"><i class="fa-solid fa-plus"></i>Add Product</button><button class="btn btn-outline" data-route="inventory"><i class="fa-solid fa-warehouse"></i>Inventory</button></div><div class="stats-inline"><span class="document-chip">Categories: ' + escapeHtml(String(summary.categories)) + '</span><span class="document-chip">Low Stock: ' + escapeHtml(String(summary.lowStock)) + '</span></div></div>',
+      '<div class="module-toolbar"><div class="inline-group"><button class="btn btn-primary" data-action="quick-add-product"><i class="fa-solid fa-plus"></i>Add Product</button>' + (canImport ? '<button class="btn btn-secondary" data-action="bulk-import-products"><i class="fa-solid fa-file-import"></i>Bulk Import Products</button>' : '') + '<button class="btn btn-outline" data-route="inventory"><i class="fa-solid fa-warehouse"></i>Inventory</button></div><div class="stats-inline"><span class="document-chip">Categories: ' + escapeHtml(String(summary.categories)) + '</span><span class="document-chip">Low Stock: ' + escapeHtml(String(summary.lowStock)) + '</span></div></div>',
       renderOverviewTiles([
         ["Products", numberText(summary.total)],
         ["Low Stock", numberText(summary.lowStock)],
         ["Out of Stock", numberText(summary.outOfStock)],
         ["Average Price", money(summary.avgPrice)]
       ]),
+      canImport ? renderBulkImportSummaryCard(history) : '',
       '<section class="card section-card">' + renderTable(["Product", "SKU", "Category", "Price", "Stock"], products.map(function (item) {
         return [
           escapeHtml(firstText(item.product_name, "—")),
@@ -823,6 +903,395 @@
         ];
       }), "No products found.") + '</section>'
     ].join("");
+  }
+
+  function canBulkImportProducts() {
+    const role = firstText(state.user && state.user.role);
+    return ["super_admin", "business_owner", "branch_manager"].includes(role);
+  }
+
+  function renderBulkImportSummaryCard(history) {
+    const latest = history[0] || null;
+    const completed = history.filter(function (item) { return firstText(item.status) === "completed"; });
+    const failed = history.filter(function (item) { return firstText(item.status) === "failed"; });
+    return '<section class="card section-card bulk-import-hero">' +
+      '<div class="section-head"><div><h3>Bulk Import Workspace</h3><p>Upload CSV, Excel, or PDF supplier files, review detected records, and import valid products in the background.</p></div>' +
+      '<div class="inline-group"><button class="btn btn-outline" data-action="bulk-import-download-template" data-url="/api/products/imports/templates/csv" data-name="product-import-template.csv"><i class="fa-solid fa-file-csv"></i>CSV Template</button>' +
+      '<button class="btn btn-outline" data-action="bulk-import-download-template" data-url="/api/products/imports/templates/xlsx" data-name="product-import-template.xlsx"><i class="fa-solid fa-file-excel"></i>Excel Template</button>' +
+      '<button class="btn btn-primary" data-action="bulk-import-products"><i class="fa-solid fa-cloud-arrow-up"></i>Open Importer</button></div></div>' +
+      '<div class="overview-grid bulk-import-overview">' +
+      '<article class="card overview-tile"><span>Imports Logged</span><strong>' + escapeHtml(String(history.length)) + '</strong></article>' +
+      '<article class="card overview-tile"><span>Completed</span><strong>' + escapeHtml(String(completed.length)) + '</strong></article>' +
+      '<article class="card overview-tile"><span>Failed</span><strong>' + escapeHtml(String(failed.length)) + '</strong></article>' +
+      '<article class="card overview-tile"><span>Latest Status</span><strong>' + escapeHtml(titleize(firstText(latest && latest.status, "No Imports"))) + '</strong></article>' +
+      '</div>' +
+      (history.length ? '<div class="data-table-wrap" style="margin-top:18px"><table class="data-table"><thead><tr><th>Date</th><th>File</th><th>Status</th><th>Imported</th><th>Updated</th><th>Failed</th><th>Actions</th></tr></thead><tbody>' + history.map(function (item) {
+        const downloadable = Number(item.error_count || 0) > 0;
+        return '<tr><td>' + escapeHtml(formatDateTime(item.created_at)) + '</td><td>' + escapeHtml(firstText(item.file_name, item.source_name, "Upload")) + '</td><td>' + renderBadge(firstText(item.status, "draft")) + '</td><td>' + escapeHtml(String(firstNumber(item.created_count, 0))) + '</td><td>' + escapeHtml(String(firstNumber(item.updated_count, 0))) + '</td><td>' + escapeHtml(String(firstNumber(item.error_count, 0))) + '</td><td><div class="table-actions"><button class="btn btn-outline" data-action="bulk-import-open-job" data-job-id="' + escapeAttr(String(item.id)) + '"><i class="fa-solid fa-eye"></i>View</button>' + (downloadable ? '<button class="btn btn-outline" data-action="bulk-import-download-errors" data-job-id="' + escapeAttr(String(item.id)) + '"><i class="fa-solid fa-file-circle-xmark"></i>Error Report</button>' : '') + '</div></td></tr>';
+      }).join("") + '</tbody></table></div>' : '<div class="empty-state"><i class="fa-solid fa-file-import"></i>No import history yet. Start with the downloadable template or drag in a supplier file.</div>') +
+      '</section>';
+  }
+
+  async function loadBulkImportHistory() {
+    if (!canBulkImportProducts()) return [];
+    const history = await apiJson("/api/products/imports").catch(function () { return { data: [] }; });
+    state.importer.history = normalizeList(history);
+    return state.importer.history;
+  }
+
+  function stopBulkImportPolling() {
+    if (state.importer.pollTimer) {
+      window.clearTimeout(state.importer.pollTimer);
+      state.importer.pollTimer = null;
+    }
+  }
+
+  function bulkImportJobIsActive(job) {
+    const status = firstText(job && job.status);
+    return status === "queued" || status === "processing";
+  }
+
+  function resetBulkImportDraft(keepHistory) {
+    stopBulkImportPolling();
+    state.importer.loading = false;
+    state.importer.job = null;
+    state.importer.headers = [];
+    state.importer.mapping = {};
+    state.importer.preview = [];
+    state.importer.sourceName = "";
+    state.importer.duplicateMode = "update";
+    state.importer.selectedRow = null;
+    state.importer.savingRow = false;
+    state.importer.lastFileName = "";
+    if (!keepHistory) state.importer.history = [];
+  }
+
+  function openBulkImportModal() {
+    if (!canBulkImportProducts()) {
+      showToast("Only Super Admin and authorized Inventory Managers can bulk import products.", "error");
+      return;
+    }
+    if (!state.importer.history.length) {
+      loadBulkImportHistory().then(function () {
+        renderBulkImportModal();
+      }).catch(function () { return []; });
+    }
+    openModal({
+      title: "Bulk Import Products",
+      subtitle: "Upload a spreadsheet or PDF, review auto-detected fields, and run the import in the background.",
+      wide: true,
+      actions: '<button class="btn btn-outline" data-action="bulk-import-download-template" data-url="/api/products/imports/templates/xlsx" data-name="product-import-template.xlsx"><i class="fa-solid fa-file-excel"></i>Download Excel Template</button>' +
+        '<button class="btn btn-outline" data-action="bulk-import-download-template" data-url="/api/products/imports/templates/csv" data-name="product-import-template.csv"><i class="fa-solid fa-file-csv"></i>Download CSV Template</button>' +
+        '<button class="btn btn-danger" data-action="close-modal"><i class="fa-solid fa-xmark"></i>Close</button>'
+    });
+    renderBulkImportModal();
+  }
+
+  function renderBulkImportModal() {
+    if (els.modalOverlay.classList.contains("hidden")) return;
+    const job = state.importer.job;
+    const preview = state.importer.preview || [];
+    const selected = state.importer.selectedRow;
+    const progress = job ? Math.min(100, Math.round((firstNumber(job.processed_rows, 0) / Math.max(1, firstNumber(job.total_rows, preview.length, 1))) * 100)) : 0;
+    const summary = job && job.summary ? job.summary : {};
+    const headers = state.importer.headers || [];
+    const history = state.importer.history || [];
+    els.modalBody.innerHTML = [
+      '<div class="bulk-import-layout">',
+      '<section class="card section-card bulk-import-panel">' +
+        '<div class="section-head"><div><h3>1. Upload source file</h3><p>Drag and drop Excel, CSV, or PDF documents. OCR-style PDF extraction depends on readable text already present in the file.</p></div></div>' +
+        '<div class="bulk-import-dropzone" id="bulkImportDropzone">' +
+          '<i class="fa-solid fa-file-arrow-up"></i>' +
+          '<strong>' + escapeHtml(state.importer.loading ? "Uploading and parsing…" : "Drop a file here or browse") + '</strong>' +
+          '<p>' + escapeHtml(firstText(state.importer.sourceName, state.importer.lastFileName, "Supported: .xlsx, .csv, .pdf")) + '</p>' +
+          '<div class="inline-group"><button class="btn btn-primary" type="button" data-action="bulk-import-pick-file"><i class="fa-solid fa-folder-open"></i>Select File</button></div>' +
+        '</div>' +
+        (job ? '<div class="bulk-import-progress"><div class="bulk-import-progress__meta"><span>' + escapeHtml(firstText(job.file_name, job.source_name, "Import draft")) + '</span>' + renderBadge(firstText(job.status, "draft")) + '</div><div class="bulk-import-progress__bar"><span style="width:' + escapeAttr(String(progress)) + '%"></span></div><div class="bulk-import-progress__stats"><span>Processed ' + escapeHtml(String(firstNumber(job.processed_rows, 0))) + ' / ' + escapeHtml(String(firstNumber(job.total_rows, preview.length))) + '</span><span>Valid ' + escapeHtml(String(firstNumber(job.valid_rows, summary.valid_rows, 0))) + '</span><span>Errors ' + escapeHtml(String(firstNumber(job.error_count, summary.error_count, 0))) + '</span></div></div>' : '') +
+      '</section>',
+      '<section class="card section-card bulk-import-panel">' +
+        '<div class="section-head"><div><h3>2. Mapping and duplicate handling</h3><p>Review detected headers, adjust mappings where needed, and choose how duplicates are treated.</p></div></div>' +
+        (headers.length ? '<div class="form-grid three">' + IMPORT_FIELDS.map(function (fieldInfo) {
+          const field = fieldInfo[0];
+          const label = fieldInfo[1];
+          return '<label><span>' + escapeHtml(label) + '</span><select data-import-mapping="' + escapeAttr(field) + '"><option value="">Ignore this field</option>' + headers.map(function (header) {
+            const selectedAttr = state.importer.mapping[field] === header ? ' selected' : '';
+            return '<option value="' + escapeAttr(header) + '"' + selectedAttr + '>' + escapeHtml(header) + '</option>';
+          }).join("") + '</select></label>';
+        }).join("") + '</div>' : '<div class="empty-state"><i class="fa-solid fa-table"></i>Upload a file to review detected headers and preview rows.</div>') +
+        '<div class="form-grid two" style="margin-top:16px"><label><span>When duplicates are found</span><select id="bulkImportDuplicateMode"><option value="update"' + (state.importer.duplicateMode === "update" ? ' selected' : '') + '>Update existing product</option><option value="skip"' + (state.importer.duplicateMode === "skip" ? ' selected' : '') + '>Skip duplicate row</option><option value="duplicate"' + (state.importer.duplicateMode === "duplicate" ? ' selected' : '') + '>Create new duplicate product</option></select></label><label><span>Import controls</span><div class="inline-group"><button class="btn btn-outline" type="button" data-action="bulk-import-apply-mapping"' + (!job ? ' disabled' : '') + '><i class="fa-solid fa-shuffle"></i>Apply Mapping</button><button class="btn btn-secondary" type="button" data-action="bulk-import-start"' + (!job || bulkImportJobIsActive(job) ? ' disabled' : '') + '><i class="fa-solid fa-play"></i>Start Import</button></div></label></div>' +
+        (job ? '<div class="stats-inline" style="margin-top:16px">' +
+          renderDocumentChip("Imported", firstNumber(job.created_count, 0)) +
+          renderDocumentChip("Updated", firstNumber(job.updated_count, 0)) +
+          renderDocumentChip("Skipped", firstNumber(job.skipped_rows, 0)) +
+          renderDocumentChip("Failed", firstNumber(job.error_count, summary.error_count, 0)) +
+          '</div>' : '') +
+      '</section>',
+      '<section class="card section-card bulk-import-panel">' +
+        '<div class="section-head"><div><h3>3. Preview and edit records</h3><p>Invalid rows stay highlighted so valid records can still import. Click any row to fix extracted values before starting.</p></div>' +
+        '<div class="inline-group">' + (job && firstNumber(job.error_count, summary.error_count, 0) > 0 ? '<button class="btn btn-outline" type="button" data-action="bulk-import-download-errors" data-job-id="' + escapeAttr(String(job.id)) + '"><i class="fa-solid fa-file-circle-xmark"></i>Error Report</button>' : '') + '</div></div>' +
+        (preview.length ? '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Row</th><th>Status</th><th>Product</th><th>SKU / Barcode</th><th>Category</th><th>Prices</th><th>Errors</th><th>Actions</th></tr></thead><tbody>' + preview.map(function (row) {
+          const normalized = row.normalized_data || {};
+          const errors = row.validation_errors || [];
+          return '<tr class="' + (errors.length ? 'bulk-import-row--error' : '') + '"><td>' + escapeHtml(String(row.row_number)) + '</td><td>' + renderBadge(firstText(row.status, errors.length ? "invalid" : row.action || "draft")) + '</td><td><strong>' + escapeHtml(firstText(normalized.product_name, "—")) + '</strong><div class="table-caption">' + escapeHtml(firstText(normalized.description, "")) + '</div></td><td>' + escapeHtml(firstText(normalized.product_code, normalized.barcode, "—")) + '</td><td>' + escapeHtml(firstText(normalized.category, "—")) + '</td><td><div>' + money(firstNumber(normalized.selling_price, 0)) + '</div><div class="table-caption">Cost: ' + money(firstNumber(normalized.cost_price, 0)) + '</div></td><td>' + (errors.length ? '<ul class="bulk-import-errors">' + errors.map(function (error) { return '<li>' + escapeHtml(error) + '</li>'; }).join("") + '</ul>' : '<span class="muted">Ready</span>') + '</td><td><button class="btn btn-outline" type="button" data-action="bulk-import-edit-row" data-row-id="' + escapeAttr(String(row.id)) + '"><i class="fa-solid fa-pen"></i>Edit</button></td></tr>';
+        }).join("") + '</tbody></table></div>' : '<div class="empty-state"><i class="fa-solid fa-list-check"></i>No preview rows yet.</div>') +
+        (selected ? renderBulkImportEditForm(selected) : '') +
+      '</section>',
+      '<section class="card section-card bulk-import-panel">' +
+        '<div class="section-head"><div><h3>Import history</h3><p>Recent background imports with quick access to error reports.</p></div><button class="btn btn-outline" type="button" data-action="bulk-import-refresh-history"><i class="fa-solid fa-rotate"></i>Refresh</button></div>' +
+        (history.length ? '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>File</th><th>Status</th><th>Imported</th><th>Updated</th><th>Skipped</th><th>Failed</th><th>Actions</th></tr></thead><tbody>' + history.map(function (item) {
+          const downloadable = firstNumber(item.error_count, 0) > 0;
+          return '<tr><td>' + escapeHtml(formatDateTime(item.created_at)) + '</td><td>' + escapeHtml(firstText(item.file_name, item.source_name, "Upload")) + '</td><td>' + renderBadge(firstText(item.status, "draft")) + '</td><td>' + escapeHtml(String(firstNumber(item.created_count, 0))) + '</td><td>' + escapeHtml(String(firstNumber(item.updated_count, 0))) + '</td><td>' + escapeHtml(String(firstNumber(item.skipped_rows, 0))) + '</td><td>' + escapeHtml(String(firstNumber(item.error_count, 0))) + '</td><td><div class="table-actions"><button class="btn btn-outline" type="button" data-action="bulk-import-open-job" data-job-id="' + escapeAttr(String(item.id)) + '"><i class="fa-solid fa-eye"></i>Open</button>' + (downloadable ? '<button class="btn btn-outline" type="button" data-action="bulk-import-download-errors" data-job-id="' + escapeAttr(String(item.id)) + '"><i class="fa-solid fa-file-circle-xmark"></i>Errors</button>' : '') + '</div></td></tr>';
+        }).join("") + '</tbody></table></div>' : '<div class="empty-state"><i class="fa-regular fa-clock"></i>No imports recorded yet.</div>') +
+      '</section>',
+      '</div>'
+    ].join("");
+    bindBulkImportDropzone();
+    if (job && bulkImportJobIsActive(job)) startBulkImportPolling(job.id);
+  }
+
+  function renderBulkImportEditForm(row) {
+    const normalized = row.normalized_data || {};
+    const errors = row.validation_errors || [];
+    return '<section class="bulk-import-editor"><div class="section-head"><div><h4>Edit row ' + escapeHtml(String(row.row_number)) + '</h4><p>Correct extracted values before importing this product.</p></div><button class="btn btn-secondary" type="button" data-action="bulk-import-save-row" data-row-id="' + escapeAttr(String(row.id)) + '"' + (state.importer.savingRow ? ' disabled' : '') + '><i class="fa-solid fa-floppy-disk"></i>' + escapeHtml(state.importer.savingRow ? 'Saving…' : 'Save Row') + '</button></div>' +
+      (errors.length ? '<div class="inline-message error">' + escapeHtml(errors.join(" ")) + '</div>' : '') +
+      '<div class="form-grid three">' + IMPORT_FIELDS.map(function (fieldInfo) {
+        const field = fieldInfo[0];
+        const label = fieldInfo[1];
+        const value = normalized[field];
+        const inputType = IMPORT_NUMERIC_FIELDS[field] ? 'number" step="0.01' : 'text';
+        return '<label><span>' + escapeHtml(label) + '</span><input name="import-edit-' + escapeAttr(field) + '" type="' + inputType + '" value="' + escapeAttr(value == null ? "" : String(value)) + '" /></label>';
+      }).join("") + '</div></section>';
+  }
+
+  function bindBulkImportDropzone() {
+    const zone = document.getElementById("bulkImportDropzone");
+    if (!zone) return;
+    ["dragenter", "dragover"].forEach(function (eventName) {
+      zone.addEventListener(eventName, function (event) {
+        event.preventDefault();
+        zone.classList.add("is-dragover");
+      });
+    });
+    ["dragleave", "drop"].forEach(function (eventName) {
+      zone.addEventListener(eventName, function (event) {
+        event.preventDefault();
+        zone.classList.remove("is-dragover");
+      });
+    });
+    zone.addEventListener("drop", function (event) {
+      const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+      if (file) uploadBulkImportFile(file);
+    });
+  }
+
+  function pickBulkImportFile() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".xlsx,.xls,.csv,.pdf";
+    input.addEventListener("change", function () {
+      const file = input.files && input.files[0];
+      if (file) uploadBulkImportFile(file);
+    });
+    input.click();
+  }
+
+  async function uploadBulkImportFile(file) {
+    if (!file) return;
+    state.importer.loading = true;
+    state.importer.sourceName = file.name || "Selected file";
+    state.importer.lastFileName = file.name || "";
+    renderBulkImportModal();
+    try {
+      const res = await authorizedFetch("/api/products/imports/upload-and-parse?filename=" + encodeURIComponent(file.name || "import-file"), {
+        method: "POST",
+        headers: { Accept: "application/json", "X-Filename": file.name || "import-file" },
+        body: file
+      });
+      if (!res.ok) {
+        const errorBody = await res.json().catch(function () { return {}; });
+        throw new Error(firstText(errorBody.error, errorBody.message, "Unable to parse import file."));
+      }
+      const data = await res.json();
+      state.importer.job = data.job || null;
+      state.importer.headers = data.headers || [];
+      state.importer.mapping = data.mapping || {};
+      state.importer.preview = normalizeList(data.preview);
+      state.importer.selectedRow = null;
+      state.importer.duplicateMode = "update";
+      await loadBulkImportHistory();
+      renderBulkImportModal();
+      showToast("Import file parsed successfully. Review the preview before importing.", "success");
+    } catch (error) {
+      showToast(error.message || "Unable to upload import file.", "error");
+    } finally {
+      state.importer.loading = false;
+      renderBulkImportModal();
+    }
+  }
+
+  async function applyBulkImportMapping() {
+    if (!state.importer.job) return;
+    const nextMapping = {};
+    IMPORT_FIELDS.forEach(function (fieldInfo) {
+      const field = fieldInfo[0];
+      const select = els.modalBody.querySelector('[data-import-mapping="' + field + '"]');
+      if (select && select.value) nextMapping[field] = select.value;
+    });
+    state.importer.mapping = nextMapping;
+    try {
+      const data = await apiJson("/api/products/imports/" + encodeURIComponent(state.importer.job.id) + "/remap", {
+        method: "POST",
+        body: JSON.stringify({ mapping: nextMapping })
+      });
+      state.importer.job = data.job || state.importer.job;
+      state.importer.preview = normalizeList(data.preview);
+      state.importer.selectedRow = null;
+      renderBulkImportModal();
+      showToast("Column mapping updated.", "success");
+    } catch (error) {
+      showToast(error.message || "Unable to remap columns.", "error");
+    }
+  }
+
+  function selectBulkImportRow(rowId) {
+    const row = (state.importer.preview || []).find(function (item) { return String(item.id) === String(rowId); });
+    if (!row) return;
+    state.importer.selectedRow = row;
+    renderBulkImportModal();
+  }
+
+  async function saveBulkImportRow(rowId) {
+    if (!state.importer.job) return;
+    const row = state.importer.selectedRow;
+    if (!row || String(row.id) !== String(rowId)) return;
+    const payload = {};
+    IMPORT_FIELDS.forEach(function (fieldInfo) {
+      const field = fieldInfo[0];
+      const input = els.modalBody.querySelector('[name="import-edit-' + field + '"]');
+      if (!input) return;
+      payload[field] = IMPORT_NUMERIC_FIELDS[field] ? input.value : input.value.trim();
+    });
+    state.importer.savingRow = true;
+    renderBulkImportModal();
+    try {
+      const data = await apiJson("/api/products/imports/" + encodeURIComponent(state.importer.job.id) + "/rows/" + encodeURIComponent(rowId), {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+      state.importer.preview = (state.importer.preview || []).map(function (item) {
+        return String(item.id) === String(rowId) ? (data.row || item) : item;
+      });
+      state.importer.selectedRow = data.row || null;
+      if (state.importer.job) {
+        state.importer.job.valid_rows = firstNumber(data.job_valid_rows, state.importer.job.valid_rows, 0);
+        state.importer.job.invalid_rows = firstNumber(data.job_error_count, state.importer.job.invalid_rows, 0);
+        state.importer.job.error_count = firstNumber(data.job_error_count, state.importer.job.error_count, 0);
+      }
+      renderBulkImportModal();
+      showToast("Import row updated.", "success");
+    } catch (error) {
+      showToast(error.message || "Unable to save import row.", "error");
+    } finally {
+      state.importer.savingRow = false;
+      renderBulkImportModal();
+    }
+  }
+
+  async function startBulkImport() {
+    if (!state.importer.job) return;
+    const duplicateMode = els.modalBody.querySelector("#bulkImportDuplicateMode");
+    state.importer.duplicateMode = duplicateMode ? duplicateMode.value : "update";
+    try {
+      const data = await apiJson("/api/products/imports/" + encodeURIComponent(state.importer.job.id) + "/start", {
+        method: "POST",
+        body: JSON.stringify({ on_duplicate: state.importer.duplicateMode })
+      });
+      state.importer.job = data.job || state.importer.job;
+      renderBulkImportModal();
+      startBulkImportPolling(state.importer.job.id);
+      showToast("Bulk import started in the background.", "success");
+    } catch (error) {
+      showToast(error.message || "Unable to start bulk import.", "error");
+    }
+  }
+
+  async function openBulkImportJob(jobId) {
+    if (!jobId) {
+      openBulkImportModal();
+      return;
+    }
+    if (els.modalOverlay.classList.contains("hidden")) openBulkImportModal();
+    try {
+      const data = await apiJson("/api/products/imports/" + encodeURIComponent(jobId) + "?limit=100");
+      state.importer.job = data.job || null;
+      state.importer.preview = normalizeList(data.rows);
+      state.importer.headers = state.importer.preview[0] && state.importer.preview[0].raw_data ? Object.keys(state.importer.preview[0].raw_data) : state.importer.headers;
+      state.importer.selectedRow = null;
+      state.importer.sourceName = firstText(data.job && data.job.file_name, data.job && data.job.source_name, state.importer.sourceName);
+      if (data.job && data.job.column_mapping) state.importer.mapping = data.job.column_mapping;
+      renderBulkImportModal();
+    } catch (error) {
+      showToast(error.message || "Unable to load import job.", "error");
+    }
+  }
+
+  function startBulkImportPolling(jobId) {
+    stopBulkImportPolling();
+    state.importer.pollTimer = window.setTimeout(function () {
+      refreshBulkImportJob(jobId);
+    }, 2000);
+  }
+
+  async function refreshBulkImportJob(jobId) {
+    try {
+      const previousStatus = firstText(state.importer.job && state.importer.job.status);
+      const data = await apiJson("/api/products/imports/" + encodeURIComponent(jobId) + "?limit=100");
+      state.importer.job = data.job || state.importer.job;
+      state.importer.preview = normalizeList(data.rows);
+      if (state.importer.selectedRow) {
+        state.importer.selectedRow = state.importer.preview.find(function (item) {
+          return String(item.id) === String(state.importer.selectedRow.id);
+        }) || null;
+      }
+      await loadBulkImportHistory();
+      renderBulkImportModal();
+      if (bulkImportJobIsActive(state.importer.job)) {
+        startBulkImportPolling(jobId);
+      } else if (firstText(state.activeRoute) === "products") {
+        await loadProductsData();
+        renderCurrentRoute();
+      }
+      if (previousStatus !== firstText(state.importer.job && state.importer.job.status)) {
+        if (firstText(state.importer.job && state.importer.job.status) === "completed") {
+          showToast("Bulk import completed successfully.", "success");
+        } else if (firstText(state.importer.job && state.importer.job.status) === "failed") {
+          showToast(firstText(state.importer.job && state.importer.job.last_error, "Bulk import failed."), "error");
+        }
+      }
+    } catch (_error) {
+      startBulkImportPolling(jobId);
+    }
+  }
+
+  async function downloadAuthorizedFile(url, fileName) {
+    try {
+      const res = await authorizedFetch(url, { headers: { Accept: "*/*" } });
+      if (!res.ok) {
+        const errorBody = await res.json().catch(function () { return {}; });
+        throw new Error(firstText(errorBody.error, errorBody.message, "Download failed."));
+      }
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      triggerBlobDownload(objectUrl, fileName || parseDocumentFileName(res, "download.bin"));
+      window.setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 1000);
+    } catch (error) {
+      showToast(error.message || "Unable to download file.", "error");
+    }
+  }
+
+  async function downloadBulkImportErrors(jobId) {
+    if (!jobId) return;
+    await downloadAuthorizedFile("/api/products/imports/" + encodeURIComponent(jobId) + "/errors.csv", "product-import-" + jobId + "-errors.csv");
   }
 
   function renderCustomers() {
@@ -1685,6 +2154,7 @@
     els.modalOverlay.classList.add("hidden");
     els.modalActions.innerHTML = "";
     els.modalBody.innerHTML = "";
+    stopBulkImportPolling();
     resetModalDocument();
   }
 
