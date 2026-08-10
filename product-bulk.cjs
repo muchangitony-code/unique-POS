@@ -68,13 +68,38 @@ function createProductBulkRouter(deps) {
     pool,
     logAudit,
     makeBarcode,
-    requireRole,
     resolveWriteBranchId
   } = deps;
 
   const router = Router();
+  const IMPORT_MUTABLE_FIELDS = {
+    product_code: "text",
+    barcode: "text",
+    product_name: "text",
+    category: "text",
+    brand: "text",
+    unit: "text",
+    cost_price: "number",
+    selling_price: "number",
+    vat_rate: "number",
+    min_stock: "number",
+    current_stock: "number",
+    supplier: "text",
+    location: "text",
+    description: "text",
+    image_url: "text"
+  };
   let ensureSchemaPromise = null;
   const activeJobs = new Map();
+
+  router.use("/products/imports", (req, res, next) => {
+    const role = req.user?.role;
+    if (role === "super_admin" || role === "business_owner" || role === "branch_manager") {
+      next();
+      return;
+    }
+    res.status(req.user ? 403 : 401).json({ error: req.user ? "Insufficient permissions" : "Unauthorized" });
+  });
 
   async function ensureSchema() {
     if (!ensureSchemaPromise) {
@@ -147,6 +172,10 @@ function createProductBulkRouter(deps) {
 
   function trimText(value) {
     return String(value == null ? "" : value).trim();
+  }
+
+  function normalizedNameKey(value) {
+    return trimText(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
   }
 
   function toNumber(value) {
@@ -334,7 +363,7 @@ function createProductBulkRouter(deps) {
     }
     if (names.length) {
       params.push(names);
-      clauses.push(`lower(product_name) = ANY($${params.length})`);
+      clauses.push(`regexp_replace(lower(product_name), '[^a-z0-9]+', '', 'g') = ANY($${params.length})`);
     }
     if (!clauses.length) return [];
     const { rows } = await pool.query(
@@ -424,15 +453,15 @@ function createProductBulkRouter(deps) {
     prepared.forEach((row) => {
       if (row.normalized_data.product_code) codeSet.add(row.normalized_data.product_code);
       if (row.normalized_data.barcode) barcodeSet.add(row.normalized_data.barcode);
-      if (row.normalized_data.product_name) nameSet.add(row.normalized_data.product_name.toLowerCase());
+      if (row.normalized_data.product_name) nameSet.add(normalizedNameKey(row.normalized_data.product_name));
     });
     const existing = await fetchExistingMatches([...codeSet], [...barcodeSet], [...nameSet]);
     const existingByCode = new Map(existing.filter((item) => item.product_code).map((item) => [item.product_code, item]));
     const existingByBarcode = new Map(existing.filter((item) => item.barcode).map((item) => [item.barcode, item]));
-    const existingByName = new Map(existing.filter((item) => item.product_name).map((item) => [item.product_name.toLowerCase(), item]));
+    const existingByName = new Map(existing.filter((item) => item.product_name).map((item) => [normalizedNameKey(item.product_name), item]));
     prepared.forEach((row) => {
       const errors = validateImportedRow(row.normalized_data);
-      const existingMatch = existingByCode.get(row.normalized_data.product_code) || existingByBarcode.get(row.normalized_data.barcode) || existingByName.get((row.normalized_data.product_name || "").toLowerCase());
+      const existingMatch = existingByCode.get(row.normalized_data.product_code) || existingByBarcode.get(row.normalized_data.barcode) || existingByName.get(normalizedNameKey(row.normalized_data.product_name));
       if (existingMatch) {
         row.normalized_data.existing_match = existingMatch;
         row.action = "update";
@@ -506,16 +535,16 @@ function createProductBulkRouter(deps) {
     prepared.forEach((row) => {
       if (row.normalized.product_code) codes.add(row.normalized.product_code);
       if (row.normalized.barcode) barcodes.add(row.normalized.barcode);
-      if (row.normalized.product_name) names.add(row.normalized.product_name.toLowerCase());
+      if (row.normalized.product_name) names.add(normalizedNameKey(row.normalized.product_name));
     });
     const existing = await fetchExistingMatches([...codes], [...barcodes], [...names]);
     const existingByCode = new Map(existing.filter((item) => item.product_code).map((item) => [item.product_code, item]));
     const existingByBarcode = new Map(existing.filter((item) => item.barcode).map((item) => [item.barcode, item]));
-    const existingByName = new Map(existing.filter((item) => item.product_name).map((item) => [item.product_name.toLowerCase(), item]));
+    const existingByName = new Map(existing.filter((item) => item.product_name).map((item) => [normalizedNameKey(item.product_name), item]));
     let valid = 0;
     let invalid = 0;
     for (const row of prepared) {
-      const existingMatch = existingByCode.get(row.normalized.product_code) || existingByBarcode.get(row.normalized.barcode) || existingByName.get((row.normalized.product_name || "").toLowerCase());
+      const existingMatch = existingByCode.get(row.normalized.product_code) || existingByBarcode.get(row.normalized.barcode) || existingByName.get(normalizedNameKey(row.normalized.product_name));
       if (existingMatch) {
         row.normalized.existing_match = existingMatch;
       }
@@ -566,10 +595,10 @@ function createProductBulkRouter(deps) {
       `SELECT * FROM products
        WHERE ($1 <> '' AND product_code = $1)
           OR ($2 <> '' AND barcode = $2)
-          OR ($3 <> '' AND lower(product_name) = lower($3))
+          OR ($3 <> '' AND regexp_replace(lower(product_name), '[^a-z0-9]+', '', 'g') = $4)
        ORDER BY CASE WHEN product_code = $1 THEN 0 WHEN barcode = $2 THEN 1 ELSE 2 END, id
        LIMIT 1`,
-      [productCode, barcode, productName]
+      [productCode, barcode, productName, normalizedNameKey(productName)]
     );
     return rows[0] || null;
   }
@@ -930,7 +959,7 @@ function createProductBulkRouter(deps) {
     const source = await parseImportSource({
       source_type: sourceType,
       object_path: trimText(req.body?.object_path),
-      paste_text: req.body?.paste_text || "",
+      paste_text: req.body?.paste_text || req.body?.content || "",
       file_name: trimText(req.body?.file_name)
     });
     if (!source.headers.length) {
@@ -1032,12 +1061,20 @@ function createProductBulkRouter(deps) {
     }
     const existing = safeJson(rows[0].normalized_data, {});
     const merged = Object.assign({}, existing);
-    if (Object.prototype.hasOwnProperty.call(updates, "product_name")) merged.product_name = trimText(String(updates.product_name ?? ""));
-    if (Object.prototype.hasOwnProperty.call(updates, "selling_price")) merged.selling_price = updates.selling_price !== null && updates.selling_price !== "" ? toNumber(String(updates.selling_price)) : null;
-    if (Object.prototype.hasOwnProperty.call(updates, "product_code")) merged.product_code = trimText(String(updates.product_code ?? ""));
+    Object.keys(IMPORT_MUTABLE_FIELDS).forEach((field) => {
+      if (!Object.prototype.hasOwnProperty.call(updates, field)) return;
+      if (IMPORT_MUTABLE_FIELDS[field] === "number") {
+        merged[field] = updates[field] !== null && updates[field] !== "" ? toNumber(String(updates[field])) : null;
+      } else {
+        merged[field] = trimText(String(updates[field] ?? ""));
+      }
+    });
+    delete merged.existing_match;
     // Re-apply defaults in case product_code was cleared
     const withDefaults = applyImportDefaults(merged, rows[0].row_number);
     const validationErrors = validateImportedRow(withDefaults);
+    const match = await fetchExistingProduct(pool, withDefaults);
+    if (match) withDefaults.existing_match = { id: match.id, product_code: match.product_code, barcode: match.barcode, product_name: match.product_name };
     const action = withDefaults.existing_match ? "update" : "create";
     await pool.query(
       `UPDATE product_import_rows SET normalized_data = $2::jsonb, validation_errors = $3::jsonb, action = $4 WHERE id = $1`,

@@ -32,6 +32,30 @@
     "Others"
   ];
   const PAYMENT_METHODS = ["cash", "mpesa", "bank_transfer", "card", "credit"];
+  const IMPORT_FIELDS = [
+    ["product_code", "Product Code / SKU"],
+    ["barcode", "Barcode"],
+    ["product_name", "Product Name"],
+    ["category", "Category"],
+    ["brand", "Brand"],
+    ["unit", "Unit"],
+    ["cost_price", "Cost Price"],
+    ["selling_price", "Selling Price"],
+    ["vat_rate", "Tax / VAT"],
+    ["min_stock", "Reorder Level"],
+    ["current_stock", "Current Stock"],
+    ["supplier", "Supplier"],
+    ["location", "Location"],
+    ["description", "Description"],
+    ["image_url", "Image URL"]
+  ];
+  const IMPORT_NUMERIC_FIELDS = {
+    cost_price: true,
+    selling_price: true,
+    vat_rate: true,
+    min_stock: true,
+    current_stock: true
+  };
   const NAV_ITEMS = [
     ["dashboard", "Dashboard", "fa-solid fa-gauge-high"],
     ["sales", "Sales", "fa-solid fa-cart-shopping"],
@@ -79,6 +103,20 @@
     chart: null,
     toastTimer: null,
     modalDocument: null,
+    importer: {
+      history: [],
+      loading: false,
+      job: null,
+      headers: [],
+      mapping: {},
+      preview: [],
+      sourceName: "",
+      duplicateMode: "update",
+      selectedRow: null,
+      savingRow: false,
+      lastFileName: "",
+      pollTimer: null
+    },
     pos: {
       products: [],
       categories: [],
@@ -245,9 +283,37 @@
       case "quick-add-product":
         openProductModal();
         return;
-      case "quick-add-customer":
-        openCustomerModal();
+      case "bulk-import-products":
+      openBulkImportModal();
         return;
+      case "bulk-import-pick-file":
+      pickBulkImportFile();
+      return;
+      case "bulk-import-apply-mapping":
+      await applyBulkImportMapping();
+      return;
+      case "bulk-import-start":
+      await startBulkImport();
+      return;
+      case "bulk-import-refresh-history":
+      await loadBulkImportHistory();
+      renderCurrentRoute();
+      return;
+      case "bulk-import-edit-row":
+      selectBulkImportRow(button.dataset.rowId);
+      return;
+      case "bulk-import-save-row":
+      await saveBulkImportRow(button.dataset.rowId);
+      return;
+      case "bulk-import-download-errors":
+      await downloadBulkImportErrors(button.dataset.jobId);
+      return;
+      case "bulk-import-download-template":
+      await downloadAuthorizedFile(button.dataset.url, button.dataset.name);
+      return;
+      case "quick-add-customer":
+      openCustomerModal();
+      return;
       case "quick-receive-stock":
         openReceiveStockModal();
         return;
