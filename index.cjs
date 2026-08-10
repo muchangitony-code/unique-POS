@@ -71870,6 +71870,7 @@ var import_pdfkit = __toESM(require("pdfkit"), 1);
 var router17 = (0, import_express17.Router)();
 var DEFAULT_COMPANY_LOGO_URL = "/assets/unique-solar-kenya-logo.svg";
 var PDF_EOF_MARKER = Buffer.from("%%EOF");
+var PDF_GENERATION_TIMEOUT_MS = 30000;
 function safeNum(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -72200,7 +72201,7 @@ async function resolveDocumentPayload(req, type, id) {
 }
 async function renderPdfBuffer(payload, paper) {
   const logoBuffer = await loadLogoBuffer(payload.settings.logoUrl);
-  return await new Promise((resolve4, reject) => {
+  const pdfPromise = new Promise((resolve4, reject) => {
     const chunks = [];
     const doc = new import_pdfkit.default({ margin: 28, size: paperToPdfSize(paper) });
     doc.on("data", (chunk) => chunks.push(chunk));
@@ -72242,6 +72243,11 @@ async function renderPdfBuffer(payload, paper) {
     doc.fontSize(9).text(documentFooterForType(payload.settings, payload.requestedType || String(payload.documentType || "").toLowerCase()));
     doc.end();
   });
+  const timeoutPromise = new Promise((_resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("PDF generation timed out")), PDF_GENERATION_TIMEOUT_MS);
+    if (timer.unref) timer.unref();
+  });
+  return await Promise.race([pdfPromise, timeoutPromise]);
 }
 router17.get("/documents/:type/:id/preview", async (req, res) => {
   try {
@@ -72298,37 +72304,38 @@ router17.get("/documents/:type/:id/pdf", async (req, res) => {
   }
 });
 router17.post("/documents/:type/:id/email", async (req, res) => {
-  const type = String(req.params.type || "").toLowerCase();
-  const id = Number(req.params.id);
-  const to = String(req.body?.to || "").trim();
-  if (!Number.isFinite(id) || id <= 0) {
-    res.status(400).json({ error: "invalid document id" });
-    return;
-  }
-  if (!to) {
-    res.status(400).json({ error: "recipient email is required" });
-    return;
-  }
-  const payload = await resolveDocumentPayload(req, type, id);
-  if (!payload) {
-    res.status(404).json({ error: "document not found" });
-    return;
-  }
-  const smtpHost = payload.settings.smtpHost;
-  if (!smtpHost) {
-    res.status(400).json({ error: "SMTP host is not configured in settings" });
-    return;
-  }
-  const pdf = await renderPdfBuffer(payload, type === "receipt" ? "80mm" : "a4");
-  const transport = createTransport({
-    host: smtpHost,
-    port: payload.settings.smtpPort ?? 587,
-    user: payload.settings.smtpUser ?? "",
-    from: payload.settings.smtpFrom ?? payload.settings.smtpUser ?? ""
-  });
-  const subject = `${payload.settings.businessName || "UniquePOS"} ${payload.documentType} ${payload.documentNumber || ""}`.trim();
-  const emailLogoUrl = absoluteLogoUrl(req, payload.settings.logoUrl);
-  const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5;">
+  try {
+    const type = String(req.params.type || "").toLowerCase();
+    const id = Number(req.params.id);
+    const to = String(req.body?.to || "").trim();
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: "invalid document id" });
+      return;
+    }
+    if (!to) {
+      res.status(400).json({ error: "recipient email is required" });
+      return;
+    }
+    const payload = await resolveDocumentPayload(req, type, id);
+    if (!payload) {
+      res.status(404).json({ error: "document not found" });
+      return;
+    }
+    const smtpHost = payload.settings.smtpHost;
+    if (!smtpHost) {
+      res.status(400).json({ error: "SMTP host is not configured in settings" });
+      return;
+    }
+    const pdf = await renderPdfBuffer(payload, type === "receipt" ? "80mm" : "a4");
+    const transport = createTransport({
+      host: smtpHost,
+      port: payload.settings.smtpPort ?? 587,
+      user: payload.settings.smtpUser ?? "",
+      from: payload.settings.smtpFrom ?? payload.settings.smtpUser ?? ""
+    });
+    const subject = `${payload.settings.businessName || "UniquePOS"} ${payload.documentType} ${payload.documentNumber || ""}`.trim();
+    const emailLogoUrl = absoluteLogoUrl(req, payload.settings.logoUrl);
+    const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5;">
   <p style="margin:0 0 16px;"><img src="${htmlEscape2(emailLogoUrl)}" alt="Company logo" style="max-height:80px;max-width:220px;object-fit:contain;" /></p>
   <h2 style="margin:0 0 10px;">${htmlEscape2(payload.documentType)} ${htmlEscape2(payload.documentNumber || "")}</h2>
   <p>Hello ${htmlEscape2(payload.partyName || "Customer")},</p>
@@ -72336,21 +72343,25 @@ router17.post("/documents/:type/:id/email", async (req, res) => {
   <p>Total: <strong>${fmtCurrency2(payload.totals.total, payload.settings.currency || "KES")}</strong></p>
   <p>${htmlEscape2(payload.settings.businessName || "UniquePOS")}<br/>${htmlEscape2(payload.settings.businessPhone || "")}</p>
   </body></html>`;
-  const fileBase = `${type}-${payload.documentNumber || id}`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
-  await transport.sendMail({
-    from: payload.settings.smtpFrom || payload.settings.smtpUser,
-    to,
-    subject,
-    html,
-    text: `${payload.documentType} ${payload.documentNumber || ""}\nTotal: ${fmtCurrency2(payload.totals.total, payload.settings.currency || "KES")}`,
-    attachments: [{ filename: `${fileBase}.pdf`, content: pdf, contentType: "application/pdf" }]
-  });
-  await logAudit(req, {
-    action: "document.email_sent",
-    entityType: "document",
-    description: `Emailed ${type} ${payload.documentNumber || id} to ${to}`
-  });
-  res.json({ ok: true });
+    const fileBase = `${type}-${payload.documentNumber || id}`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+    await transport.sendMail({
+      from: payload.settings.smtpFrom || payload.settings.smtpUser,
+      to,
+      subject,
+      html,
+      text: `${payload.documentType} ${payload.documentNumber || ""}\nTotal: ${fmtCurrency2(payload.totals.total, payload.settings.currency || "KES")}`,
+      attachments: [{ filename: `${fileBase}.pdf`, content: pdf, contentType: "application/pdf" }]
+    });
+    await logAudit(req, {
+      action: "document.email_sent",
+      entityType: "document",
+      description: `Emailed ${type} ${payload.documentNumber || id} to ${to}`
+    });
+    res.json({ ok: true });
+  } catch (error40) {
+    console.error("[documents.email] Failed to send document email", error40);
+    res.status(500).json({ error: "Unable to send document email." });
+  }
 });
 var documents_default = router17;
 
