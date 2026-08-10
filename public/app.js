@@ -1137,16 +1137,14 @@
     state.importer.lastFileName = file.name || "";
     refreshBulkImportView();
     try {
-      const res = await authorizedFetch("/api/products/imports/upload-and-parse?filename=" + encodeURIComponent(file.name || "import-file"), {
+      const form = new FormData();
+      form.append("file", file, file.name || "import-file");
+      form.append("source_name", file.name || "Uploaded file");
+      const data = await apiJson("/api/products/imports/upload-and-parse", {
         method: "POST",
-        headers: { Accept: "application/json", "X-Filename": file.name || "import-file" },
-        body: file
+        headers: { Accept: "application/json" },
+        body: form
       });
-      if (!res.ok) {
-        const errorBody = await res.json().catch(function () { return {}; });
-        throw new Error(firstText(errorBody.error, errorBody.message, "Unable to parse import file."));
-      }
-      const data = await res.json();
       state.importer.job = data.job || null;
       state.importer.headers = data.headers || [];
       state.importer.mapping = data.mapping || {};
@@ -2467,17 +2465,29 @@
     delete fetchOptions.noAuth;
     delete fetchOptions.skipAuthRedirect;
     const res = noAuth ? await fetchWithJson(url, fetchOptions) : await authorizedFetch(url, fetchOptions);
+    const parseResponseBody = async function () {
+      if (res.status === 204) return null;
+      const text = await res.text();
+      if (!text) return null;
+      const contentType = firstText(res.headers.get("Content-Type"), "").toLowerCase();
+      if (contentType.indexOf("application/json") >= 0 || contentType.indexOf("+json") >= 0) {
+        try {
+          return JSON.parse(text);
+        } catch (_error) {
+          throw new Error("Server returned invalid JSON.");
+        }
+      }
+      return { message: text };
+    };
     if (!res.ok) {
-      const errorBody = await res.json().catch(function () { return {}; });
+      const errorBody = await parseResponseBody().catch(function () { return {}; });
       if (res.status === 401 && !skipAuthRedirect) {
         clearSession();
         showLogin();
       }
       throw new Error(firstText(errorBody.error, errorBody.message, res.statusText, 'Request failed'));
     }
-    if (res.status === 204) return null;
-    const text = await res.text();
-    return text ? JSON.parse(text) : null;
+    return await parseResponseBody();
   }
 
   function defaultDocumentPaper(type) {
@@ -2554,7 +2564,7 @@
   function fetchWithJson(url, options) {
     const next = options || {};
     const headers = new Headers(next.headers || {});
-    if (next.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    if (shouldUseJsonContentType(next.body) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     return fetch(url, Object.assign({}, next, { headers: headers }));
   }
 
@@ -2562,8 +2572,18 @@
     const next = options || {};
     const headers = new Headers(next.headers || {});
     if (state.token) headers.set('Authorization', 'Bearer ' + state.token);
-    if (next.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    if (shouldUseJsonContentType(next.body) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     return fetch(url, Object.assign({}, next, { headers: headers }));
+  }
+
+  function shouldUseJsonContentType(body) {
+    if (body == null) return false;
+    if (typeof FormData !== "undefined" && body instanceof FormData) return false;
+    if (typeof Blob !== "undefined" && body instanceof Blob) return false;
+    if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) return false;
+    if (typeof ArrayBuffer !== "undefined" && body instanceof ArrayBuffer) return false;
+    if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView && ArrayBuffer.isView(body)) return false;
+    return true;
   }
 
   function persistSession(token, user) {
