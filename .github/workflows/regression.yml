@@ -38,6 +38,7 @@ jobs:
     env:
       PORT: 3099
       NODE_ENV: test
+      SESSION_SECRET: ${{ secrets.SESSION_SECRET || 'ci-test-session-secret-32-chars!!' }}
       UNIQUEPOS_BOOTSTRAP_ADMIN_USERNAME: admin
       UNIQUEPOS_BOOTSTRAP_ADMIN_EMAIL: admin@test.local
       UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD || 'TestAdmin123!' }}
