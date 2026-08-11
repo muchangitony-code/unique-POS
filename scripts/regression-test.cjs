@@ -525,8 +525,14 @@ async function run() {
 
   // ── Cleanup ───────────────────────────────────────────────────────────────
   await section("Cleanup", async () => {
-    if (createdProductId) {
-      const d = await del("/products/" + createdProductId, token);
+    // The main test product was used in a sale and therefore has sales history,
+    // which blocks permanent deletion (the server returns 422 HAS_SALES_HISTORY).
+    // Create a fresh product with no sales history to verify the DELETE endpoint.
+    const delSku = "REG-DEL-" + Date.now();
+    const delProd = await post("/products",
+      { product_code: delSku, product_name: "Regression Delete Test", selling_price: 1, cost_price: 1 }, token);
+    if (delProd.status === 201 && delProd.body && delProd.body.id) {
+      const d = await del("/products/" + delProd.body.id, token);
       ok("DELETE /products/:id 2xx", d.status, isOk(d), "status=" + d.status);
     }
     ok("Cleanup complete", 200, true);
