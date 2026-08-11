@@ -72116,7 +72116,7 @@ async function normalizeDocumentPreviewData(opts, paper) {
   const fallbackNotes = [
     ["Warranty", settings.warrantyText || meta.warranty || ""],
     ["Delivery Terms", meta.deliveryTerms || ""],
-    ["Payment Instructions", settings.paymentInstructions || meta.paymentTerms || ""],
+    ["Return Policy", settings.returnPolicy || ""],
     ["Additional Notes", opts.notes || documentFooterForType(settings, String(opts.requestedType || opts.documentType || "").toLowerCase())]
   ].filter((entry) => entry[1]);
   const notesSections = Array.isArray(opts.notesSections) && opts.notesSections.length ? opts.notesSections.filter((entry) => Array.isArray(entry) && entry[1]) : fallbackNotes;
@@ -72126,7 +72126,28 @@ async function normalizeDocumentPreviewData(opts, paper) {
     customer.name || opts.partyName || "Walk-in Customer",
     safeNum(totals.total)
   ].join(" | "), paper === "a4" ? 132 : paper === "80mm" ? 110 : 92);
-  const footerLine = [settings.website || "", settings.businessEmail || "", settings.tagline || ""].filter(Boolean).join(" • ");
+  const footerLine = [settings.website || "", settings.businessEmail || ""].filter(Boolean).join(" · ");
+  const termsText = settings.invoicePaymentTerms || "";
+  const termsLines = termsText
+    ? termsText.split(/\n/).filter((l) => l.trim())
+    : [
+        `Quotation valid for ${settings.quotationValidityDays || 30} days.`,
+        "Goods remain the property of the seller until paid in full.",
+        "Warranty applies where specified.",
+        "Returns are subject to our return policy.",
+        "Errors and Omissions Excepted (E&OE)."
+      ];
+  const payment = {
+    mpesaPaybill: settings.mpesaPaybill || "",
+    mpesaTill: settings.mpesaTill || "",
+    mpesaAccount: settings.mpesaPaybillAccount || opts.documentNumber || "",
+    bankName: settings.bankName || "",
+    bankBranch: settings.bankBranch || "",
+    bankAccountName: settings.bankAccountName || "",
+    bankAccountNumber: settings.bankAccountNumber || "",
+    bankSwiftCode: settings.bankSwiftCode || "",
+    paymentInstructions: settings.paymentInstructions || ""
+  };
   return {
     paper,
     isReceipt: paper === "58mm" || paper === "80mm",
@@ -72145,6 +72166,7 @@ async function normalizeDocumentPreviewData(opts, paper) {
     slogan: settings.tagline || "",
     supportEmail: settings.businessEmail || "",
     branchInfo: branchDetailsText(opts.branch) || opts.branchName || "Main Branch",
+    branchName: opts.branch?.name || opts.branchName || "",
     documentTitle: opts.documentType || "Document",
     documentNumber: opts.documentNumber || "—",
     customerName: customer.name || opts.partyName || "Walk-in Customer",
@@ -72175,6 +72197,8 @@ async function normalizeDocumentPreviewData(opts, paper) {
       change: safeNum(meta.change ?? totals.change ?? totals.balance)
     },
     notesSections,
+    termsLines,
+    payment,
     footerLine,
     rows: normalizedRows
   };
@@ -72182,76 +72206,289 @@ async function normalizeDocumentPreviewData(opts, paper) {
 async function buildDocumentHtml(opts) {
   const data = await normalizeDocumentPreviewData(opts, opts.paper || "a4");
   const widthCss = data.paper === "58mm" ? "58mm" : data.paper === "80mm" ? "80mm" : "210mm";
-  const notesMarkup = data.notesSections.length ? data.notesSections.map(([label, value]) => `<div class="notes-card"><h4>${htmlEscape2(label)}</h4><p>${htmlEscape2(value).replace(/\n/g, "<br/>")}</p></div>`).join("") : `<div class="notes-card notes-card--full"><h4>Additional Notes</h4><p>No additional notes supplied.</p></div>`;
-  const a4Rows = data.rows.map((row) => `<tr><td>${htmlEscape2(row.itemCode)}</td><td><strong>${htmlEscape2(row.description)}</strong></td><td class="num">${safeNum(row.quantity).toLocaleString()}</td><td>${htmlEscape2(row.unit)}</td><td class="num">${fmtCurrency2(row.unitPrice, data.currency)}</td><td class="num">${fmtCurrency2(row.discount, data.currency)}</td><td class="num">${safeNum(row.vatRate).toLocaleString()}%</td><td class="num"><strong>${fmtCurrency2(row.total, data.currency)}</strong></td></tr>`).join("") || `<tr><td colspan="8" class="empty">No line items</td></tr>`;
-  const receiptRows = data.rows.map((row) => `<tr><td><strong>${htmlEscape2(row.description)}</strong><div class="thermal-sub">${htmlEscape2(row.itemCode)}</div></td><td class="num">${safeNum(row.quantity).toLocaleString()}</td><td class="num">${fmtCurrency2(row.unitPrice, data.currency)}</td><td class="num">${fmtCurrency2(row.total, data.currency)}</td></tr>`).join("") || `<tr><td colspan="4" class="empty">No line items</td></tr>`;
-  return `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>${htmlEscape2(data.companyName)} - ${htmlEscape2(data.documentTitle)} ${htmlEscape2(data.documentNumber)}</title><style>
+  const thermalFontSm = data.paper === "58mm" ? "9px" : "10.5px";
+  const thermalFontMd = data.paper === "58mm" ? "10px" : "11.5px";
+  const thermalLogoSz = data.paper === "58mm" ? "42px" : "52px";
+  const thermalQrSz = data.paper === "58mm" ? "68px" : "82px";
+  const thermalGrandSz = data.paper === "58mm" ? "12px" : "14px";
+
+  // A4 rows
+  const a4Rows = data.rows.map((row) =>
+    `<tr><td>${htmlEscape2(row.itemCode)}</td><td><strong>${htmlEscape2(row.description)}</strong></td>` +
+    `<td class="num">${safeNum(row.quantity).toLocaleString()}</td><td>${htmlEscape2(row.unit)}</td>` +
+    `<td class="num">${fmtCurrency2(row.unitPrice, data.currency)}</td>` +
+    `<td class="num">${fmtCurrency2(row.discount, data.currency)}</td>` +
+    `<td class="num">${safeNum(row.vatRate).toLocaleString()}%</td>` +
+    `<td class="num"><strong>${fmtCurrency2(row.total, data.currency)}</strong></td></tr>`
+  ).join("") || `<tr><td colspan="8" class="empty">No line items</td></tr>`;
+
+  // Thermal rows
+  const thermalRows = data.rows.map((row) =>
+    `<tr><td><strong>${htmlEscape2(row.description)}</strong><div class="tsub">${htmlEscape2(row.itemCode)}</div></td>` +
+    `<td class="num">${safeNum(row.quantity).toLocaleString()}</td>` +
+    `<td class="num">${fmtCurrency2(row.unitPrice, data.currency)}</td>` +
+    `<td class="num">${fmtCurrency2(row.total, data.currency)}</td></tr>`
+  ).join("") || `<tr><td colspan="4" class="empty">No items</td></tr>`;
+
+  // Notes markup
+  const notesMarkup = data.notesSections.length
+    ? data.notesSections.map(([label, value]) =>
+        `<div class="nc"><h4>${htmlEscape2(label)}</h4><p>${htmlEscape2(value).replace(/\n/g, "<br/>")}</p></div>`
+      ).join("")
+    : `<div class="nc nc-full"><h4>Notes</h4><p>No additional notes.</p></div>`;
+
+  // Payment section
+  const p = data.payment;
+  const hasMpesa = p.mpesaPaybill || p.mpesaTill;
+  const hasBank = p.bankName || p.bankAccountNumber;
+  const mpesaCard = hasMpesa
+    ? `<div class="pc"><div class="pc-head"><span class="pc-icon">📱</span><h4>M-PESA Payment</h4></div>` +
+      (p.mpesaPaybill ? `<div class="pr"><span>Paybill No.</span><strong>${htmlEscape2(p.mpesaPaybill)}</strong></div>` : "") +
+      (p.mpesaAccount ? `<div class="pr"><span>Account No.</span><strong>${htmlEscape2(p.mpesaAccount)}</strong></div>` : "") +
+      (p.mpesaTill ? `<div class="pr"><span>Till No. (Buy Goods)</span><strong>${htmlEscape2(p.mpesaTill)}</strong></div>` : "") +
+      `<div class="pr pr-total"><span>Amount</span><strong>${fmtCurrency2(data.totals.total, data.currency)}</strong></div></div>`
+    : "";
+  const bankCard = hasBank
+    ? `<div class="pc"><div class="pc-head"><span class="pc-icon">🏦</span><h4>Bank Transfer</h4></div>` +
+      (p.bankName ? `<div class="pr"><span>Bank</span><strong>${htmlEscape2(p.bankName)}</strong></div>` : "") +
+      (p.bankBranch ? `<div class="pr"><span>Branch</span><strong>${htmlEscape2(p.bankBranch)}</strong></div>` : "") +
+      (p.bankAccountName ? `<div class="pr"><span>Account Name</span><strong>${htmlEscape2(p.bankAccountName)}</strong></div>` : "") +
+      (p.bankAccountNumber ? `<div class="pr"><span>Account No.</span><strong>${htmlEscape2(p.bankAccountNumber)}</strong></div>` : "") +
+      (p.bankSwiftCode ? `<div class="pr"><span>Swift Code</span><strong>${htmlEscape2(p.bankSwiftCode)}</strong></div>` : "") +
+      `</div>`
+    : "";
+  const extraInstructions = p.paymentInstructions
+    ? `<div class="pc pc-full"><div class="pc-head"><span class="pc-icon">💳</span><h4>Additional Payment Instructions</h4></div><p class="pc-note">${htmlEscape2(p.paymentInstructions).replace(/\n/g, "<br/>")}</p></div>`
+    : "";
+  const paymentSection = hasMpesa || hasBank || extraInstructions
+    ? `<div class="psec"><h3 class="slabel">How to Pay</h3><div class="pcards">${mpesaCard}${bankCard}${extraInstructions}</div></div>`
+    : "";
+
+  // Terms section
+  const termsSection = !data.isReceipt && data.termsLines.length
+    ? `<div class="tsec"><h3 class="slabel">Terms &amp; Conditions</h3><ol class="tlist">` +
+      data.termsLines.map((l) => `<li>${htmlEscape2(l)}</li>`).join("") +
+      `</ol></div>`
+    : "";
+
+  const css = `
   :root { color-scheme: light only; }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: #eef2f7; color: #0f172a; font-family: Inter, Arial, sans-serif; }
-  .page { padding: 24px; }
-  .sheet { width: min(${widthCss}, 100%); margin: 0 auto; background: #fff; box-shadow: 0 24px 80px rgba(15,23,42,.16); overflow: hidden; }
-  .sheet--a4 { min-height: 297mm; border-radius: 22px; }
-  .sheet--thermal { border-radius: 18px; }
-  .accent { height: 10px; background: linear-gradient(90deg, ${data.primary}, #0f4f8d, ${data.secondary}); }
-  .doc-body { padding: 28px; }
-  .doc-header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
-  .brand { display: flex; gap: 18px; align-items: flex-start; }
-  .brand img { width: 82px; height: 82px; object-fit: contain; border-radius: 20px; padding: 10px; border: 1px solid #dbe5f0; background: #fff; }
-  .brand h1 { margin: 0; font-size: 28px; color: ${data.primary}; }
-  .brand-meta, .panel p, .notes-card p, .signature-label, .footer-copy, .thermal-sub { margin: 0; color: #475569; font-size: 12px; line-height: 1.6; }
-  .doc-title-card { min-width: 250px; text-align: right; background: #eef5fb; border: 1px solid #d7e4f1; border-radius: 22px; padding: 20px 22px; position: relative; overflow: hidden; }
-  .doc-title-card::after { content: ""; position: absolute; inset: auto -40px -40px auto; width: 110px; height: 110px; border-radius: 50%; background: rgba(247,147,30,.12); }
-  .doc-title-card h2 { margin: 0 0 10px; font-size: 32px; color: ${data.primary}; letter-spacing: .08em; text-transform: uppercase; }
-  .meta-grid { display: grid; grid-template-columns: 1.35fr .95fr; gap: 20px; margin-top: 22px; }
-  .panel { border: 1px solid #d7e4f1; border-radius: 20px; padding: 18px; background: #fff; }
-  .panel h3 { margin: 0 0 12px; font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: ${data.primary}; }
-  .panel strong { display: block; font-size: 15px; color: #0f172a; margin-bottom: 4px; }
-  .info-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 18px; }
-  .info-grid div span, .total-row span { display: block; margin-bottom: 4px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #64748b; }
-  .info-grid div strong { margin: 0; font-size: 13px; word-break: break-word; }
-  .items { margin-top: 22px; border: 1px solid #d7e4f1; border-radius: 20px; overflow: hidden; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #f0f4f8; color: #0f172a; font-family: Inter, Arial, sans-serif; font-size: 13px; line-height: 1.5; }
+  .page { padding: 18px; }
+  .sheet { width: min(${widthCss}, 100%); margin: 0 auto; background: #fff; box-shadow: 0 4px 24px rgba(15,23,42,.12); overflow: hidden; }
+  .sheet--a4 { min-height: 297mm; border-radius: 14px; }
+  .sheet--th { border-radius: 10px; }
+  .accent { height: 7px; background: linear-gradient(90deg, ${data.primary} 0%, #1565c0 55%, ${data.secondary} 100%); }
+  .body { padding: 22px 26px; }
+  /* Header */
+  .hdr { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 18px; }
+  .brand { display: flex; gap: 12px; align-items: flex-start; flex: 1; min-width: 0; }
+  .brand img { width: 68px; height: 68px; object-fit: contain; border-radius: 10px; border: 1px solid #e2e8f0; padding: 7px; background: #fff; flex-shrink: 0; }
+  .brand h1 { font-size: 18px; font-weight: 800; color: ${data.primary}; margin-bottom: 4px; line-height: 1.2; }
+  .brand-meta { color: #475569; font-size: 11px; line-height: 1.7; }
+  /* Title card */
+  .tc { min-width: 210px; max-width: 260px; background: ${data.primary}; border-radius: 12px; padding: 16px 18px; flex-shrink: 0; }
+  .tc h2 { font-size: 20px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: #fff; margin-bottom: 5px; }
+  .tc .dn { font-size: 12px; color: rgba(255,255,255,.75); padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,.2); margin-bottom: 12px; }
+  .tc .ig { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px 10px; }
+  .tc .ig span { display: block; font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.6); margin-bottom: 1px; }
+  .tc .ig strong { font-size: 11.5px; font-weight: 600; color: #fff; }
+  /* Meta grid */
+  .mg { display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px; margin-bottom: 18px; }
+  .panel { border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; }
+  .panel h3 { font-size: 9.5px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: ${data.primary}; margin-bottom: 8px; }
+  .panel .pn { font-size: 14px; font-weight: 600; color: #0f172a; margin-bottom: 3px; }
+  .panel p { color: #475569; font-size: 11.5px; line-height: 1.5; margin-top: 2px; }
+  .ig2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px 12px; }
+  .ig2 span { display: block; font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #64748b; margin-bottom: 2px; }
+  .ig2 strong { font-size: 12px; font-weight: 600; color: #0f172a; word-break: break-word; }
+  /* Items table */
+  .items { border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; margin-bottom: 18px; }
   table { width: 100%; border-collapse: collapse; }
-  thead th { background: ${data.primary}; color: #fff; padding: 14px 12px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; text-align: left; }
-  tbody td { padding: 14px 12px; border-bottom: 1px solid #e5edf5; font-size: 13px; vertical-align: top; }
-  tbody tr:nth-child(even) { background: #f8fbff; }
+  thead th { background: ${data.primary}; color: #fff; font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding: 10px 9px; text-align: left; }
+  tbody td { padding: 10px 9px; border-bottom: 1px solid #f1f5f9; font-size: 12px; vertical-align: top; }
+  tbody tr:nth-child(even) { background: #f8faff; }
   tbody tr:last-child td { border-bottom: none; }
   .num { text-align: right; white-space: nowrap; }
-  .summary-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 22px; margin-top: 22px; align-items: start; }
-  .notes-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-  .notes-card { min-height: 112px; border: 1px solid #d7e4f1; border-radius: 18px; padding: 16px; background: #f8fbff; }
-  .notes-card h4 { margin: 0 0 8px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: ${data.primary}; }
-  .notes-card--full { grid-column: 1 / -1; }
-  .totals-card { border-radius: 24px; background: ${data.primary}; color: #fff; padding: 22px; box-shadow: 0 18px 40px rgba(8,61,109,.18); }
-  .total-row { display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid rgba(255,255,255,.14); }
-  .total-row span { color: rgba(255,255,255,.72); margin: 0; }
-  .total-row strong { font-size: 14px; }
-  .grand-total { margin-top: 14px; padding: 18px; border-radius: 18px; background: #fff; color: ${data.primary}; display: flex; justify-content: space-between; gap: 16px; align-items: end; }
-  .grand-total span { display: block; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: #64748b; }
-  .grand-total strong { font-size: 28px; line-height: 1.1; }
-  .signatures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-top: 22px; }
-  .signature-card { padding: 24px 16px 10px; border: 1px solid #d7e4f1; border-radius: 18px; background: #fff; }
-  .signature-line { height: 1px; background: #94a3b8; margin-bottom: 10px; }
-  .footer { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: center; margin-top: 22px; padding: 18px 20px; border-radius: 20px; background: #f8fbff; border: 1px solid #d7e4f1; }
-  .footer img.qr { width: 88px; height: 88px; object-fit: contain; border-radius: 14px; border: 1px solid #d7e4f1; background: #fff; padding: 6px; }
-  .footer h4 { margin: 0 0 6px; font-size: 16px; color: ${data.primary}; }
-  .thermal-wrap { padding: 16px 12px 18px; }
-  .thermal-wrap .brand { display: block; text-align: center; }
-  .thermal-wrap .brand img { margin: 0 auto 10px; width: ${data.paper === "58mm" ? "46px" : "58px"}; height: ${data.paper === "58mm" ? "46px" : "58px"}; border-radius: 14px; }
-  .thermal-wrap h1 { font-size: ${data.paper === "58mm" ? "15px" : "18px"}; margin-bottom: 4px; }
-  .thermal-head, .thermal-footer { text-align: center; border-bottom: 1px dashed #cbd5e1; padding-bottom: 10px; margin-bottom: 10px; }
-  .thermal-meta { display: grid; gap: 6px; font-size: ${data.paper === "58mm" ? "10px" : "11px"}; margin-bottom: 10px; }
-  .thermal-meta-row, .thermal-total-row { display: flex; justify-content: space-between; gap: 8px; }
-  .thermal-items thead th { padding: 8px 6px; font-size: 10px; }
-  .thermal-items tbody td { padding: 8px 6px; font-size: ${data.paper === "58mm" ? "10px" : "11px"}; }
-  .thermal-total-row { padding: 4px 0; font-size: ${data.paper === "58mm" ? "10px" : "11px"}; }
-  .thermal-grand { margin-top: 8px; padding-top: 8px; border-top: 1px solid #0f172a; font-weight: 800; font-size: ${data.paper === "58mm" ? "13px" : "15px"}; }
-  .thermal-qr { width: ${data.paper === "58mm" ? "72px" : "88px"}; height: ${data.paper === "58mm" ? "72px" : "88px"}; margin: 10px auto 0; display: block; border: 1px solid #d7e4f1; border-radius: 12px; padding: 6px; background: #fff; }
-  .empty { text-align: center; color: #64748b; }
+  /* Summary grid */
+  .sg { display: grid; grid-template-columns: 1.15fr .85fr; gap: 14px; margin-bottom: 18px; align-items: start; }
+  .ng { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
+  .nc { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; background: #f8faff; min-height: 80px; }
+  .nc h4 { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: ${data.primary}; margin-bottom: 5px; }
+  .nc p { color: #475569; font-size: 11px; line-height: 1.5; }
+  .nc-full { grid-column: 1 / -1; }
+  /* Totals panel */
+  .tp { border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
+  .tr2 { display: flex; justify-content: space-between; align-items: center; padding: 9px 14px; border-bottom: 1px solid #f1f5f9; font-size: 12px; }
+  .tr2 span { color: #64748b; }
+  .tr2 strong { font-weight: 600; }
+  .gtb { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; background: ${data.primary}; color: #fff; }
+  .gtb .gl { font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.8); }
+  .gtb .ga { font-size: 20px; font-weight: 800; }
+  /* Payment section */
+  .slabel { font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: ${data.primary}; margin-bottom: 10px; }
+  .psec { margin-bottom: 16px; }
+  .pcards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .pc { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; background: #f8faff; }
+  .pc-full { grid-column: 1 / -1; }
+  .pc-head { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; padding-bottom: 9px; border-bottom: 1px solid #e2e8f0; }
+  .pc-icon { font-size: 17px; line-height: 1; }
+  .pc h4 { font-size: 12px; font-weight: 700; color: ${data.primary}; }
+  .pr { display: flex; justify-content: space-between; align-items: baseline; padding: 3px 0; font-size: 11px; }
+  .pr span { color: #64748b; }
+  .pr strong { font-weight: 600; color: #0f172a; text-align: right; max-width: 55%; }
+  .pr-total { margin-top: 7px; padding-top: 7px; border-top: 1px solid #e2e8f0; }
+  .pr-total strong { color: ${data.primary}; font-size: 12px; font-weight: 700; }
+  .pc-note { font-size: 11px; color: #475569; line-height: 1.55; }
+  /* Terms section */
+  .tsec { margin-bottom: 16px; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 10px; }
+  .tlist { padding-left: 16px; color: #475569; }
+  .tlist li { font-size: 11px; line-height: 1.6; padding: 2px 0; }
+  /* Signatures */
+  .sigs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+  .sig { padding: 26px 12px 9px; border: 1px solid #e2e8f0; border-radius: 10px; }
+  .sig-line { height: 1px; background: #94a3b8; margin-bottom: 7px; }
+  .sig-label { font-size: 10.5px; color: #64748b; text-align: center; }
+  /* Footer */
+  .ftr { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 10px; background: #f8faff; border: 1px solid #e2e8f0; }
+  .ftr img.qr { width: 76px; height: 76px; object-fit: contain; border-radius: 8px; border: 1px solid #e2e8f0; background: #fff; padding: 4px; flex-shrink: 0; }
+  .ftr h4 { font-size: 13px; font-weight: 700; color: ${data.primary}; margin-bottom: 4px; }
+  .ftr p { color: #64748b; font-size: 11px; margin-top: 2px; }
+  /* Thermal */
+  .th-wrap { padding: 12px 10px 14px; }
+  .th-head { text-align: center; border-bottom: 1px dashed #cbd5e1; padding-bottom: 9px; margin-bottom: 9px; }
+  .th-head img { display: block; margin: 0 auto 7px; width: ${thermalLogoSz}; height: ${thermalLogoSz}; border-radius: 8px; object-fit: contain; border: 1px solid #e2e8f0; }
+  .th-head h1 { font-size: ${data.paper === "58mm" ? "13px" : "16px"}; font-weight: 800; color: #0f172a; margin-bottom: 3px; }
+  .th-sub { color: #475569; font-size: ${thermalFontSm}; line-height: 1.5; }
+  .th-meta { font-size: ${thermalFontMd}; margin-bottom: 9px; }
+  .th-mrow { display: flex; justify-content: space-between; gap: 4px; padding: 2px 0; }
+  .th-items thead th { padding: 6px 4px; font-size: 9px; }
+  .th-items tbody td { padding: 6px 4px; font-size: ${thermalFontMd}; }
+  .tsub { color: #64748b; font-size: 8.5px; margin-top: 1px; }
+  .th-totals { font-size: ${thermalFontMd}; margin-top: 7px; }
+  .th-trow { display: flex; justify-content: space-between; padding: 2px 0; }
+  .th-grand { font-size: ${thermalGrandSz}; font-weight: 800; border-top: 1px solid #0f172a; padding-top: 6px; margin-top: 5px; }
+  .th-ftr { text-align: center; border-top: 1px dashed #cbd5e1; margin-top: 9px; padding-top: 9px; }
+  .th-qr { width: ${thermalQrSz}; height: ${thermalQrSz}; margin: 7px auto; display: block; border: 1px solid #e2e8f0; border-radius: 8px; padding: 4px; background: #fff; }
+  .empty { text-align: center; color: #94a3b8; padding: 18px; }
   @page { size: ${data.paper === "58mm" ? "58mm auto" : data.paper === "80mm" ? "80mm auto" : "A4"}; margin: ${data.isReceipt ? "0" : "10mm"}; }
   @media print { body { background: #fff; } .page { padding: 0; } .sheet { box-shadow: none; border-radius: 0; } }
-  @media (max-width: 900px) { .page { padding: 0; } .sheet--a4 { width: 100%; min-height: auto; border-radius: 0; } .doc-header, .meta-grid, .summary-grid, .signatures, .footer { display: grid; grid-template-columns: 1fr; } .doc-title-card { text-align: left; } .notes-grid { grid-template-columns: 1fr; } }
-  </style></head><body>${data.isReceipt ? `<div class="page"><div class="sheet sheet--thermal"><div class="accent"></div><div class="thermal-wrap"><div class="thermal-head"><div class="brand"><img src="${htmlEscape2(data.logoSrc)}" alt="logo" /><h1>${htmlEscape2(data.companyName)}</h1><p class="brand-meta">${htmlEscape2(data.companyAddress)}<br/>${htmlEscape2(data.companyPhone)}<br/>${htmlEscape2(data.companyEmail)}</p></div></div><div class="thermal-meta"><div class="thermal-meta-row"><span>Receipt No.</span><strong>${htmlEscape2(data.documentNumber)}</strong></div><div class="thermal-meta-row"><span>Date</span><strong>${htmlEscape2(dateText2(data.documentDate))}</strong></div><div class="thermal-meta-row"><span>Cashier</span><strong>${htmlEscape2(data.salesperson)}</strong></div><div class="thermal-meta-row"><span>Customer</span><strong>${htmlEscape2(data.customerName)}</strong></div></div><table class="thermal-items"><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Total</th></tr></thead><tbody>${receiptRows}</tbody></table><div style="margin-top:10px"><div class="thermal-total-row"><span>Subtotal</span><strong>${fmtCurrency2(data.totals.subtotal, data.currency)}</strong></div>${data.totals.discount > 0 ? `<div class="thermal-total-row"><span>Discount</span><strong>- ${fmtCurrency2(data.totals.discount, data.currency)}</strong></div>` : ``}<div class="thermal-total-row"><span>VAT</span><strong>${fmtCurrency2(data.totals.tax, data.currency)}</strong></div><div class="thermal-total-row"><span>Payment</span><strong>${htmlEscape2(data.paymentMethodDisplay)}</strong></div><div class="thermal-total-row"><span>Cash</span><strong>${fmtCurrency2(data.amountPaid, data.currency)}</strong></div><div class="thermal-total-row"><span>Change</span><strong>${fmtCurrency2(data.changeAmount, data.currency)}</strong></div><div class="thermal-total-row thermal-grand"><span>Total</span><strong>${fmtCurrency2(data.totals.total, data.currency)}</strong></div></div><div class="thermal-footer"><img class="thermal-qr" src="${htmlEscape2(data.qrDataUrl)}" alt="QR code" /><p class="brand-meta">Thank you for your business</p><p class="brand-meta">${htmlEscape2(data.footerLine || `${data.website}${data.website && data.supportEmail ? " • " : ""}${data.supportEmail}`)}</p></div></div></div></div>` : `<div class="page"><div class="sheet sheet--a4"><div class="accent"></div><div class="doc-body"><div class="doc-header"><div class="brand"><img src="${htmlEscape2(data.logoSrc)}" alt="logo" /><div><h1>${htmlEscape2(data.companyName)}</h1><p class="brand-meta">${htmlEscape2(data.companyAddress)}<br/>Telephone: ${htmlEscape2(data.companyPhone)}<br/>Email: ${htmlEscape2(data.companyEmail)}<br/>Website: ${htmlEscape2(data.website || "—")}<br/>KRA PIN: ${htmlEscape2(data.taxPin || "—")}<br/>VAT No.: ${htmlEscape2(data.vatNumber || "—")}</p></div></div><div class="doc-title-card"><h2>${htmlEscape2(data.documentTitle)}</h2><div class="info-grid"><div><span>Document No.</span><strong>${htmlEscape2(data.documentNumber)}</strong></div><div><span>Date</span><strong>${htmlEscape2(dateText2(data.documentDate))}</strong></div><div><span>${htmlEscape2(data.dueDateLabel)}</span><strong>${htmlEscape2(data.dueDate ? dateText2(data.dueDate) : "—")}</strong></div><div><span>Salesperson</span><strong>${htmlEscape2(data.salesperson)}</strong></div></div></div></div><div class="meta-grid"><section class="panel"><h3>Bill To</h3><strong>${htmlEscape2(data.customerName)}</strong><p>${htmlEscape2(data.customerCompany)}</p><p>${htmlEscape2(data.customerAddress)}</p><p>${htmlEscape2(data.customerPhone)}</p><p>${htmlEscape2(data.customerEmail)}</p><p>${data.customerTaxNumber ? `KRA PIN: ${htmlEscape2(data.customerTaxNumber)}` : ``}</p></section><section class="panel"><h3>Document Information</h3><div class="info-grid"><div><span>${htmlEscape2(String(data.documentTitle).toLowerCase() === "quotation" ? "Quote No." : String(data.documentTitle).toLowerCase().includes("invoice") ? "Invoice No." : "Receipt No.")}</span><strong>${htmlEscape2(data.documentNumber)}</strong></div><div><span>Reference</span><strong>${htmlEscape2(data.reference)}</strong></div><div><span>Payment Terms</span><strong>${htmlEscape2(data.paymentTerms)}</strong></div><div><span>Currency</span><strong>${htmlEscape2(data.currency)}</strong></div></div></section></div><section class="items"><table><thead><tr><th>Item Code</th><th>Description</th><th class="num">Qty</th><th>Unit</th><th class="num">Unit Price</th><th class="num">Discount</th><th class="num">VAT</th><th class="num">Total</th></tr></thead><tbody>${a4Rows}</tbody></table></section><div class="summary-grid"><div class="notes-grid">${notesMarkup}</div><div class="totals-card"><div class="total-row"><span>Subtotal</span><strong>${fmtCurrency2(data.totals.subtotal, data.currency)}</strong></div><div class="total-row"><span>Discount</span><strong>${fmtCurrency2(data.totals.discount, data.currency)}</strong></div><div class="total-row"><span>VAT</span><strong>${fmtCurrency2(data.totals.tax, data.currency)}</strong></div><div class="total-row"><span>Shipping</span><strong>${fmtCurrency2(data.totals.shipping, data.currency)}</strong></div><div class="grand-total"><div><span>Grand Total</span><strong>${fmtCurrency2(data.totals.total, data.currency)}</strong></div><div style="text-align:right"><span>Currency</span><strong style="font-size:18px">${htmlEscape2(data.currency)}</strong></div></div></div></div><div class="signatures"><div class="signature-card"><div class="signature-line"></div><div class="signature-label">Prepared By</div></div><div class="signature-card"><div class="signature-line"></div><div class="signature-label">Customer Acceptance</div></div><div class="signature-card"><div class="signature-line"></div><div class="signature-label">Approved By</div></div></div><div class="footer"><img class="qr" src="${htmlEscape2(data.qrDataUrl)}" alt="QR code" /><div><h4>Thank you for your business</h4><p class="footer-copy">${htmlEscape2(data.footerLine || `${data.website}${data.website && data.supportEmail ? " • " : ""}${data.supportEmail}`)}</p><p class="footer-copy">${htmlEscape2(data.slogan)}</p><p class="footer-copy">${htmlEscape2(data.branchInfo).split("\n").join(" • ")}</p></div></div></div></div></div>`}</body></html>`;
+  @media (max-width: 900px) { .page { padding: 0; } .sheet--a4 { width: 100%; min-height: auto; border-radius: 0; } .hdr { flex-direction: column; } .tc { max-width: 100%; min-width: 0; } .mg, .sg, .pcards, .sigs { grid-template-columns: 1fr; } .ng { grid-template-columns: 1fr; } }`;
+
+  const a4Html = `<div class="page"><div class="sheet sheet--a4">
+    <div class="accent"></div>
+    <div class="body">
+      <div class="hdr">
+        <div class="brand">
+          <img src="${htmlEscape2(data.logoSrc)}" alt="logo" />
+          <div>
+            <h1>${htmlEscape2(data.companyName)}</h1>
+            <p class="brand-meta">${htmlEscape2(data.companyAddress).replace(/\n/g, "<br/>")}<br/>Tel: ${htmlEscape2(data.companyPhone)}<br/>Email: ${htmlEscape2(data.companyEmail)}${data.website ? `<br/>Web: ${htmlEscape2(data.website)}` : ""}${data.taxPin ? `<br/>KRA PIN: ${htmlEscape2(data.taxPin)}` : ""}${data.vatNumber ? ` | VAT: ${htmlEscape2(data.vatNumber)}` : ""}${data.branchName ? `<br/>${htmlEscape2(data.branchName)}` : ""}</p>
+          </div>
+        </div>
+        <div class="tc">
+          <h2>${htmlEscape2(data.documentTitle)}</h2>
+          <div class="dn">${htmlEscape2(data.documentNumber)}</div>
+          <div class="ig">
+            <div><span>Date</span><strong>${htmlEscape2(dateText2(data.documentDate))}</strong></div>
+            <div><span>${htmlEscape2(data.dueDateLabel)}</span><strong>${htmlEscape2(data.dueDate ? dateText2(data.dueDate) : "—")}</strong></div>
+            <div><span>Salesperson</span><strong>${htmlEscape2(data.salesperson)}</strong></div>
+            <div><span>Currency</span><strong>${htmlEscape2(data.currency)}</strong></div>
+          </div>
+        </div>
+      </div>
+      <div class="mg">
+        <section class="panel">
+          <h3>Bill To</h3>
+          <div class="pn">${htmlEscape2(data.customerName)}</div>
+          ${data.customerCompany ? `<p>${htmlEscape2(data.customerCompany)}</p>` : ""}
+          ${data.customerAddress ? `<p>${htmlEscape2(data.customerAddress)}</p>` : ""}
+          ${data.customerPhone ? `<p>Tel: ${htmlEscape2(data.customerPhone)}</p>` : ""}
+          ${data.customerEmail ? `<p>${htmlEscape2(data.customerEmail)}</p>` : ""}
+          ${data.customerTaxNumber ? `<p>KRA PIN: ${htmlEscape2(data.customerTaxNumber)}</p>` : ""}
+        </section>
+        <section class="panel">
+          <h3>Document Details</h3>
+          <div class="ig2">
+            <div><span>${htmlEscape2(String(data.documentTitle).toLowerCase() === "quotation" ? "Quote No." : String(data.documentTitle).toLowerCase().includes("invoice") ? "Invoice No." : "Doc No.")}</span><strong>${htmlEscape2(data.documentNumber)}</strong></div>
+            <div><span>Reference</span><strong>${htmlEscape2(data.reference)}</strong></div>
+            <div><span>Payment Terms</span><strong>${htmlEscape2(data.paymentTerms)}</strong></div>
+            <div><span>Currency</span><strong>${htmlEscape2(data.currency)}</strong></div>
+          </div>
+        </section>
+      </div>
+      <section class="items">
+        <table>
+          <thead><tr><th>Code</th><th>Description</th><th class="num">Qty</th><th>Unit</th><th class="num">Unit Price</th><th class="num">Disc.</th><th class="num">VAT</th><th class="num">Amount</th></tr></thead>
+          <tbody>${a4Rows}</tbody>
+        </table>
+      </section>
+      <div class="sg">
+        <div class="ng">${notesMarkup}</div>
+        <div class="tp">
+          <div class="tr2"><span>Subtotal</span><strong>${fmtCurrency2(data.totals.subtotal, data.currency)}</strong></div>
+          ${data.totals.discount > 0 ? `<div class="tr2"><span>Discount</span><strong>&minus; ${fmtCurrency2(data.totals.discount, data.currency)}</strong></div>` : ""}
+          <div class="tr2"><span>VAT</span><strong>${fmtCurrency2(data.totals.tax, data.currency)}</strong></div>
+          ${data.totals.shipping > 0 ? `<div class="tr2"><span>Shipping</span><strong>${fmtCurrency2(data.totals.shipping, data.currency)}</strong></div>` : ""}
+          <div class="gtb"><span class="gl">Grand Total</span><span class="ga">${fmtCurrency2(data.totals.total, data.currency)}</span></div>
+        </div>
+      </div>
+      ${paymentSection}
+      ${termsSection}
+      <div class="sigs">
+        <div class="sig"><div class="sig-line"></div><div class="sig-label">Prepared By</div></div>
+        <div class="sig"><div class="sig-line"></div><div class="sig-label">Customer Acceptance</div></div>
+        <div class="sig"><div class="sig-line"></div><div class="sig-label">Approved By</div></div>
+      </div>
+      <div class="ftr">
+        <img class="qr" src="${htmlEscape2(data.qrDataUrl)}" alt="QR code" />
+        <div>
+          <h4>Thank you for your business!</h4>
+          ${data.footerLine ? `<p>${htmlEscape2(data.footerLine)}</p>` : ""}
+          ${data.companyPhone ? `<p>Tel: ${htmlEscape2(data.companyPhone)}</p>` : ""}
+        </div>
+      </div>
+    </div>
+  </div></div>`;
+
+  const thermalHtml = `<div class="page"><div class="sheet sheet--th">
+    <div class="accent"></div>
+    <div class="th-wrap">
+      <div class="th-head">
+        <img src="${htmlEscape2(data.logoSrc)}" alt="logo" />
+        <h1>${htmlEscape2(data.companyName)}</h1>
+        <p class="th-sub">${htmlEscape2(data.companyAddress).replace(/\n/g, " ")}</p>
+        <p class="th-sub">${htmlEscape2(data.companyPhone)}</p>
+      </div>
+      <div class="th-meta">
+        <div class="th-mrow"><span>Receipt No.</span><strong>${htmlEscape2(data.documentNumber)}</strong></div>
+        <div class="th-mrow"><span>Date</span><strong>${htmlEscape2(dateText2(data.documentDate))}</strong></div>
+        <div class="th-mrow"><span>Cashier</span><strong>${htmlEscape2(data.salesperson)}</strong></div>
+        <div class="th-mrow"><span>Customer</span><strong>${htmlEscape2(data.customerName)}</strong></div>
+        <div class="th-mrow"><span>Payment</span><strong>${htmlEscape2(data.paymentMethodDisplay)}</strong></div>
+      </div>
+      <table class="th-items">
+        <thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Total</th></tr></thead>
+        <tbody>${thermalRows}</tbody>
+      </table>
+      <div class="th-totals">
+        <div class="th-trow"><span>Subtotal</span><strong>${fmtCurrency2(data.totals.subtotal, data.currency)}</strong></div>
+        ${data.totals.discount > 0 ? `<div class="th-trow"><span>Discount</span><strong>&minus; ${fmtCurrency2(data.totals.discount, data.currency)}</strong></div>` : ""}
+        <div class="th-trow"><span>VAT</span><strong>${fmtCurrency2(data.totals.tax, data.currency)}</strong></div>
+        <div class="th-trow"><span>Cash Tendered</span><strong>${fmtCurrency2(data.amountPaid, data.currency)}</strong></div>
+        <div class="th-trow"><span>Change</span><strong>${fmtCurrency2(Math.max(0, data.changeAmount), data.currency)}</strong></div>
+        <div class="th-trow th-grand"><span>TOTAL</span><strong>${fmtCurrency2(data.totals.total, data.currency)}</strong></div>
+      </div>
+      <div class="th-ftr">
+        <img class="th-qr" src="${htmlEscape2(data.qrDataUrl)}" alt="QR code" />
+        <p class="th-sub">Thank you for your business!</p>
+        ${data.footerLine ? `<p class="th-sub">${htmlEscape2(data.footerLine)}</p>` : ""}
+      </div>
+    </div>
+  </div></div>`;
+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>${htmlEscape2(data.companyName)} - ${htmlEscape2(data.documentTitle)} ${htmlEscape2(data.documentNumber)}</title><style>${css}</style></head><body>${data.isReceipt ? thermalHtml : a4Html}</body></html>`;
 }
 async function resolveDocumentPayload(req, type, id) {
   const settings = await getDocSettings();
@@ -72300,7 +72537,7 @@ async function resolveDocumentPayload(req, type, id) {
       notes: invoice.notes || "",
       notesSections: [
         ["Warranty", settings.warrantyText || ""],
-        ["Payment Instructions", settings.paymentInstructions || ""],
+        ["Return Policy", settings.returnPolicy || ""],
         ["Additional Notes", [invoice.notes, documentFooterForType(settings, requestedType)].filter(Boolean).join("\n\n")]
       ].filter((entry) => entry[1]),
       requestedType,
@@ -72345,8 +72582,8 @@ async function resolveDocumentPayload(req, type, id) {
       notesSections: [
         ["Warranty", quotation.warranty || settings.warrantyText || ""],
         ["Delivery Terms", quotation.deliveryTime || ""],
-        ["Payment Instructions", quotation.paymentTerms || settings.paymentInstructions || ""],
-        ["Additional Notes", [quotation.notes, settings.quotationValidityDays ? `Quotation validity: ${settings.quotationValidityDays} day(s)` : "", documentFooterForType(settings, requestedType)].filter(Boolean).join("\n\n")]
+        ["Return Policy", settings.returnPolicy || ""],
+        ["Additional Notes", [quotation.notes, documentFooterForType(settings, requestedType)].filter(Boolean).join("\n\n")]
       ].filter((entry) => entry[1]),
       requestedType,
       rows: await formatDocumentRows(items),
@@ -72388,7 +72625,6 @@ async function resolveDocumentPayload(req, type, id) {
       },
       notes: `Payment method: ${sale.paymentMethod || "cash"}`,
       notesSections: [
-        ["Payment Instructions", settings.paymentInstructions || ""],
         ["Additional Notes", documentFooterForType(settings, requestedType)]
       ].filter((entry) => entry[1]),
       requestedType,
@@ -72727,17 +72963,24 @@ async function renderPdfBuffer(payload, paper) {
         doc.fillColor("#475569").font("Helvetica").fontSize(8.5).text(value, notesX + 16, notesY, { width: notesW - 32 });
         notesY = doc.y + 8;
       });
-      doc.roundedRect(totalsX, doc.y, 208, 150, 22).fill(data.primary);
-      let totalsY = doc.y + 18;
+      // Totals panel — white card with accented grand total bar
+      const totalsCardH = 150;
+      const totalsCardTopY = doc.y;
+      doc.roundedRect(totalsX, totalsCardTopY, 208, totalsCardH, 16).fillAndStroke("#FFFFFF", "#E2E8F0");
+      let totalsY = totalsCardTopY + 14;
       [["Subtotal", data.totals.subtotal], ["Discount", data.totals.discount], ["VAT", data.totals.tax], ["Shipping", data.totals.shipping]].forEach(([label, value]) => {
-        doc.fillColor("rgba(255,255,255,0.78)").font("Helvetica").fontSize(9).text(label, totalsX + 18, totalsY, { width: 80 });
-        doc.fillColor("white").font("Helvetica-Bold").text(fmtCurrency2(value, data.currency), totalsX + 96, totalsY, { width: 94, align: "right" });
+        if (label === "Discount" && data.totals.discount <= 0) return;
+        if (label === "Shipping" && data.totals.shipping <= 0) return;
+        doc.fillColor("#64748B").font("Helvetica").fontSize(9).text(label, totalsX + 16, totalsY, { width: 90 });
+        doc.fillColor("#0F172A").font("Helvetica-Bold").fontSize(9).text(fmtCurrency2(value, data.currency), totalsX + 106, totalsY, { width: 86, align: "right" });
+        doc.strokeColor("#F1F5F9").moveTo(totalsX + 12, totalsY + 14).lineTo(totalsX + 196, totalsY + 14).stroke();
         totalsY += 22;
       });
-      doc.roundedRect(totalsX + 14, doc.y + 104, 180, 34, 16).fill("#FFFFFF");
-      doc.fillColor(data.primary).font("Helvetica").fontSize(8.5).text("GRAND TOTAL", totalsX + 28, doc.y + 113, { width: 70 });
-      doc.font("Helvetica-Bold").fontSize(16).text(fmtCurrency2(data.totals.total, data.currency), totalsX + 88, doc.y + 111, { width: 90, align: "right" });
-      doc.y += 170;
+      const gtBarY = totalsCardTopY + totalsCardH - 36;
+      doc.roundedRect(totalsX, gtBarY, 208, 36, 10).fill(data.primary);
+      doc.fillColor("rgba(255,255,255,0.8)").font("Helvetica-Bold").fontSize(8.5).text("GRAND TOTAL", totalsX + 16, gtBarY + 10, { width: 80 });
+      doc.fillColor("white").font("Helvetica-Bold").fontSize(16).text(fmtCurrency2(data.totals.total, data.currency), totalsX + 88, gtBarY + 9, { width: 104, align: "right" });
+      doc.y += totalsCardH + 18;
       const signY = doc.y;
       const signW = (width - 24) / 3;
       ["Prepared By", "Customer Acceptance", "Approved By"].forEach((label, index) => {
@@ -72747,6 +72990,69 @@ async function renderPdfBuffer(payload, paper) {
         doc.fillColor("#64748B").font("Helvetica").fontSize(8.5).text(label, x + 16, signY + 42, { width: signW - 32, align: "center" });
       });
       doc.y = signY + 80;
+      // Payment details section
+      const pd = data.payment;
+      const hasMpesaPdf = pd.mpesaPaybill || pd.mpesaTill;
+      const hasBankPdf = pd.bankName || pd.bankAccountNumber;
+      if (hasMpesaPdf || hasBankPdf) {
+        ensurePageSpace(120, drawTableHeader);
+        doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(9).text("HOW TO PAY", left, doc.y);
+        doc.moveDown(0.4);
+        const payCardW = hasMpesaPdf && hasBankPdf ? (width - 16) / 2 : width;
+        const payCardY = doc.y;
+        if (hasMpesaPdf) {
+          doc.roundedRect(left, payCardY, payCardW, 90, 10).fillAndStroke("#F8FAFF", "#E2E8F0");
+          doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(9.5).text("M-PESA Payment", left + 12, payCardY + 12, { width: payCardW - 24 });
+          doc.strokeColor("#E2E8F0").moveTo(left + 12, payCardY + 27).lineTo(left + payCardW - 12, payCardY + 27).stroke();
+          let pyRow = payCardY + 34;
+          const mpesaFields = [
+            pd.mpesaPaybill ? ["Paybill No.", pd.mpesaPaybill] : null,
+            pd.mpesaAccount ? ["Account No.", pd.mpesaAccount] : null,
+            pd.mpesaTill ? ["Till No. (Buy Goods)", pd.mpesaTill] : null
+          ].filter(Boolean);
+          mpesaFields.forEach(([lbl, val]) => {
+            doc.fillColor("#64748B").font("Helvetica").fontSize(8.5).text(lbl, left + 12, pyRow, { width: payCardW / 2 - 12 });
+            doc.fillColor("#0F172A").font("Helvetica-Bold").fontSize(8.5).text(val, left + payCardW / 2, pyRow, { width: payCardW / 2 - 12, align: "right" });
+            pyRow += 14;
+          });
+        }
+        if (hasBankPdf) {
+          const bankX = hasMpesaPdf ? left + payCardW + 16 : left;
+          doc.roundedRect(bankX, payCardY, payCardW, 90, 10).fillAndStroke("#F8FAFF", "#E2E8F0");
+          doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(9.5).text("Bank Transfer", bankX + 12, payCardY + 12, { width: payCardW - 24 });
+          doc.strokeColor("#E2E8F0").moveTo(bankX + 12, payCardY + 27).lineTo(bankX + payCardW - 12, payCardY + 27).stroke();
+          let byRow = payCardY + 34;
+          const bankFields = [
+            pd.bankName ? ["Bank", pd.bankName] : null,
+            pd.bankBranch ? ["Branch", pd.bankBranch] : null,
+            pd.bankAccountName ? ["Account Name", pd.bankAccountName] : null,
+            pd.bankAccountNumber ? ["Account No.", pd.bankAccountNumber] : null,
+            pd.bankSwiftCode ? ["Swift Code", pd.bankSwiftCode] : null
+          ].filter(Boolean);
+          bankFields.forEach(([lbl, val]) => {
+            doc.fillColor("#64748B").font("Helvetica").fontSize(8.5).text(lbl, bankX + 12, byRow, { width: payCardW / 2 - 12 });
+            doc.fillColor("#0F172A").font("Helvetica-Bold").fontSize(8.5).text(val, bankX + payCardW / 2, byRow, { width: payCardW / 2 - 12, align: "right" });
+            byRow += 14;
+          });
+        }
+        doc.y = payCardY + 98;
+      }
+      // Terms & conditions section
+      if (data.termsLines.length) {
+        ensurePageSpace(60, drawTableHeader);
+        doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(9).text("TERMS & CONDITIONS", left, doc.y);
+        doc.moveDown(0.3);
+        const termsStartY = doc.y;
+        const termsCapped = Math.min(data.termsLines.length, 8);
+        const termsBoxH = termsCapped * 14 + 20;
+        doc.roundedRect(left, termsStartY, width, termsBoxH, 10).fillAndStroke("#F8FAFF", "#E2E8F0");
+        doc.y = termsStartY + 10;
+        data.termsLines.slice(0, termsCapped).forEach((line, idx) => {
+          doc.fillColor("#475569").font("Helvetica").fontSize(8.5).text(`${idx + 1}. ${line}`, left + 12, doc.y, { width: width - 24 });
+          doc.moveDown(0.15);
+        });
+        doc.y = termsStartY + termsBoxH + 12;
+      }
       doc.roundedRect(left, doc.y, width, 82, 18).fillAndStroke("#F8FBFF", "#D7E4F1");
       if (qrBuffer) {
         try {
@@ -72754,9 +73060,12 @@ async function renderPdfBuffer(payload, paper) {
         } catch {
         }
       }
-      doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(12).text("Thank you for your business", left + 88, doc.y + 16, { width: width - 104 });
-      doc.font("Helvetica").fontSize(8.5).fillColor("#475569").text([data.website, data.supportEmail, data.slogan].filter(Boolean).join(" • "), left + 88, doc.y + 34, { width: width - 104 });
-      doc.text(data.branchInfo.split("\n").join(" • "), left + 88, doc.y + 48, { width: width - 104 });
+      doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(12).text("Thank you for your business!", left + 88, doc.y + 16, { width: width - 104 });
+      const footerContactLine = [data.website, data.companyEmail !== "—" ? data.companyEmail : ""].filter(Boolean).join(" · ");
+      doc.font("Helvetica").fontSize(8.5).fillColor("#475569").text(footerContactLine || data.footerLine || "", left + 88, doc.y + 34, { width: width - 104 });
+      if (data.companyPhone && data.companyPhone !== "—") {
+        doc.text(`Tel: ${data.companyPhone}`, left + 88, doc.y + 48, { width: width - 104 });
+      }
     }
     if (data.isReceipt) drawReceiptPdf();
     else drawA4Pdf();
