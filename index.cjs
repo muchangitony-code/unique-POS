@@ -72257,8 +72257,8 @@ async function buildDocumentHtml(opts) {
       (p.bankSwiftCode ? `<div class="pr"><span>Swift Code</span><strong>${htmlEscape2(p.bankSwiftCode)}</strong></div>` : "") +
       `</div>`
     : "";
-  const extraInstructions = p.paymentInstructions && !hasMpesa && !hasBank
-    ? `<div class="pc pc-full"><div class="pc-head"><span class="pc-icon">💳</span><h4>Payment Instructions</h4></div><p class="pc-note">${htmlEscape2(p.paymentInstructions).replace(/\n/g, "<br/>")}</p></div>`
+  const extraInstructions = p.paymentInstructions
+    ? `<div class="pc pc-full"><div class="pc-head"><span class="pc-icon">💳</span><h4>Additional Payment Instructions</h4></div><p class="pc-note">${htmlEscape2(p.paymentInstructions).replace(/\n/g, "<br/>")}</p></div>`
     : "";
   const paymentSection = hasMpesa || hasBank || extraInstructions
     ? `<div class="psec"><h3 class="slabel">How to Pay</h3><div class="pcards">${mpesaCard}${bankCard}${extraInstructions}</div></div>`
@@ -72446,7 +72446,7 @@ async function buildDocumentHtml(opts) {
         <div>
           <h4>Thank you for your business!</h4>
           ${data.footerLine ? `<p>${htmlEscape2(data.footerLine)}</p>` : ""}
-          ${data.companyPhone !== "—" ? `<p>Tel: ${htmlEscape2(data.companyPhone)}</p>` : ""}
+          ${data.companyPhone ? `<p>Tel: ${htmlEscape2(data.companyPhone)}</p>` : ""}
         </div>
       </div>
     </div>
@@ -72965,8 +72965,9 @@ async function renderPdfBuffer(payload, paper) {
       });
       // Totals panel — white card with accented grand total bar
       const totalsCardH = 150;
-      doc.roundedRect(totalsX, doc.y, 208, totalsCardH, 16).fillAndStroke("#FFFFFF", "#E2E8F0");
-      let totalsY = doc.y + 14;
+      const totalsCardTopY = doc.y;
+      doc.roundedRect(totalsX, totalsCardTopY, 208, totalsCardH, 16).fillAndStroke("#FFFFFF", "#E2E8F0");
+      let totalsY = totalsCardTopY + 14;
       [["Subtotal", data.totals.subtotal], ["Discount", data.totals.discount], ["VAT", data.totals.tax], ["Shipping", data.totals.shipping]].forEach(([label, value]) => {
         if (label === "Discount" && data.totals.discount <= 0) return;
         if (label === "Shipping" && data.totals.shipping <= 0) return;
@@ -72975,7 +72976,7 @@ async function renderPdfBuffer(payload, paper) {
         doc.strokeColor("#F1F5F9").moveTo(totalsX + 12, totalsY + 14).lineTo(totalsX + 196, totalsY + 14).stroke();
         totalsY += 22;
       });
-      const gtBarY = doc.y + totalsCardH - 36;
+      const gtBarY = totalsCardTopY + totalsCardH - 36;
       doc.roundedRect(totalsX, gtBarY, 208, 36, 10).fill(data.primary);
       doc.fillColor("rgba(255,255,255,0.8)").font("Helvetica-Bold").fontSize(8.5).text("GRAND TOTAL", totalsX + 16, gtBarY + 10, { width: 80 });
       doc.fillColor("white").font("Helvetica-Bold").fontSize(16).text(fmtCurrency2(data.totals.total, data.currency), totalsX + 88, gtBarY + 9, { width: 104, align: "right" });
@@ -73042,13 +73043,15 @@ async function renderPdfBuffer(payload, paper) {
         doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(9).text("TERMS & CONDITIONS", left, doc.y);
         doc.moveDown(0.3);
         const termsStartY = doc.y;
-        doc.roundedRect(left, termsStartY, width, Math.min(data.termsLines.length * 14 + 20, 120), 10).fillAndStroke("#F8FAFF", "#E2E8F0");
+        const termsCapped = Math.min(data.termsLines.length, 8);
+        const termsBoxH = termsCapped * 14 + 20;
+        doc.roundedRect(left, termsStartY, width, termsBoxH, 10).fillAndStroke("#F8FAFF", "#E2E8F0");
         doc.y = termsStartY + 10;
-        data.termsLines.slice(0, 8).forEach((line, idx) => {
+        data.termsLines.slice(0, termsCapped).forEach((line, idx) => {
           doc.fillColor("#475569").font("Helvetica").fontSize(8.5).text(`${idx + 1}. ${line}`, left + 12, doc.y, { width: width - 24 });
           doc.moveDown(0.15);
         });
-        doc.y = termsStartY + Math.min(data.termsLines.length * 14 + 20, 120) + 12;
+        doc.y = termsStartY + termsBoxH + 12;
       }
       doc.roundedRect(left, doc.y, width, 82, 18).fillAndStroke("#F8FBFF", "#D7E4F1");
       if (qrBuffer) {

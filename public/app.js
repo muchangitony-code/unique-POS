@@ -2544,8 +2544,8 @@
         (payment.bankSwiftCode ? '<div class="pr"><span>Swift Code</span><strong>' + escapeHtml(payment.bankSwiftCode) + '</strong></div>' : '') +
         '</div>'
       : '';
-    const extraInstructions = payment.paymentInstructions && !hasMpesa && !hasBank
-      ? '<div class="pc pc-full"><div class="pc-head"><span class="pc-icon">💳</span><h4>Payment Instructions</h4></div><p class="pc-note">' + escapeHtml(payment.paymentInstructions).replace(/\n/g, '<br/>') + '</p></div>'
+    const extraInstructions = payment.paymentInstructions
+      ? '<div class="pc pc-full"><div class="pc-head"><span class="pc-icon">💳</span><h4>Additional Payment Instructions</h4></div><p class="pc-note">' + escapeHtml(payment.paymentInstructions).replace(/\n/g, '<br/>') + '</p></div>'
       : '';
     const paymentSection = (hasMpesa || hasBank || extraInstructions)
       ? '<div class="psec"><h3 class="slabel">How to Pay</h3><div class="pcards">' + mpesaCard + bankCard + extraInstructions + '</div></div>'
