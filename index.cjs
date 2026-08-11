@@ -66739,10 +66739,14 @@ var productsTable = pgTable("products", {
   costPrice: numeric("cost_price", { precision: 15, scale: 2 }).notNull().default("0"),
   sellingPrice: numeric("selling_price", { precision: 15, scale: 2 }).notNull().default("0"),
   vatRate: numeric("vat_rate", { precision: 5, scale: 2 }).notNull().default("16"),
+  taxInclusive: boolean("tax_inclusive").notNull().default(false),
   currentStock: integer("current_stock").notNull().default(0),
   minStock: integer("min_stock").notNull().default(0),
   imageUrl: text("image_url"),
+  productPhotos: jsonb("product_photos"),
   unit: text("unit"),
+  status: text("status").notNull().default("active"),
+  primaryBranchId: integer("primary_branch_id"),
   isArchived: boolean("is_archived").notNull().default(false),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   archivedBy: integer("archived_by"),
@@ -69838,15 +69842,26 @@ async function adjustBranchStock(branchId, productId, computeAfter, executor = d
   } else {
     await executor.insert(productStockTable).values({ branchId, productId, currentStock: after, minStock: 0 });
   }
+  await syncProductAggregateStock(productId, executor);
   return { before, after };
 }
-async function setBranchStock(branchId, productId, currentStock, minStock) {
-  const row = await getBranchStockRow(branchId, productId);
+async function syncProductAggregateStock(productId, executor = db) {
+  const rows = await executor.select().from(productStockTable).where(eq(productStockTable.productId, productId));
+  const totals = rows.reduce((acc, row) => {
+    acc.current += Number(row.currentStock ?? 0);
+    acc.min += Number(row.minStock ?? 0);
+    return acc;
+  }, { current: 0, min: 0 });
+  await executor.update(productsTable).set({ currentStock: totals.current, minStock: totals.min }).where(eq(productsTable.id, productId));
+}
+async function setBranchStock(branchId, productId, currentStock, minStock, executor = db) {
+  const row = await getBranchStockRow(branchId, productId, executor);
   if (row) {
-    await db.update(productStockTable).set(minStock === void 0 ? { currentStock } : { currentStock, minStock }).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
+    await executor.update(productStockTable).set(minStock === void 0 ? { currentStock } : { currentStock, minStock }).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
   } else {
-    await db.insert(productStockTable).values({ branchId, productId, currentStock, minStock: minStock ?? 0 });
+    await executor.insert(productStockTable).values({ branchId, productId, currentStock, minStock: minStock ?? 0 });
   }
+  await syncProductAggregateStock(productId, executor);
 }
 
 // artifacts/api-server/src/routes/dashboard.ts
@@ -69966,42 +69981,130 @@ var dashboard_default = router3;
 // artifacts/api-server/src/routes/categories.ts
 var import_express4 = __toESM(require_express2(), 1);
 var router4 = (0, import_express4.Router)();
-router4.get("/categories", async (_req, res) => {
-  const cats = await db.select().from(categoriesTable).orderBy(categoriesTable.name);
-  res.json(cats.map((c) => ({ id: c.id, name: c.name, description: c.description, created_at: c.createdAt })));
+function formatCategory(cat, productCount = 0) {
+  return { id: cat.id, name: cat.name, description: cat.description, created_at: cat.createdAt, product_count: Number(productCount || 0) };
+}
+async function loadCategoryProductCounts(executor = db) {
+  const rows = await executor.select({ categoryId: productsTable.categoryId, total: sql`count(*)` }).from(productsTable).where(sql`${productsTable.categoryId} IS NOT NULL`).groupBy(productsTable.categoryId);
+  return new Map(rows.map((row) => [row.categoryId, Number(row.total || 0)]));
+}
+async function findCategoryByName(name, executor = db) {
+  const normalized = String(name || '').trim();
+  if (!normalized) return null;
+  const rows = await executor.select().from(categoriesTable).where(sql`lower(${categoriesTable.name}) = lower(${normalized})`).limit(1);
+  return rows[0] ?? null;
+}
+router4.get('/categories', async (_req, res) => {
+  const [cats, countMap] = await Promise.all([
+    db.select().from(categoriesTable).orderBy(categoriesTable.name),
+    loadCategoryProductCounts()
+  ]);
+  res.json(cats.map((c) => formatCategory(c, countMap.get(c.id) ?? 0)));
 });
-router4.post("/categories", async (req, res) => {
-  const { name, description } = req.body;
+router4.post('/categories', async (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  const description = req.body?.description ? String(req.body.description).trim() : null;
   if (!name) {
-    res.status(400).json({ error: "Name required" });
+    res.status(400).json({ error: 'Name required' });
+    return;
+  }
+  const existing = await findCategoryByName(name);
+  if (existing) {
+    res.json(formatCategory(existing));
     return;
   }
   const [cat] = await db.insert(categoriesTable).values({ name, description }).returning();
-  res.status(201).json({ id: cat.id, name: cat.name, description: cat.description, created_at: cat.createdAt });
+  await logAudit(req, { action: 'category.created', entityType: 'category', entityId: cat.id, description: `Created category "${cat.name}"` });
+  res.status(201).json(formatCategory(cat));
 });
-router4.get("/categories/:id", async (req, res) => {
+router4.get('/categories/:id', async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
   const [cat] = await db.select().from(categoriesTable).where(eq(categoriesTable.id, id));
   if (!cat) {
-    res.status(404).json({ error: "Category not found" });
+    res.status(404).json({ error: 'Category not found' });
     return;
   }
-  res.json({ id: cat.id, name: cat.name, description: cat.description, created_at: cat.createdAt });
+  const countMap = await loadCategoryProductCounts();
+  res.json(formatCategory(cat, countMap.get(cat.id) ?? 0));
 });
-router4.patch("/categories/:id", async (req, res) => {
+router4.patch('/categories/:id', async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const { name, description } = req.body;
+  const [existing] = await db.select().from(categoriesTable).where(eq(categoriesTable.id, id));
+  if (!existing) {
+    res.status(404).json({ error: 'Category not found' });
+    return;
+  }
+  const name = req.body?.name != null ? String(req.body.name).trim() : existing.name;
+  const description = req.body?.description != null ? String(req.body.description).trim() : existing.description;
+  if (!name) {
+    res.status(400).json({ error: 'Name required' });
+    return;
+  }
+  const duplicate = await findCategoryByName(name);
+  if (duplicate && duplicate.id !== existing.id) {
+    res.status(409).json({ error: 'Another category with that name already exists' });
+    return;
+  }
   const [cat] = await db.update(categoriesTable).set({ name, description }).where(eq(categoriesTable.id, id)).returning();
-  if (!cat) {
-    res.status(404).json({ error: "Category not found" });
+  await logAudit(req, { action: 'category.updated', entityType: 'category', entityId: cat.id, description: `Updated category "${existing.name}"`, metadata: { before: formatCategory(existing), after: formatCategory(cat) } });
+  const countMap = await loadCategoryProductCounts();
+  res.json(formatCategory(cat, countMap.get(cat.id) ?? 0));
+});
+router4.post('/categories/:id/merge', async (req, res) => {
+  const sourceId = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const targetCategoryId = req.body?.target_category_id != null ? parseInt(req.body.target_category_id, 10) : NaN;
+  const targetName = String(req.body?.target_name || '').trim();
+  const [source] = await db.select().from(categoriesTable).where(eq(categoriesTable.id, sourceId));
+  if (!source) {
+    res.status(404).json({ error: 'Source category not found' });
     return;
   }
-  res.json({ id: cat.id, name: cat.name, description: cat.description, created_at: cat.createdAt });
+  if (!Number.isInteger(targetCategoryId) && !targetName) {
+    res.status(400).json({ error: 'target_category_id or target_name is required' });
+    return;
+  }
+  const result = await db.transaction(async (tx) => {
+    let target = null;
+    if (Number.isInteger(targetCategoryId)) {
+      const [existingTarget] = await tx.select().from(categoriesTable).where(eq(categoriesTable.id, targetCategoryId));
+      target = existingTarget ?? null;
+    } else {
+      target = await findCategoryByName(targetName, tx);
+      if (!target) {
+        const [createdTarget] = await tx.insert(categoriesTable).values({ name: targetName, description: null }).returning();
+        target = createdTarget;
+      }
+    }
+    if (!target) throw new Error('Target category not found');
+    if (target.id === source.id) throw new Error('Choose a different category to merge into');
+    const moved = await tx.select({ count: sql`count(*)` }).from(productsTable).where(eq(productsTable.categoryId, source.id));
+    await tx.update(productsTable).set({ categoryId: target.id }).where(eq(productsTable.categoryId, source.id));
+    await tx.delete(categoriesTable).where(eq(categoriesTable.id, source.id));
+    return { target, moved: Number(moved[0]?.count || 0) };
+  }).catch((error) => ({ error }));
+  if (result.error) {
+    res.status(400).json({ error: result.error.message || 'Unable to merge category' });
+    return;
+  }
+  await logAudit(req, { action: 'category.merged', entityType: 'category', entityId: result.target.id, description: `Merged category "${source.name}" into "${result.target.name}"`, metadata: { source_category_id: source.id, moved_products: result.moved } });
+  const countMap = await loadCategoryProductCounts();
+  res.json({ merged: true, moved_products: result.moved, category: formatCategory(result.target, countMap.get(result.target.id) ?? 0) });
 });
-router4.delete("/categories/:id", async (req, res) => {
+router4.delete('/categories/:id', async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  await db.delete(categoriesTable).where(eq(categoriesTable.id, id));
-  res.sendStatus(204);
+  const [existing] = await db.select().from(categoriesTable).where(eq(categoriesTable.id, id));
+  if (!existing) {
+    res.status(404).json({ error: 'Category not found' });
+    return;
+  }
+  const result = await db.transaction(async (tx) => {
+    const affected = await tx.select({ count: sql`count(*)` }).from(productsTable).where(eq(productsTable.categoryId, id));
+    await tx.update(productsTable).set({ categoryId: null }).where(eq(productsTable.categoryId, id));
+    await tx.delete(categoriesTable).where(eq(categoriesTable.id, id));
+    return Number(affected[0]?.count || 0);
+  });
+  await logAudit(req, { action: 'category.deleted', entityType: 'category', entityId: id, description: `Deleted category "${existing.name}"`, metadata: { uncategorized_products: result } });
+  res.status(204).end();
 });
 var categories_default = router4;
 
@@ -70041,9 +70144,88 @@ var brands_default = router5;
 // artifacts/api-server/src/routes/products.ts
 var import_express6 = __toESM(require_express2(), 1);
 var router6 = (0, import_express6.Router)();
-function formatProduct(p, catName, brandName, supplierName, stock) {
+function parseOptionalInteger(value) {
+  const n = parseInt(value, 10);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+function parseOptionalNumber(value, fallback = null) {
+  if (value === void 0 || value === null || value === '') return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+function parseOptionalBoolean(value) {
+  if (value === void 0 || value === null || value === '') return null;
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return null;
+}
+function cleanText(value) {
+  if (value === void 0 || value === null) return null;
+  const text2 = String(value).trim();
+  return text2 ? text2 : null;
+}
+function normalizeProductStatus(value) {
+  return String(value || 'active').trim().toLowerCase() === 'inactive' ? 'inactive' : 'active';
+}
+function normalizePhotoList(value) {
+  let list = [];
+  if (Array.isArray(value)) {
+    list = value;
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) list = [];
+    else if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        list = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        list = trimmed.split(',');
+      }
+    } else {
+      list = trimmed.split(',');
+    }
+  }
+  return [...new Set(list.map((item) => String(item || '').trim()).filter(Boolean))];
+}
+async function ensureCategoryId(input, executor = db) {
+  const existingId = parseOptionalInteger(input?.category_id);
+  if (existingId != null) return existingId;
+  const requestedName = cleanText(input?.create_category_name) ?? cleanText(input?.category_name);
+  if (!requestedName) return null;
+  const existing = await findCategoryByName(requestedName, executor);
+  if (existing) return existing.id;
+  const [created] = await executor.insert(categoriesTable).values({ name: requestedName, description: cleanText(input?.category_description) }).returning();
+  return created.id;
+}
+async function ensureProductCode(executor, requestedCode, existingId = null) {
+  const normalized = cleanText(requestedCode);
+  if (!normalized) return generateUniqueProductCode(executor);
+  const rows = await executor.select({ id: productsTable.id }).from(productsTable).where(eq(productsTable.productCode, normalized)).limit(1);
+  if (rows[0] && rows[0].id !== existingId) throw new Error('SKU already exists');
+  return normalized;
+}
+async function loadProductReferenceMaps(executor = db) {
+  const [categories, brands, suppliers, branches] = await Promise.all([
+    executor.select().from(categoriesTable),
+    executor.select().from(brandsTable),
+    executor.select().from(suppliersTable),
+    executor.select().from(branchesTable)
+  ]);
+  return {
+    categoryMap: Object.fromEntries(categories.map((item) => [item.id, item.name])),
+    brandMap: Object.fromEntries(brands.map((item) => [item.id, item.name])),
+    supplierMap: Object.fromEntries(suppliers.map((item) => [item.id, item.name])),
+    branchMap: Object.fromEntries(branches.map((item) => [item.id, item.name]))
+  };
+}
+function formatProduct(p, catName, brandName, supplierName, stock, branchName) {
+  const photos = normalizePhotoList(p.productPhotos);
+  const primaryPhoto = p.imageUrl ?? photos[0] ?? null;
   return {
     id: p.id,
+    sku: p.productCode,
     product_code: p.productCode,
     barcode: p.barcode,
     product_name: p.productName,
@@ -70054,13 +70236,23 @@ function formatProduct(p, catName, brandName, supplierName, stock) {
     brand_name: brandName ?? null,
     supplier_id: p.supplierId,
     supplier_name: supplierName ?? null,
+    buying_price: Number(p.costPrice),
     cost_price: Number(p.costPrice),
     selling_price: Number(p.sellingPrice),
     vat_rate: Number(p.vatRate),
+    tax_inclusive: !!p.taxInclusive,
+    tax_settings: { rate: Number(p.vatRate), inclusive: !!p.taxInclusive },
     current_stock: stock ? stock.current : p.currentStock,
     min_stock: stock ? stock.min : p.minStock,
-    image_url: p.imageUrl,
+    image_url: primaryPhoto,
+    product_photos: photos,
+    primary_branch_id: p.primaryBranchId ?? null,
+    branch_id: p.primaryBranchId ?? null,
+    branch_name: branchName ?? null,
+    primary_branch_name: branchName ?? null,
     unit: p.unit,
+    unit_of_measure: p.unit,
+    status: normalizeProductStatus(p.status),
     is_archived: p.isArchived ?? false,
     archived_at: p.archivedAt ?? null,
     created_at: p.createdAt
@@ -70071,49 +70263,52 @@ function stockFor(map2, p, options = {}) {
   const fallbackCurrent = options.fallbackToProductCurrent ? p.currentStock : 0;
   return { current: v?.cur ?? fallbackCurrent, min: v && v.min != null ? v.min : p.minStock };
 }
-router6.get("/products", async (req, res) => {
-  const { search, category_id, brand_id, low_stock, in_stock_only, fallback_product_stock, include_archived, page = "1", limit = "50" } = req.query;
+router6.get('/products', async (req, res) => {
+  const { search, q, category_id, brand_id, supplier_id, status, low_stock, in_stock_only, fallback_product_stock, include_archived, page = '1', limit = '50' } = req.query;
   const p = Math.max(1, parseInt(page, 10));
-  const l = Math.min(200, parseInt(limit, 10));
+  const l = Math.min(500, parseInt(limit, 10));
   const conditions = [];
-  if (search) conditions.push(or(ilike(productsTable.productName, `%${search}%`), ilike(productsTable.productCode, `%${search}%`), ilike(productsTable.barcode, `%${search}%`)));
-  const catId = category_id ? parseInt(category_id, 10) : NaN;
-  if (!Number.isNaN(catId)) conditions.push(eq(productsTable.categoryId, catId));
-  const brandId = brand_id ? parseInt(brand_id, 10) : NaN;
-  if (!Number.isNaN(brandId)) conditions.push(eq(productsTable.brandId, brandId));
-  // Exclude archived products from normal listings unless explicitly requested
-  if (include_archived !== "true") conditions.push(eq(productsTable.isArchived, false));
+  const searchTerm = cleanText(search) ?? cleanText(q);
+  if (searchTerm) conditions.push(or(ilike(productsTable.productName, `%${searchTerm}%`), ilike(productsTable.productCode, `%${searchTerm}%`), ilike(productsTable.barcode, `%${searchTerm}%`), ilike(productsTable.description, `%${searchTerm}%`)));
+  const catId = parseOptionalInteger(category_id);
+  if (catId != null) conditions.push(eq(productsTable.categoryId, catId));
+  const brandId = parseOptionalInteger(brand_id);
+  if (brandId != null) conditions.push(eq(productsTable.brandId, brandId));
+  const supplierId = parseOptionalInteger(supplier_id);
+  if (supplierId != null) conditions.push(eq(productsTable.supplierId, supplierId));
+  const branchScope = getBranchScope(req);
+  const selectedBranchId = branchScope.isSuper ? parseOptionalInteger(req.query.branch_id) ?? branchScope.branchId : branchScope.branchId;
+  if (selectedBranchId != null) conditions.push(eq(productsTable.primaryBranchId, selectedBranchId));
+  const normalizedStatus = cleanText(status);
+  if (normalizedStatus === 'active' || normalizedStatus === 'inactive') conditions.push(eq(productsTable.status, normalizedStatus));
+  if (include_archived !== 'true') conditions.push(eq(productsTable.isArchived, false));
   const where = conditions.length ? and(...conditions) : void 0;
   const allProducts = await db.select().from(productsTable).where(where).orderBy(productsTable.productName);
-  const scope = getBranchScope(req);
-  const hasExplicitBranch = scope.mode === "single" && scope.branchId != null;
-  const useAllBranches = scope.mode === "all" || !hasExplicitBranch;
-  const stockMap = await loadStockMap({ branchId: useAllBranches ? null : scope.branchId, all: useAllBranches });
-  const [categories, brands, suppliers] = await Promise.all([
-    db.select().from(categoriesTable),
-    db.select().from(brandsTable),
-    db.select().from(suppliersTable)
-  ]);
-  const catMap = Object.fromEntries(categories.map((c) => [c.id, c.name]));
-  const brandMap = Object.fromEntries(brands.map((b) => [b.id, b.name]));
-  const supplierMap = Object.fromEntries(suppliers.map((s) => [s.id, s.name]));
-  const useProductFallbackStock = fallback_product_stock === "true" || !hasExplicitBranch;
+  const useAllBranches = branchScope.mode === 'all' && selectedBranchId == null;
+  const stockMap = await loadStockMap({ branchId: useAllBranches ? null : selectedBranchId, all: useAllBranches });
+  const { categoryMap, brandMap, supplierMap, branchMap } = await loadProductReferenceMaps();
+  const useProductFallbackStock = fallback_product_stock === 'true' || !selectedBranchId;
   const productsWithStock = allProducts.map((prod) => ({
     product: prod,
     stock: stockFor(stockMap, prod, { fallbackToProductCurrent: useProductFallbackStock })
   }));
-  const inStockOnly = in_stock_only === "true";
+  const inStockOnly = in_stock_only === 'true';
   const scopedProducts = inStockOnly ? productsWithStock.filter((row) => Number(row.stock.current) > 0) : productsWithStock;
-  let formatted = scopedProducts.map(
-    (row) => formatProduct(row.product, row.product.categoryId ? catMap[row.product.categoryId] : null, row.product.brandId ? brandMap[row.product.brandId] : null, row.product.supplierId ? supplierMap[row.product.supplierId] : null, row.stock)
-  );
-  if (low_stock === "true") formatted = formatted.filter((r) => r.current_stock <= r.min_stock);
+  let formatted = scopedProducts.map((row) => formatProduct(
+    row.product,
+    row.product.categoryId ? categoryMap[row.product.categoryId] : null,
+    row.product.brandId ? brandMap[row.product.brandId] : null,
+    row.product.supplierId ? supplierMap[row.product.supplierId] : null,
+    row.stock,
+    branchMap[row.product.primaryBranchId ?? selectedBranchId] ?? null
+  ));
+  if (low_stock === 'true') formatted = formatted.filter((item) => item.current_stock <= item.min_stock);
   const total = formatted.length;
   const offset = (p - 1) * l;
   res.json({ data: formatted.slice(offset, offset + l), total, page: p, limit: l });
 });
 async function generateUniqueProductCode(dbConn) {
-  const prefix = "P";
+  const prefix = 'P';
   const rows = await dbConn.execute(
     sql`SELECT product_code FROM products WHERE product_code ~ ${`^${prefix}[0-9]{6,}$`} ORDER BY length(product_code) DESC, product_code DESC LIMIT 1`
   );
@@ -70123,59 +70318,79 @@ async function generateUniqueProductCode(dbConn) {
     const num = parseInt(last.slice(prefix.length), 10);
     if (!isNaN(num)) next = num + 1;
   }
-  let candidate = prefix + String(next).padStart(6, "0");
+  let candidate = prefix + String(next).padStart(6, '0');
   while (true) {
     const [existing] = await dbConn.select({ code: productsTable.productCode }).from(productsTable).where(eq(productsTable.productCode, candidate));
     if (!existing) break;
     next = next + 1;
-    candidate = prefix + String(next).padStart(6, "0");
+    candidate = prefix + String(next).padStart(6, '0');
   }
   return candidate;
 }
-router6.post("/products", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
-  const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, current_stock, min_stock, image_url, unit } = req.body;
-  if (!product_name) {
-    res.status(400).json({ error: "product_name required" });
+router6.post('/products', requireRole('administrator', 'manager', 'storekeeper'), async (req, res) => {
+  const productName = cleanText(req.body?.product_name);
+  if (!productName) {
+    res.status(400).json({ error: 'product_name required' });
     return;
   }
-  const user = req.user;
-  const isPostSuperAdmin = user && SUPER_ADMIN_ROLES.includes(user.role);
-  let resolvedCode;
-  if (product_code && isPostSuperAdmin) {
-    resolvedCode = product_code;
-  } else {
-    resolvedCode = await generateUniqueProductCode(db);
+  try {
+    const requestedBranchId = parseOptionalInteger(req.body?.branch_id) ?? parseOptionalInteger(req.body?.primary_branch_id);
+    const branchId = await resolveWriteBranchId(req, requestedBranchId ?? void 0);
+    const result = await db.transaction(async (tx) => {
+      const categoryId = await ensureCategoryId(req.body, tx);
+      const productCode = await ensureProductCode(tx, req.body?.product_code);
+      const openingStock = Math.max(0, Math.round(parseOptionalNumber(req.body?.current_stock, 0) ?? 0));
+      const minStock = Math.max(0, Math.round(parseOptionalNumber(req.body?.min_stock, 0) ?? 0));
+      const photos = normalizePhotoList(req.body?.product_photos);
+      const [product] = await tx.insert(productsTable).values({
+        productCode,
+        barcode: cleanText(req.body?.barcode),
+        productName,
+        description: cleanText(req.body?.description),
+        categoryId,
+        brandId: parseOptionalInteger(req.body?.brand_id),
+        supplierId: parseOptionalInteger(req.body?.supplier_id),
+        costPrice: String(parseOptionalNumber(req.body?.cost_price, 0) ?? 0),
+        sellingPrice: String(parseOptionalNumber(req.body?.selling_price, 0) ?? 0),
+        vatRate: String(parseOptionalNumber(req.body?.vat_rate, 16) ?? 16),
+        taxInclusive: parseOptionalBoolean(req.body?.tax_inclusive) ?? false,
+        currentStock: openingStock,
+        minStock,
+        imageUrl: cleanText(req.body?.image_url) ?? photos[0] ?? null,
+        productPhotos: photos,
+        unit: cleanText(req.body?.unit) ?? cleanText(req.body?.unit_of_measure),
+        status: normalizeProductStatus(req.body?.status),
+        primaryBranchId: parseOptionalInteger(req.body?.primary_branch_id) ?? branchId
+      }).returning();
+      await setBranchStock(branchId, product.id, openingStock, minStock, tx);
+      const stock = await getBranchStockRow(branchId, product.id, tx);
+      return { product, stock, branchId };
+    });
+    const { categoryMap, brandMap, supplierMap, branchMap } = await loadProductReferenceMaps();
+    const response = formatProduct(
+      result.product,
+      result.product.categoryId ? categoryMap[result.product.categoryId] : null,
+      result.product.brandId ? brandMap[result.product.brandId] : null,
+      result.product.supplierId ? supplierMap[result.product.supplierId] : null,
+      { current: result.stock?.currentStock ?? result.product.currentStock, min: result.stock?.minStock ?? result.product.minStock },
+      branchMap[result.product.primaryBranchId ?? result.branchId] ?? null
+    );
+    await logAudit(req, { action: 'product.created', entityType: 'product', entityId: result.product.id, description: `Created product "${result.product.productName}" (${result.product.productCode})`, metadata: { after: response } });
+    res.status(201).json(response);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to create product';
+    res.status(message === 'SKU already exists' ? 409 : 400).json({ error: message });
   }
-  const [p] = await db.insert(productsTable).values({
-    productCode: resolvedCode,
-    barcode,
-    productName: product_name,
-    description,
-    categoryId: category_id,
-    brandId: brand_id,
-    supplierId: supplier_id,
-    costPrice: cost_price?.toString() ?? "0",
-    sellingPrice: selling_price?.toString() ?? "0",
-    vatRate: vat_rate?.toString() ?? "16",
-    currentStock: current_stock ?? 0,
-    minStock: min_stock ?? 0,
-    imageUrl: image_url,
-    unit
-  }).returning();
-  const branchId = await resolveWriteBranchId(req);
-  await setBranchStock(branchId, p.id, current_stock ?? 0, min_stock ?? 0);
-  await logAudit(req, { action: "product.created", entityType: "product", entityId: p.id, description: `Created product "${p.productName}" (${p.productCode})` });
-  res.status(201).json(formatProduct(p, void 0, void 0, void 0, { current: current_stock ?? 0, min: min_stock ?? 0 }));
 });
 function makeBarcode(productCode, productId) {
-  const prefix = productCode.replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0, 4).padEnd(4, "X");
-  const suffix = String(productId).padStart(8, "0");
+  const prefix = productCode.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 4).padEnd(4, 'X');
+  const suffix = String(productId).padStart(8, '0');
   return `${prefix}${suffix}`;
 }
-router6.patch("/products/generate-barcodes", requireRole("administrator"), async (req, res) => {
+router6.patch('/products/generate-barcodes', requireRole('administrator'), async (req, res) => {
   const { product_ids } = req.body;
   if (!Array.isArray(product_ids)) {
-    res.status(400).json({ error: "product_ids is required and must be a non-empty array of positive integers" });
+    res.status(400).json({ error: 'product_ids is required and must be a non-empty array of positive integers' });
     return;
   }
   const parsed = product_ids.map((id) => {
@@ -70183,11 +70398,11 @@ router6.patch("/products/generate-barcodes", requireRole("administrator"), async
     return Number.isInteger(n) && n > 0 ? n : NaN;
   });
   if (parsed.some(isNaN)) {
-    res.status(400).json({ error: "product_ids must be an array of positive integers" });
+    res.status(400).json({ error: 'product_ids must be an array of positive integers' });
     return;
   }
   if (parsed.length === 0) {
-    res.json({ updated: 0, message: "No products selected." });
+    res.json({ updated: 0, message: 'No products selected.' });
     return;
   }
   const filterIds = [...new Set(parsed)];
@@ -70198,32 +70413,32 @@ router6.patch("/products/generate-barcodes", requireRole("administrator"), async
   );
   const untagged = await db.select({ id: productsTable.id, productCode: productsTable.productCode, productName: productsTable.productName }).from(productsTable).where(where);
   if (untagged.length === 0) {
-    res.json({ updated: 0, message: "All selected products already have barcodes." });
+    res.json({ updated: 0, message: 'All selected products already have barcodes.' });
     return;
   }
   const updatedIds = [];
-  for (const p of untagged) {
-    const barcode = makeBarcode(p.productCode, p.id);
-    const rows = await db.update(productsTable).set({ barcode }).where(and(eq(productsTable.id, p.id), sql`${productsTable.barcode} IS NULL OR ${productsTable.barcode} = ''`)).returning({ id: productsTable.id });
-    if (rows.length > 0) updatedIds.push(p.id);
+  for (const p2 of untagged) {
+    const barcode = makeBarcode(p2.productCode, p2.id);
+    const rows = await db.update(productsTable).set({ barcode }).where(and(eq(productsTable.id, p2.id), sql`${productsTable.barcode} IS NULL OR ${productsTable.barcode} = ''`)).returning({ id: productsTable.id });
+    if (rows.length > 0) updatedIds.push(p2.id);
   }
   if (updatedIds.length === 0) {
-    res.json({ updated: 0, message: "All selected products already have barcodes." });
+    res.json({ updated: 0, message: 'All selected products already have barcodes.' });
     return;
   }
   await logAudit(req, {
-    action: "product.barcodes_generated",
-    entityType: "product",
+    action: 'product.barcodes_generated',
+    entityType: 'product',
     entityId: 0,
     description: `Bulk-generated barcodes for ${updatedIds.length} selected product(s)`,
     metadata: { count: updatedIds.length, productIds: updatedIds }
   });
   const updatedIdSet = new Set(updatedIds);
-  const updatedProducts = untagged.filter((p) => updatedIdSet.has(p.id)).map((p) => ({
-    id: p.id,
-    product_code: p.productCode,
-    product_name: p.productName,
-    barcode: makeBarcode(p.productCode, p.id)
+  const updatedProducts = untagged.filter((p2) => updatedIdSet.has(p2.id)).map((p2) => ({
+    id: p2.id,
+    product_code: p2.productCode,
+    product_name: p2.productName,
+    barcode: makeBarcode(p2.productCode, p2.id)
   }));
   res.json({
     updated: updatedIds.length,
@@ -70231,115 +70446,233 @@ router6.patch("/products/generate-barcodes", requireRole("administrator"), async
     products: updatedProducts
   });
 });
-router6.get("/products/barcode/:barcode", async (req, res) => {
+router6.get('/products/barcode/:barcode', async (req, res) => {
   const barcode = Array.isArray(req.params.barcode) ? req.params.barcode[0] : req.params.barcode;
-  const [p] = await db.select().from(productsTable).where(eq(productsTable.barcode, barcode));
-  if (!p) {
-    res.status(404).json({ error: "Product not found" });
+  const [product] = await db.select().from(productsTable).where(eq(productsTable.barcode, barcode));
+  if (!product) {
+    res.status(404).json({ error: 'Product not found' });
     return;
   }
   const scope = getBranchScope(req);
-  const map2 = await loadStockMap({ branchId: scope.branchId, all: scope.mode === "all" });
-  res.json(formatProduct(p, void 0, void 0, void 0, stockFor(map2, p)));
+  const selectedBranchId = scope.isSuper ? parseOptionalInteger(req.query.branch_id) ?? scope.branchId : scope.branchId;
+  const stockMap = await loadStockMap({ branchId: scope.mode === 'all' && selectedBranchId == null ? null : selectedBranchId, all: scope.mode === 'all' && selectedBranchId == null });
+  const { categoryMap, brandMap, supplierMap, branchMap } = await loadProductReferenceMaps();
+  res.json(formatProduct(product, product.categoryId ? categoryMap[product.categoryId] : null, product.brandId ? brandMap[product.brandId] : null, product.supplierId ? supplierMap[product.supplierId] : null, stockFor(stockMap, product, { fallbackToProductCurrent: !selectedBranchId }), branchMap[product.primaryBranchId ?? selectedBranchId] ?? null));
 });
-router6.get("/products/:id", async (req, res) => {
+router6.get('/products/:id/history', requireRole('administrator', 'manager', 'storekeeper'), async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [p] = await db.select().from(productsTable).where(eq(productsTable.id, id));
-  if (!p) {
-    res.status(404).json({ error: "Product not found" });
+  const [product] = await db.select().from(productsTable).where(eq(productsTable.id, id));
+  if (!product) {
+    res.status(404).json({ error: 'Product not found' });
+    return;
+  }
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit ?? '30', 10)));
+  const movementWhere = combine(eq(stockMovementsTable.productId, id), branchCondition(stockMovementsTable.branchId, req));
+  const [auditRows, movementRows, refs] = await Promise.all([
+    db.select().from(auditLogTable).where(and(eq(auditLogTable.entityType, 'product'), eq(auditLogTable.entityId, String(id)))).orderBy(desc(auditLogTable.createdAt)).limit(limit),
+    db.select().from(stockMovementsTable).where(movementWhere).orderBy(desc(stockMovementsTable.createdAt)).limit(limit),
+    loadProductReferenceMaps()
+  ]);
+  res.json({
+    audit: auditRows.map((entry) => ({
+      id: entry.id,
+      action: entry.action,
+      actor_name: entry.actorName,
+      actor_role: entry.actorRole,
+      description: entry.description,
+      metadata: entry.metadata ?? null,
+      created_at: entry.createdAt
+    })),
+    movements: movementRows.map((movement) => ({
+      id: movement.id,
+      type: movement.type,
+      quantity: movement.quantity,
+      quantity_before: movement.quantityBefore,
+      quantity_after: movement.quantityAfter,
+      reference: movement.reference,
+      notes: movement.notes,
+      branch_id: movement.branchId,
+      branch_name: refs.branchMap[movement.branchId] ?? null,
+      created_at: movement.createdAt
+    }))
+  });
+});
+router6.post('/products/:id/duplicate', requireRole('administrator', 'manager', 'storekeeper'), async (req, res) => {
+  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const [source] = await db.select().from(productsTable).where(eq(productsTable.id, id));
+  if (!source) {
+    res.status(404).json({ error: 'Product not found' });
+    return;
+  }
+  const requestedBranchId = parseOptionalInteger(req.body?.branch_id) ?? source.primaryBranchId ?? null;
+  const branchId = await resolveWriteBranchId(req, requestedBranchId ?? void 0);
+  const result = await db.transaction(async (tx) => {
+    const duplicateCode = await generateUniqueProductCode(tx);
+    const photos = normalizePhotoList(source.productPhotos);
+    const [copy] = await tx.insert(productsTable).values({
+      productCode: duplicateCode,
+      barcode: null,
+      productName: `${source.productName} Copy`,
+      description: source.description,
+      categoryId: source.categoryId,
+      brandId: source.brandId,
+      supplierId: source.supplierId,
+      costPrice: source.costPrice,
+      sellingPrice: source.sellingPrice,
+      vatRate: source.vatRate,
+      taxInclusive: source.taxInclusive ?? false,
+      currentStock: 0,
+      minStock: source.minStock,
+      imageUrl: source.imageUrl,
+      productPhotos: photos,
+      unit: source.unit,
+      status: 'inactive',
+      primaryBranchId: branchId
+    }).returning();
+    await setBranchStock(branchId, copy.id, 0, source.minStock, tx);
+    const stock = await getBranchStockRow(branchId, copy.id, tx);
+    return { copy, stock };
+  });
+  const { categoryMap, brandMap, supplierMap, branchMap } = await loadProductReferenceMaps();
+  const response = formatProduct(result.copy, result.copy.categoryId ? categoryMap[result.copy.categoryId] : null, result.copy.brandId ? brandMap[result.copy.brandId] : null, result.copy.supplierId ? supplierMap[result.copy.supplierId] : null, { current: result.stock?.currentStock ?? 0, min: result.stock?.minStock ?? result.copy.minStock }, branchMap[result.copy.primaryBranchId] ?? null);
+  await logAudit(req, { action: 'product.duplicated', entityType: 'product', entityId: result.copy.id, description: `Duplicated product "${source.productName}" as "${result.copy.productName}"`, metadata: { source_product_id: source.id, after: response } });
+  res.status(201).json(response);
+});
+router6.get('/products/:id', async (req, res) => {
+  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const [product] = await db.select().from(productsTable).where(eq(productsTable.id, id));
+  if (!product) {
+    res.status(404).json({ error: 'Product not found' });
     return;
   }
   const scope = getBranchScope(req);
-  const map2 = await loadStockMap({ branchId: scope.branchId, all: scope.mode === "all" });
-  res.json(formatProduct(p, void 0, void 0, void 0, stockFor(map2, p)));
+  const selectedBranchId = scope.isSuper ? parseOptionalInteger(req.query.branch_id) ?? scope.branchId : scope.branchId;
+  const stockMap = await loadStockMap({ branchId: scope.mode === 'all' && selectedBranchId == null ? null : selectedBranchId, all: scope.mode === 'all' && selectedBranchId == null });
+  const { categoryMap, brandMap, supplierMap, branchMap } = await loadProductReferenceMaps();
+  res.json(formatProduct(product, product.categoryId ? categoryMap[product.categoryId] : null, product.brandId ? brandMap[product.brandId] : null, product.supplierId ? supplierMap[product.supplierId] : null, stockFor(stockMap, product, { fallbackToProductCurrent: !selectedBranchId }), branchMap[product.primaryBranchId ?? selectedBranchId] ?? null));
 });
-router6.patch("/products/:id", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
+router6.patch('/products/:id', requireRole('administrator', 'manager', 'storekeeper'), async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, current_stock, min_stock, image_url, unit } = req.body;
   const [before] = await db.select().from(productsTable).where(eq(productsTable.id, id));
   if (!before) {
-    res.status(404).json({ error: "Product not found" });
+    res.status(404).json({ error: 'Product not found' });
     return;
   }
-  const patchUser = req.user;
-  const isPatchSuperAdmin = patchUser && SUPER_ADMIN_ROLES.includes(patchUser.role);
-  const updateData = {};
-  if (product_code !== void 0 && isPatchSuperAdmin) updateData.productCode = product_code;
-  if (barcode !== void 0) updateData.barcode = barcode;
-  if (product_name !== void 0) updateData.productName = product_name;
-  if (description !== void 0) updateData.description = description;
-  if (category_id !== void 0) updateData.categoryId = category_id;
-  if (brand_id !== void 0) updateData.brandId = brand_id;
-  if (supplier_id !== void 0) updateData.supplierId = supplier_id;
-  if (cost_price !== void 0) updateData.costPrice = cost_price.toString();
-  if (selling_price !== void 0) updateData.sellingPrice = selling_price.toString();
-  if (vat_rate !== void 0) updateData.vatRate = vat_rate.toString();
-  if (image_url !== void 0) updateData.imageUrl = image_url;
-  if (unit !== void 0) updateData.unit = unit;
-  const [p] = Object.keys(updateData).length ? await db.update(productsTable).set(updateData).where(eq(productsTable.id, id)).returning() : [before];
-  const branchId = await resolveWriteBranchId(req);
-  if (current_stock !== void 0 || min_stock !== void 0) {
-    const row = await getBranchStockRow(branchId, id);
-    const newCur = current_stock !== void 0 ? current_stock : row?.currentStock ?? 0;
-    const newMin = min_stock !== void 0 ? min_stock : row?.minStock ?? 0;
-    await setBranchStock(branchId, id, newCur, newMin);
+  try {
+    const requestedBranchId = parseOptionalInteger(req.body?.branch_id) ?? parseOptionalInteger(req.body?.primary_branch_id) ?? before.primaryBranchId ?? null;
+    const branchId = await resolveWriteBranchId(req, requestedBranchId ?? void 0);
+    const result = await db.transaction(async (tx) => {
+      const updateData = {};
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'product_code')) updateData.productCode = await ensureProductCode(tx, req.body?.product_code, before.id);
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'barcode')) updateData.barcode = cleanText(req.body?.barcode);
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'product_name')) updateData.productName = cleanText(req.body?.product_name) ?? before.productName;
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'description')) updateData.description = cleanText(req.body?.description);
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'category_id') || Object.prototype.hasOwnProperty.call(req.body ?? {}, 'create_category_name') || Object.prototype.hasOwnProperty.call(req.body ?? {}, 'category_name')) updateData.categoryId = await ensureCategoryId(req.body, tx);
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'brand_id')) updateData.brandId = parseOptionalInteger(req.body?.brand_id);
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'supplier_id')) updateData.supplierId = parseOptionalInteger(req.body?.supplier_id);
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'cost_price')) updateData.costPrice = String(parseOptionalNumber(req.body?.cost_price, 0) ?? 0);
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'selling_price')) updateData.sellingPrice = String(parseOptionalNumber(req.body?.selling_price, 0) ?? 0);
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'vat_rate')) updateData.vatRate = String(parseOptionalNumber(req.body?.vat_rate, 16) ?? 16);
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'tax_inclusive')) updateData.taxInclusive = parseOptionalBoolean(req.body?.tax_inclusive) ?? false;
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'unit') || Object.prototype.hasOwnProperty.call(req.body ?? {}, 'unit_of_measure')) updateData.unit = cleanText(req.body?.unit) ?? cleanText(req.body?.unit_of_measure);
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'status')) updateData.status = normalizeProductStatus(req.body?.status);
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'primary_branch_id') || Object.prototype.hasOwnProperty.call(req.body ?? {}, 'branch_id')) updateData.primaryBranchId = parseOptionalInteger(req.body?.primary_branch_id) ?? parseOptionalInteger(req.body?.branch_id) ?? branchId;
+      const photoFieldsChanged = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'product_photos') || Object.prototype.hasOwnProperty.call(req.body ?? {}, 'image_url');
+      if (photoFieldsChanged) {
+        const photos = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'product_photos') ? normalizePhotoList(req.body?.product_photos) : normalizePhotoList(before.productPhotos);
+        const requestedImage = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'image_url') ? cleanText(req.body?.image_url) : before.imageUrl;
+        updateData.productPhotos = photos;
+        updateData.imageUrl = requestedImage ?? photos[0] ?? null;
+      }
+      const currentStockInput = parseOptionalNumber(req.body?.current_stock);
+      const minStockInput = parseOptionalNumber(req.body?.min_stock);
+      const stockAdjustmentInput = parseOptionalNumber(req.body?.stock_adjustment, 0) ?? 0;
+      const currentRow = await getBranchStockRow(branchId, id, tx);
+      const beforeCurrent = currentRow?.currentStock ?? 0;
+      const beforeMin = currentRow?.minStock ?? before.minStock ?? 0;
+      const nextMin = minStockInput == null ? beforeMin : Math.max(0, Math.round(minStockInput));
+      let nextCurrent = currentStockInput == null ? beforeCurrent : Math.max(0, Math.round(currentStockInput));
+      nextCurrent = Math.max(0, nextCurrent + Math.round(stockAdjustmentInput));
+      let movement = null;
+      if (currentStockInput != null || minStockInput != null || stockAdjustmentInput !== 0) {
+        await setBranchStock(branchId, id, nextCurrent, nextMin, tx);
+        if (nextCurrent !== beforeCurrent) {
+          const [createdMovement] = await tx.insert(stockMovementsTable).values({
+            branchId,
+            productId: id,
+            type: 'adjustment',
+            quantity: nextCurrent - beforeCurrent,
+            quantityBefore: beforeCurrent,
+            quantityAfter: nextCurrent,
+            reference: `ADJ-${Date.now()}`,
+            notes: cleanText(req.body?.adjustment_reason) ?? cleanText(req.body?.notes) ?? 'Inventory editor adjustment'
+          }).returning();
+          movement = createdMovement;
+        }
+        updateData.currentStock = nextCurrent;
+        updateData.minStock = nextMin;
+      }
+      const [product] = Object.keys(updateData).length ? await tx.update(productsTable).set(updateData).where(eq(productsTable.id, id)).returning() : [before];
+      const stock = await getBranchStockRow(branchId, id, tx);
+      return { product, stock, branchId, movement };
+    });
+    const refs = await loadProductReferenceMaps();
+    const beforeSnap = formatProduct(before, before.categoryId ? refs.categoryMap[before.categoryId] : null, before.brandId ? refs.brandMap[before.brandId] : null, before.supplierId ? refs.supplierMap[before.supplierId] : null, { current: before.currentStock, min: before.minStock }, refs.branchMap[before.primaryBranchId] ?? null);
+    const afterSnap = formatProduct(result.product, result.product.categoryId ? refs.categoryMap[result.product.categoryId] : null, result.product.brandId ? refs.brandMap[result.product.brandId] : null, result.product.supplierId ? refs.supplierMap[result.product.supplierId] : null, { current: result.stock?.currentStock ?? result.product.currentStock, min: result.stock?.minStock ?? result.product.minStock }, refs.branchMap[result.product.primaryBranchId ?? result.branchId] ?? null);
+    await logAudit(req, { action: 'product.updated', entityType: 'product', entityId: result.product.id, description: `Updated product "${result.product.productName}" (${result.product.productCode})`, metadata: { before: beforeSnap, after: afterSnap, stock_adjustment: result.movement ? { quantity: result.movement.quantity, branch_id: result.movement.branchId, reference: result.movement.reference } : null, reason: cleanText(req.body?.adjustment_reason) ?? null } });
+    res.json(afterSnap);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to update product';
+    res.status(message === 'SKU already exists' ? 409 : 400).json({ error: message });
   }
-  const stockRow = await getBranchStockRow(branchId, id);
-  const stock = { current: stockRow?.currentStock ?? 0, min: stockRow?.minStock ?? p.minStock };
-  const beforeSnap = formatProduct(before);
-  const afterSnap = formatProduct(p, void 0, void 0, void 0, stock);
-  await logAudit(req, { action: "product.updated", entityType: "product", entityId: p.id, description: `Updated product "${p.productName}" (${p.productCode})`, metadata: { before: beforeSnap, after: afterSnap } });
-  res.json(afterSnap);
 });
-router6.delete("/products/:id", requireAuth, requireSuperAdmin, async (req, res) => {
+router6.delete('/products/:id', requireAuth, requireSuperAdmin, async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [p] = await db.select().from(productsTable).where(eq(productsTable.id, id));
-  if (!p) {
-    res.status(404).json({ error: "Product not found" });
+  const [p2] = await db.select().from(productsTable).where(eq(productsTable.id, id));
+  if (!p2) {
+    res.status(404).json({ error: 'Product not found' });
     return;
   }
-  // Block permanent deletion of products with any sales history.
-  // Products used in transactions must be archived instead.
   const [saleUsage] = await db.select({ count: sql`count(*)` }).from(saleItemsTable).where(eq(saleItemsTable.productId, id));
   if (Number(saleUsage?.count ?? 0) > 0) {
-    res.status(422).json({ error: "This product has sales history and cannot be permanently deleted. Archive it instead to hide it from normal lists while preserving historical records.", code: "HAS_SALES_HISTORY" });
+    res.status(422).json({ error: 'This product has sales history and cannot be permanently deleted. Archive it instead to hide it from normal lists while preserving historical records.', code: 'HAS_SALES_HISTORY' });
     return;
   }
   const { reason } = req.body ?? {};
   await db.delete(productsTable).where(eq(productsTable.id, id));
-  await logAudit(req, { action: "product.deleted", entityType: "product", entityId: id, description: `Permanently deleted product "${p?.productName ?? id}" (${p?.productCode ?? ""})${reason ? " — Reason: " + reason : ""}`, metadata: { reason: reason ?? null } });
+  await logAudit(req, { action: 'product.deleted', entityType: 'product', entityId: id, description: `Permanently deleted product "${p2?.productName ?? id}" (${p2?.productCode ?? ''})${reason ? ' — Reason: ' + reason : ''}`, metadata: { reason: reason ?? null } });
   res.sendStatus(204);
 });
-router6.patch("/products/:id/archive", requireAuth, requireSuperAdmin, async (req, res) => {
+router6.patch('/products/:id/archive', requireAuth, requireSuperAdmin, async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [p] = await db.select().from(productsTable).where(eq(productsTable.id, id));
-  if (!p) {
-    res.status(404).json({ error: "Product not found" });
+  const [p2] = await db.select().from(productsTable).where(eq(productsTable.id, id));
+  if (!p2) {
+    res.status(404).json({ error: 'Product not found' });
     return;
   }
-  if (p.isArchived) {
-    res.status(409).json({ error: "Product is already archived" });
+  if (p2.isArchived) {
+    res.status(409).json({ error: 'Product is already archived' });
     return;
   }
   const { reason } = req.body ?? {};
   const actorId = req.user?.userId ?? null;
   const [updated] = await db.update(productsTable).set({ isArchived: true, archivedAt: new Date(), archivedBy: actorId }).where(eq(productsTable.id, id)).returning();
-  await logAudit(req, { action: "product.archived", entityType: "product", entityId: id, description: `Archived product "${p.productName}" (${p.productCode})${reason ? " — Reason: " + reason : ""}`, metadata: { reason: reason ?? null } });
+  await logAudit(req, { action: 'product.archived', entityType: 'product', entityId: id, description: `Archived product "${p2.productName}" (${p2.productCode})${reason ? ' — Reason: ' + reason : ''}`, metadata: { reason: reason ?? null } });
   res.json(formatProduct(updated));
 });
-router6.patch("/products/:id/restore", requireAuth, requireSuperAdmin, async (req, res) => {
+router6.patch('/products/:id/restore', requireAuth, requireSuperAdmin, async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [p] = await db.select().from(productsTable).where(eq(productsTable.id, id));
-  if (!p) {
-    res.status(404).json({ error: "Product not found" });
+  const [p2] = await db.select().from(productsTable).where(eq(productsTable.id, id));
+  if (!p2) {
+    res.status(404).json({ error: 'Product not found' });
     return;
   }
-  if (!p.isArchived) {
-    res.status(409).json({ error: "Product is not archived" });
+  if (!p2.isArchived) {
+    res.status(409).json({ error: 'Product is not archived' });
     return;
   }
   const [updated] = await db.update(productsTable).set({ isArchived: false, archivedAt: null, archivedBy: null }).where(eq(productsTable.id, id)).returning();
-  await logAudit(req, { action: "product.restored", entityType: "product", entityId: id, description: `Restored archived product "${p.productName}" (${p.productCode})` });
+  await logAudit(req, { action: 'product.restored', entityType: 'product', entityId: id, description: `Restored archived product "${p2.productName}" (${p2.productCode})` });
   res.json(formatProduct(updated));
 });
 var products_default = router6;
