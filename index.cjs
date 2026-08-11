@@ -70189,6 +70189,110 @@ function normalizePhotoList(value) {
   }
   return [...new Set(list.map((item) => String(item || '').trim()).filter(Boolean))];
 }
+var productCategorizationRulesCache = { loadedAt: 0, rules: [] };
+var PRODUCT_CATEGORIZATION_CACHE_TTL_MS = 3e4;
+function normalizeCategorizationText(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+}
+function singularizeCategorizationToken(token) {
+  if (token.length <= 3) return token;
+  if (token.endsWith('ies') && token.length > 4) return `${token.slice(0, -3)}y`;
+  if (token.endsWith('sses') || token.endsWith('xes') || token.endsWith('zes') || token.endsWith('ches') || token.endsWith('shes')) return token.slice(0, -2);
+  if (token.endsWith('s') && !token.endsWith('ss')) return token.slice(0, -1);
+  return token;
+}
+function stemCategorizationText(value) {
+  return normalizeCategorizationText(value).split(' ').filter(Boolean).map(singularizeCategorizationToken).join(' ');
+}
+function compactCategorizationText(value) {
+  return normalizeCategorizationText(value).replace(/\s+/g, '');
+}
+function parseRuleKeywords(value) {
+  if (Array.isArray(value)) return value.map((item) => cleanText(item)).filter(Boolean);
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed.map((item) => cleanText(item)).filter(Boolean);
+    } catch {
+    }
+    return value.split(',').map((item) => cleanText(item)).filter(Boolean);
+  }
+  return [];
+}
+async function ensureProductCategorizationRuleSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS product_categorization_rules (
+      id SERIAL PRIMARY KEY,
+      rule_name TEXT NOT NULL UNIQUE,
+      keywords JSONB NOT NULL DEFAULT '[]'::jsonb,
+      category_name TEXT NOT NULL,
+      priority INTEGER NOT NULL DEFAULT 100,
+      is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      created_by_id INTEGER,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS product_categorization_rules_enabled_idx ON product_categorization_rules (is_enabled, priority, id)`);
+}
+function invalidateProductCategorizationRulesCache() {
+  productCategorizationRulesCache.loadedAt = 0;
+  productCategorizationRulesCache.rules = [];
+}
+async function getProductCategorizationRules(force = false) {
+  const now = Date.now();
+  if (!force && now - productCategorizationRulesCache.loadedAt < PRODUCT_CATEGORIZATION_CACHE_TTL_MS && productCategorizationRulesCache.rules.length) {
+    return productCategorizationRulesCache.rules;
+  }
+  await ensureProductCategorizationRuleSchema();
+  const { rows } = await pool.query(`
+    SELECT id, rule_name, keywords, category_name, priority, is_enabled
+    FROM product_categorization_rules
+    WHERE is_enabled = TRUE
+    ORDER BY priority ASC, id ASC
+  `);
+  const rules = rows.map((row) => ({
+    id: Number(row.id),
+    rule_name: row.rule_name,
+    category_name: row.category_name,
+    priority: Number(row.priority || 100),
+    keywords: parseRuleKeywords(row.keywords)
+  })).filter((row) => row.keywords.length);
+  productCategorizationRulesCache.loadedAt = now;
+  productCategorizationRulesCache.rules = rules;
+  return rules;
+}
+function detectProductCategorizationRule(productName, rules) {
+  const normalizedName = normalizeCategorizationText(productName);
+  if (!normalizedName) return null;
+  const stemmedName = stemCategorizationText(productName);
+  const compactName = compactCategorizationText(productName);
+  for (const rule of rules) {
+    for (const keyword of rule.keywords) {
+      const normalizedKeyword = normalizeCategorizationText(keyword);
+      if (!normalizedKeyword) continue;
+      const stemmedKeyword = stemCategorizationText(keyword);
+      const compactKeyword = compactCategorizationText(keyword);
+      if (normalizedName.includes(normalizedKeyword) || (stemmedKeyword && stemmedName.includes(stemmedKeyword)) || (compactKeyword && compactName.includes(compactKeyword))) {
+        return { rule, keyword: normalizedKeyword };
+      }
+    }
+  }
+  return null;
+}
+async function detectProductCategorySuggestion(productName, executor = db) {
+  const rules = await getProductCategorizationRules();
+  const matched = detectProductCategorizationRule(productName, rules);
+  if (!matched) return null;
+  const existing = await findCategoryByName(matched.rule.category_name, executor);
+  return {
+    categoryId: existing?.id ?? null,
+    categoryName: matched.rule.category_name,
+    ruleId: matched.rule.id,
+    ruleName: matched.rule.rule_name,
+    matchedKeyword: matched.keyword
+  };
+}
 async function ensureCategoryId(input, executor = db) {
   const existingId = parseOptionalInteger(input?.category_id);
   if (existingId != null) return existingId;
@@ -70307,6 +70411,26 @@ router6.get('/products', async (req, res) => {
   const offset = (p - 1) * l;
   res.json({ data: formatted.slice(offset, offset + l), total, page: p, limit: l });
 });
+router6.get('/products/categorization/suggest', requireRole('administrator', 'manager', 'storekeeper', 'sales_cashier'), async (req, res) => {
+  const productName = cleanText(req.query?.product_name);
+  if (!productName) {
+    res.json({ detected: false });
+    return;
+  }
+  const suggestion = await detectProductCategorySuggestion(productName);
+  if (!suggestion) {
+    res.json({ detected: false });
+    return;
+  }
+  res.json({
+    detected: true,
+    category_id: suggestion.categoryId,
+    category_name: suggestion.categoryName,
+    rule_id: suggestion.ruleId,
+    rule_name: suggestion.ruleName,
+    matched_keyword: suggestion.matchedKeyword
+  });
+});
 async function generateUniqueProductCode(dbConn) {
   const prefix = 'P';
   const rows = await dbConn.execute(
@@ -70337,7 +70461,16 @@ router6.post('/products', requireRole('administrator', 'manager', 'storekeeper')
     const requestedBranchId = parseOptionalInteger(req.body?.branch_id) ?? parseOptionalInteger(req.body?.primary_branch_id);
     const branchId = await resolveWriteBranchId(req, requestedBranchId ?? void 0);
     const result = await db.transaction(async (tx) => {
-      const categoryId = await ensureCategoryId(req.body, tx);
+      const recategorizeRequested = parseOptionalBoolean(req.body?.recategorize) === true;
+      let categoryId = await ensureCategoryId(req.body, tx);
+      let categorization = null;
+      if ((categoryId == null || recategorizeRequested) && productName) {
+        const suggestion = await detectProductCategorySuggestion(productName, tx);
+        if (suggestion?.categoryName) {
+          categoryId = await ensureCategoryId({ category_name: suggestion.categoryName }, tx);
+          categorization = suggestion;
+        }
+      }
       const productCode = await ensureProductCode(tx, req.body?.product_code);
       const openingStock = Math.max(0, Math.round(parseOptionalNumber(req.body?.current_stock, 0) ?? 0));
       const minStock = Math.max(0, Math.round(parseOptionalNumber(req.body?.min_stock, 0) ?? 0));
@@ -70364,7 +70497,7 @@ router6.post('/products', requireRole('administrator', 'manager', 'storekeeper')
       }).returning();
       await setBranchStock(branchId, product.id, openingStock, minStock, tx);
       const stock = await getBranchStockRow(branchId, product.id, tx);
-      return { product, stock, branchId };
+      return { product, stock, branchId, categorization };
     });
     const { categoryMap, brandMap, supplierMap, branchMap } = await loadProductReferenceMaps();
     const response = formatProduct(
@@ -70375,7 +70508,7 @@ router6.post('/products', requireRole('administrator', 'manager', 'storekeeper')
       { current: result.stock?.currentStock ?? result.product.currentStock, min: result.stock?.minStock ?? result.product.minStock },
       branchMap[result.product.primaryBranchId ?? result.branchId] ?? null
     );
-    await logAudit(req, { action: 'product.created', entityType: 'product', entityId: result.product.id, description: `Created product "${result.product.productName}" (${result.product.productCode})`, metadata: { after: response } });
+    await logAudit(req, { action: 'product.created', entityType: 'product', entityId: result.product.id, description: `Created product "${result.product.productName}" (${result.product.productCode})`, metadata: { after: response, auto_categorization: result.categorization ?? null } });
     res.status(201).json(response);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to create product';
@@ -70563,11 +70696,23 @@ router6.patch('/products/:id', requireRole('administrator', 'manager', 'storekee
     const branchId = await resolveWriteBranchId(req, requestedBranchId ?? void 0);
     const result = await db.transaction(async (tx) => {
       const updateData = {};
+      const recategorizeRequested = parseOptionalBoolean(req.body?.recategorize) === true;
       if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'product_code')) updateData.productCode = await ensureProductCode(tx, req.body?.product_code, before.id);
       if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'barcode')) updateData.barcode = cleanText(req.body?.barcode);
       if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'product_name')) updateData.productName = cleanText(req.body?.product_name) ?? before.productName;
       if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'description')) updateData.description = cleanText(req.body?.description);
-      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'category_id') || Object.prototype.hasOwnProperty.call(req.body ?? {}, 'create_category_name') || Object.prototype.hasOwnProperty.call(req.body ?? {}, 'category_name')) updateData.categoryId = await ensureCategoryId(req.body, tx);
+      const hasManualCategoryInput = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'category_id') || Object.prototype.hasOwnProperty.call(req.body ?? {}, 'create_category_name') || Object.prototype.hasOwnProperty.call(req.body ?? {}, 'category_name');
+      if (hasManualCategoryInput) updateData.categoryId = await ensureCategoryId(req.body, tx);
+      let categorization = null;
+      const effectiveName = Object.prototype.hasOwnProperty.call(updateData, 'productName') ? updateData.productName : before.productName;
+      const effectiveCategoryId = Object.prototype.hasOwnProperty.call(updateData, 'categoryId') ? updateData.categoryId : before.categoryId;
+      if (effectiveName && (recategorizeRequested || effectiveCategoryId == null) && (!hasManualCategoryInput || recategorizeRequested)) {
+        const suggestion = await detectProductCategorySuggestion(effectiveName, tx);
+        if (suggestion?.categoryName) {
+          updateData.categoryId = await ensureCategoryId({ category_name: suggestion.categoryName }, tx);
+          categorization = suggestion;
+        }
+      }
       if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'brand_id')) updateData.brandId = parseOptionalInteger(req.body?.brand_id);
       if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'supplier_id')) updateData.supplierId = parseOptionalInteger(req.body?.supplier_id);
       if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'cost_price')) updateData.costPrice = String(parseOptionalNumber(req.body?.cost_price, 0) ?? 0);
@@ -70614,12 +70759,12 @@ router6.patch('/products/:id', requireRole('administrator', 'manager', 'storekee
       }
       const [product] = Object.keys(updateData).length ? await tx.update(productsTable).set(updateData).where(eq(productsTable.id, id)).returning() : [before];
       const stock = await getBranchStockRow(branchId, id, tx);
-      return { product, stock, branchId, movement };
+      return { product, stock, branchId, movement, categorization };
     });
     const refs = await loadProductReferenceMaps();
     const beforeSnap = formatProduct(before, before.categoryId ? refs.categoryMap[before.categoryId] : null, before.brandId ? refs.brandMap[before.brandId] : null, before.supplierId ? refs.supplierMap[before.supplierId] : null, { current: before.currentStock, min: before.minStock }, refs.branchMap[before.primaryBranchId] ?? null);
     const afterSnap = formatProduct(result.product, result.product.categoryId ? refs.categoryMap[result.product.categoryId] : null, result.product.brandId ? refs.brandMap[result.product.brandId] : null, result.product.supplierId ? refs.supplierMap[result.product.supplierId] : null, { current: result.stock?.currentStock ?? result.product.currentStock, min: result.stock?.minStock ?? result.product.minStock }, refs.branchMap[result.product.primaryBranchId ?? result.branchId] ?? null);
-    await logAudit(req, { action: 'product.updated', entityType: 'product', entityId: result.product.id, description: `Updated product "${result.product.productName}" (${result.product.productCode})`, metadata: { before: beforeSnap, after: afterSnap, stock_adjustment: result.movement ? { quantity: result.movement.quantity, branch_id: result.movement.branchId, reference: result.movement.reference } : null, reason: cleanText(req.body?.adjustment_reason) ?? null } });
+    await logAudit(req, { action: 'product.updated', entityType: 'product', entityId: result.product.id, description: `Updated product "${result.product.productName}" (${result.product.productCode})`, metadata: { before: beforeSnap, after: afterSnap, stock_adjustment: result.movement ? { quantity: result.movement.quantity, branch_id: result.movement.branchId, reference: result.movement.reference } : null, reason: cleanText(req.body?.adjustment_reason) ?? null, auto_categorization: result.categorization ?? null } });
     res.json(afterSnap);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to update product';
@@ -72209,6 +72354,154 @@ var PAYMENT_FIELDS = [
   ["other_payment_methods", "otherPaymentMethods"],
   ["payment_instructions", "paymentInstructions"]
 ];
+function normalizeCategorizationRuleInput(body, options = {}) {
+  const ruleName = cleanText(body?.rule_name);
+  const categoryName = cleanText(body?.category_name);
+  const keywords = parseRuleKeywords(body?.keywords);
+  const priorityRaw = Number(body?.priority);
+  const priority = Number.isFinite(priorityRaw) ? Math.max(1, Math.round(priorityRaw)) : options.defaultPriority ?? 100;
+  const enabledRaw = parseOptionalBoolean(body?.is_enabled);
+  const isEnabled = enabledRaw == null ? options.defaultEnabled ?? true : enabledRaw;
+  return { ruleName, categoryName, keywords, priority, isEnabled };
+}
+function formatProductCategorizationRule(row) {
+  return {
+    id: Number(row.id),
+    rule_name: row.rule_name,
+    category_name: row.category_name,
+    keywords: parseRuleKeywords(row.keywords),
+    priority: Number(row.priority || 100),
+    is_enabled: row.is_enabled !== false,
+    created_by_id: row.created_by_id ?? null,
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
+}
+router16.get("/settings/product-categorization-rules", requireRole("administrator"), async (_req, res) => {
+  await ensureProductCategorizationRuleSchema();
+  const { rows } = await pool.query(`SELECT * FROM product_categorization_rules ORDER BY priority ASC, id ASC`);
+  res.json({ data: rows.map(formatProductCategorizationRule) });
+});
+router16.post("/settings/product-categorization-rules", requireSuperAdmin, async (req, res) => {
+  await ensureProductCategorizationRuleSchema();
+  const input = normalizeCategorizationRuleInput(req.body);
+  if (!input.ruleName || !input.categoryName || !input.keywords.length) {
+    res.status(400).json({ error: "rule_name, category_name and at least one keyword are required." });
+    return;
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO product_categorization_rules
+      (rule_name, category_name, keywords, priority, is_enabled, created_by_id, updated_at)
+     VALUES ($1, $2, $3::jsonb, $4, $5, $6, NOW())
+     RETURNING *`,
+    [input.ruleName, input.categoryName, JSON.stringify(input.keywords), input.priority, input.isEnabled, req.user?.userId ?? null]
+  );
+  invalidateProductCategorizationRulesCache();
+  await logAudit(req, {
+    action: "settings.product_categorization_rule_created",
+    entityType: "settings",
+    entityId: rows[0].id,
+    description: `Created product categorization rule "${input.ruleName}"`,
+    metadata: { after: formatProductCategorizationRule(rows[0]) }
+  });
+  res.status(201).json(formatProductCategorizationRule(rows[0]));
+});
+router16.patch("/settings/product-categorization-rules/:id", requireSuperAdmin, async (req, res) => {
+  await ensureProductCategorizationRuleSchema();
+  const id = parseOptionalInteger(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: "Invalid rule id" });
+    return;
+  }
+  const { rows: existingRows } = await pool.query(`SELECT * FROM product_categorization_rules WHERE id = $1`, [id]);
+  const existing = existingRows[0];
+  if (!existing) {
+    res.status(404).json({ error: "Rule not found" });
+    return;
+  }
+  const input = normalizeCategorizationRuleInput(req.body, { defaultPriority: Number(existing.priority || 100), defaultEnabled: existing.is_enabled !== false });
+  const update = {
+    rule_name: input.ruleName ?? existing.rule_name,
+    category_name: input.categoryName ?? existing.category_name,
+    keywords: input.keywords.length ? input.keywords : parseRuleKeywords(existing.keywords),
+    priority: input.priority,
+    is_enabled: input.isEnabled
+  };
+  const { rows } = await pool.query(
+    `UPDATE product_categorization_rules
+     SET rule_name = $2,
+         category_name = $3,
+         keywords = $4::jsonb,
+         priority = $5,
+         is_enabled = $6,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING *`,
+    [id, update.rule_name, update.category_name, JSON.stringify(update.keywords), update.priority, update.is_enabled]
+  );
+  invalidateProductCategorizationRulesCache();
+  await logAudit(req, {
+    action: "settings.product_categorization_rule_updated",
+    entityType: "settings",
+    entityId: id,
+    description: `Updated product categorization rule "${update.rule_name}"`,
+    metadata: { before: formatProductCategorizationRule(existing), after: formatProductCategorizationRule(rows[0]) }
+  });
+  res.json(formatProductCategorizationRule(rows[0]));
+});
+router16.delete("/settings/product-categorization-rules/:id", requireSuperAdmin, async (req, res) => {
+  await ensureProductCategorizationRuleSchema();
+  const id = parseOptionalInteger(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: "Invalid rule id" });
+    return;
+  }
+  const { rows } = await pool.query(`DELETE FROM product_categorization_rules WHERE id = $1 RETURNING *`, [id]);
+  if (!rows[0]) {
+    res.status(404).json({ error: "Rule not found" });
+    return;
+  }
+  invalidateProductCategorizationRulesCache();
+  await logAudit(req, {
+    action: "settings.product_categorization_rule_deleted",
+    entityType: "settings",
+    entityId: id,
+    description: `Deleted product categorization rule "${rows[0].rule_name}"`,
+    metadata: { before: formatProductCategorizationRule(rows[0]) }
+  });
+  res.sendStatus(204);
+});
+router16.post("/settings/product-categorization-rules/reorder", requireSuperAdmin, async (req, res) => {
+  await ensureProductCategorizationRuleSchema();
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((item) => Number(item)).filter((item) => Number.isInteger(item) && item > 0) : [];
+  if (!ids.length) {
+    res.status(400).json({ error: "ids array is required" });
+    return;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (let index = 0; index < ids.length; index += 1) {
+      await client.query(`UPDATE product_categorization_rules SET priority = $2, updated_at = NOW() WHERE id = $1`, [ids[index], index + 1]);
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+  invalidateProductCategorizationRulesCache();
+  const { rows } = await pool.query(`SELECT * FROM product_categorization_rules ORDER BY priority ASC, id ASC`);
+  await logAudit(req, {
+    action: "settings.product_categorization_rules_reordered",
+    entityType: "settings",
+    entityId: 0,
+    description: "Reordered product categorization rules",
+    metadata: { ids }
+  });
+  res.json({ data: rows.map(formatProductCategorizationRule) });
+});
 router16.get("/settings", async (_req, res) => {
   const settings = await ensureBusinessSettingsWithDefaults();
   res.json(fmt5(settings));
@@ -75060,7 +75353,9 @@ var product_bulk_default = createProductBulkRouter({
   logAudit,
   makeBarcode,
   requireRole,
-  resolveWriteBranchId
+  resolveWriteBranchId,
+  detectProductCategorySuggestion,
+  ensureCategoryId
 });
 
 // artifacts/api-server/src/routes/index.ts

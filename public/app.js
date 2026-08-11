@@ -119,7 +119,9 @@
       editor: {
         productId: null,
         photos: [],
-        uploading: false
+        uploading: false,
+        categorySuggestion: null,
+        suggestTimer: null
       }
     },
     importer: {
@@ -134,7 +136,8 @@
       selectedRow: null,
       savingRow: false,
       lastFileName: "",
-      pollTimer: null
+      pollTimer: null,
+      recategorize: false
     },
     pos: {
       products: [],
@@ -226,6 +229,7 @@
       if (form.id === "settingsBusinessForm") return handleSettingsBusinessSubmit(event);
       if (form.id === "settingsBrandingForm") return handleSettingsBrandingSubmit(event);
       if (form.id === "settingsPaymentForm") return handleSettingsPaymentSubmit(event);
+      if (form.id === "settingsCategorizationForm") return handleSettingsCategorizationSubmit(event);
     });
 
     document.addEventListener("click", function (event) {
@@ -282,6 +286,10 @@
           showToast(error.message || "Unable to upload product photos.", "error");
         });
       }
+      if (target.id === "productCategorySelect") {
+        const categoryNameInput = document.getElementById("productCategoryNameInput");
+        if (categoryNameInput && target.value) categoryNameInput.value = "";
+      }
     });
 
     document.addEventListener("input", function (event) {
@@ -313,6 +321,9 @@
       }
       if (target.id === "posNotesInput") {
         state.pos.notes = target.value;
+      }
+      if (target.id === "productNameInput") {
+        scheduleProductCategorizationSuggestion(target.value);
       }
     });
 
@@ -386,6 +397,9 @@
       case "product-create-category":
         await quickCreateCategoryFromEditor();
         return;
+      case "product-accept-category-suggestion":
+        applyDetectedProductCategory();
+        return;
       case "product-edit":
         await openProductModal(button.dataset.productId);
         return;
@@ -425,6 +439,22 @@
         return;
       case "category-delete":
         await handleDeleteCategory(button.dataset.categoryId, button.dataset.categoryName);
+        return;
+      case "categorization-rule-edit":
+        populateCategorizationRuleForm(button.dataset.ruleId);
+        return;
+      case "categorization-rule-delete":
+        await deleteCategorizationRule(button.dataset.ruleId);
+        return;
+      case "categorization-rule-toggle":
+        await toggleCategorizationRule(button.dataset.ruleId, button.dataset.enabled === "true");
+        return;
+      case "categorization-rule-up":
+      case "categorization-rule-down":
+        await moveCategorizationRule(button.dataset.ruleId, action === "categorization-rule-up" ? -1 : 1);
+        return;
+      case "categorization-rule-clear-form":
+        clearCategorizationRuleForm();
         return;
       case "bulk-import-products":
       openBulkImportModal();
@@ -988,11 +1018,12 @@
   }
 
   async function loadSettingsData() {
-    const [settings, branding] = await Promise.all([
+    const [settings, branding, categorizationRules] = await Promise.all([
       apiJson("/api/settings").catch(function () { return {}; }),
-      apiJson("/api/settings/branding").catch(function () { return {}; })
+      apiJson("/api/settings/branding").catch(function () { return {}; }),
+      apiJson("/api/settings/product-categorization-rules").catch(function () { return { data: [] }; })
     ]);
-    state.cache.settings = { settings: settings || {}, branding: branding || {} };
+    state.cache.settings = { settings: settings || {}, branding: branding || {}, categorizationRules: normalizeList(categorizationRules) };
   }
 
   function renderCurrentRoute() {
@@ -1445,6 +1476,7 @@
     state.importer.selectedRow = null;
     state.importer.savingRow = false;
     state.importer.lastFileName = "";
+    state.importer.recategorize = false;
     if (!keepHistory) state.importer.history = [];
   }
 
@@ -1500,11 +1532,13 @@
             return '<option value="' + escapeAttr(header) + '"' + selectedAttr + '>' + escapeHtml(header) + '</option>';
           }).join("") + '</select></label>';
         }).join("") + '</div>' : '<div class="empty-state"><i class="fa-solid fa-table"></i>Upload a file to review detected headers and preview rows.</div>') +
-        '<div class="form-grid two" style="margin-top:16px"><label><span>When duplicates are found</span><select id="bulkImportDuplicateMode"><option value="update"' + (state.importer.duplicateMode === "update" ? ' selected' : '') + '>Update existing product</option><option value="skip"' + (state.importer.duplicateMode === "skip" ? ' selected' : '') + '>Skip duplicate row</option><option value="duplicate"' + (state.importer.duplicateMode === "duplicate" ? ' selected' : '') + '>Create new duplicate product</option></select></label><label><span>Import controls</span><div class="inline-group"><button class="btn btn-outline" type="button" data-action="bulk-import-apply-mapping"' + (!job ? ' disabled' : '') + '><i class="fa-solid fa-shuffle"></i>Apply Mapping</button><button class="btn btn-secondary" type="button" data-action="bulk-import-start"' + (!job || bulkImportJobIsActive(job) ? ' disabled' : '') + '><i class="fa-solid fa-play"></i>Start Import</button></div></label></div>' +
+        '<div class="form-grid two" style="margin-top:16px"><label><span>When duplicates are found</span><select id="bulkImportDuplicateMode"><option value="update"' + (state.importer.duplicateMode === "update" ? ' selected' : '') + '>Update existing product</option><option value="skip"' + (state.importer.duplicateMode === "skip" ? ' selected' : '') + '>Skip duplicate row</option><option value="duplicate"' + (state.importer.duplicateMode === "duplicate" ? ' selected' : '') + '>Create new duplicate product</option></select></label><label><span>Import controls</span><div class="inline-group"><button class="btn btn-outline" type="button" data-action="bulk-import-apply-mapping"' + (!job ? ' disabled' : '') + '><i class="fa-solid fa-shuffle"></i>Apply Mapping</button><button class="btn btn-secondary" type="button" data-action="bulk-import-start"' + (!job || bulkImportJobIsActive(job) ? ' disabled' : '') + '><i class="fa-solid fa-play"></i>Start Import</button></div></label><div class="inventory-checkbox"><span>Categorization</span><label class="inventory-check inventory-check--box"><input type="checkbox" id="bulkImportRecategorize"' + (state.importer.recategorize ? ' checked' : '') + ' /><span>Re-categorize even when category column is filled</span></label></div></div>' +
         (job ? '<div class="stats-inline" style="margin-top:16px">' +
           renderDocumentChip("Imported", firstNumber(job.created_count, 0)) +
           renderDocumentChip("Updated", firstNumber(job.updated_count, 0)) +
           renderDocumentChip("Skipped", firstNumber(job.skipped_rows, 0)) +
+          renderDocumentChip("Auto Categorized", firstNumber(summary.auto_categorized_count, 0)) +
+          renderDocumentChip("Needs Review", firstNumber(summary.uncategorized_count, 0)) +
           renderDocumentChip("Failed", firstNumber(job.error_count, summary.error_count, 0)) +
           '</div>' : '') +
       '</section>',
@@ -1514,7 +1548,7 @@
         (preview.length ? '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Row</th><th>Status</th><th>Product</th><th>SKU / Barcode</th><th>Category</th><th>Prices</th><th>Errors</th><th>Actions</th></tr></thead><tbody>' + preview.map(function (row) {
           const normalized = row.normalized_data || {};
           const errors = row.validation_errors || [];
-          return '<tr class="' + (errors.length ? 'bulk-import-row--error' : '') + '"><td>' + escapeHtml(String(row.row_number)) + '</td><td>' + renderBadge(firstText(row.status, errors.length ? "invalid" : row.action || "draft")) + '</td><td><strong>' + escapeHtml(firstText(normalized.product_name, "—")) + '</strong><div class="table-caption">' + escapeHtml(firstText(normalized.description, "")) + '</div></td><td>' + escapeHtml(firstText(normalized.product_code, normalized.barcode, "—")) + '</td><td>' + escapeHtml(firstText(normalized.category, "—")) + '</td><td><div>' + money(firstNumber(normalized.selling_price, 0)) + '</div><div class="table-caption">Cost: ' + money(firstNumber(normalized.cost_price, 0)) + '</div></td><td>' + (errors.length ? '<ul class="bulk-import-errors">' + errors.map(function (error) { return '<li>' + escapeHtml(error) + '</li>'; }).join("") + '</ul>' : '<span class="muted">Ready</span>') + '</td><td><button class="btn btn-outline" type="button" data-action="bulk-import-edit-row" data-row-id="' + escapeAttr(String(row.id)) + '"><i class="fa-solid fa-pen"></i>Edit</button></td></tr>';
+          return '<tr class="' + (errors.length ? 'bulk-import-row--error' : '') + '"><td>' + escapeHtml(String(row.row_number)) + '</td><td>' + renderBadge(firstText(row.status, errors.length ? "invalid" : row.action || "draft")) + '</td><td><strong>' + escapeHtml(firstText(normalized.product_name, "—")) + '</strong><div class="table-caption">' + escapeHtml(firstText(normalized.description, "")) + '</div></td><td>' + escapeHtml(firstText(normalized.product_code, normalized.barcode, "—")) + '</td><td>' + escapeHtml(firstText(normalized.category, "—")) + (normalized.category_detection && normalized.category_detection.rule_name ? '<div class="table-caption">Rule: ' + escapeHtml(firstText(normalized.category_detection.rule_name, "Auto")) + '</div>' : (!firstText(normalized.category, "") ? '<div class="table-caption">Needs manual review</div>' : '')) + '</td><td><div>' + money(firstNumber(normalized.selling_price, 0)) + '</div><div class="table-caption">Cost: ' + money(firstNumber(normalized.cost_price, 0)) + '</div></td><td>' + (errors.length ? '<ul class="bulk-import-errors">' + errors.map(function (error) { return '<li>' + escapeHtml(error) + '</li>'; }).join("") + '</ul>' : '<span class="muted">Ready</span>') + '</td><td><button class="btn btn-outline" type="button" data-action="bulk-import-edit-row" data-row-id="' + escapeAttr(String(row.id)) + '"><i class="fa-solid fa-pen"></i>Edit</button></td></tr>';
         }).join("") + '</tbody></table></div>' : '<div class="empty-state"><i class="fa-solid fa-list-check"></i>No preview rows yet.</div>') +
         (selected ? renderBulkImportEditForm(selected) : '') +
       '</section>',
@@ -1598,6 +1632,7 @@
       state.importer.preview = normalizeList(data.preview);
       state.importer.selectedRow = null;
       state.importer.duplicateMode = "update";
+      state.importer.recategorize = false;
       await loadBulkImportHistory();
       refreshBulkImportView();
       showToast("Import file parsed successfully. Review the preview before importing.", "success");
@@ -1683,11 +1718,13 @@
     if (!state.importer.job) return;
     const container = getBulkImportContainer();
     const duplicateMode = container.querySelector("#bulkImportDuplicateMode");
+    const recategorize = container.querySelector("#bulkImportRecategorize");
     state.importer.duplicateMode = duplicateMode ? duplicateMode.value : "update";
+    state.importer.recategorize = !!(recategorize && recategorize.checked);
     try {
       const data = await apiJson("/api/products/imports/" + encodeURIComponent(state.importer.job.id) + "/start", {
         method: "POST",
-        body: JSON.stringify({ on_duplicate: state.importer.duplicateMode })
+        body: JSON.stringify({ on_duplicate: state.importer.duplicateMode, recategorize: state.importer.recategorize })
       });
       state.importer.job = data.job || state.importer.job;
       refreshBulkImportView();
@@ -1713,6 +1750,7 @@
         state.importer.selectedRow = null;
         state.importer.sourceName = firstText(data.job && data.job.file_name, data.job && data.job.source_name, state.importer.sourceName);
         if (data.job && data.job.column_mapping) state.importer.mapping = data.job.column_mapping;
+        state.importer.recategorize = !!(data.job && data.job.options && data.job.options.recategorize);
         if (state.activeRoute === "bulk-import") {
           renderBulkImportPage();
         } else {
@@ -1732,6 +1770,7 @@
       state.importer.selectedRow = null;
       state.importer.sourceName = firstText(data.job && data.job.file_name, data.job && data.job.source_name, state.importer.sourceName);
       if (data.job && data.job.column_mapping) state.importer.mapping = data.job.column_mapping;
+      state.importer.recategorize = !!(data.job && data.job.options && data.job.options.recategorize);
       renderBulkImportModal();
     } catch (error) {
       showToast(error.message || "Unable to load import job.", "error");
@@ -1750,6 +1789,7 @@
       const previousStatus = firstText(state.importer.job && state.importer.job.status);
       const data = await apiJson("/api/products/imports/" + encodeURIComponent(jobId) + "?limit=100");
       state.importer.job = data.job || state.importer.job;
+      state.importer.recategorize = !!(state.importer.job && state.importer.job.options && state.importer.job.options.recategorize);
       state.importer.preview = normalizeList(data.rows);
       if (state.importer.selectedRow) {
         state.importer.selectedRow = state.importer.preview.find(function (item) {
@@ -1852,11 +1892,13 @@
             return '<option value="' + escapeAttr(header) + '"' + selectedAttr + '>' + escapeHtml(header) + '</option>';
           }).join("") + '</select></label>';
         }).join("") + '</div>' : '<div class="empty-state"><i class="fa-solid fa-table"></i>Upload a file to review detected headers and preview rows.</div>') +
-        '<div class="form-grid two" style="margin-top:16px"><label><span>When duplicates are found</span><select id="bulkImportDuplicateMode"><option value="update"' + (state.importer.duplicateMode === "update" ? ' selected' : '') + '>Update existing product</option><option value="skip"' + (state.importer.duplicateMode === "skip" ? ' selected' : '') + '>Skip duplicate row</option><option value="duplicate"' + (state.importer.duplicateMode === "duplicate" ? ' selected' : '') + '>Create new duplicate product</option></select></label><label><span>Import controls</span><div class="inline-group"><button class="btn btn-outline" type="button" data-action="bulk-import-apply-mapping"' + (!job ? ' disabled' : '') + '><i class="fa-solid fa-shuffle"></i>Apply Mapping</button><button class="btn btn-secondary" type="button" data-action="bulk-import-start"' + (!job || bulkImportJobIsActive(job) ? ' disabled' : '') + '><i class="fa-solid fa-play"></i>Start Import</button></div></label></div>' +
+        '<div class="form-grid two" style="margin-top:16px"><label><span>When duplicates are found</span><select id="bulkImportDuplicateMode"><option value="update"' + (state.importer.duplicateMode === "update" ? ' selected' : '') + '>Update existing product</option><option value="skip"' + (state.importer.duplicateMode === "skip" ? ' selected' : '') + '>Skip duplicate row</option><option value="duplicate"' + (state.importer.duplicateMode === "duplicate" ? ' selected' : '') + '>Create new duplicate product</option></select></label><label><span>Import controls</span><div class="inline-group"><button class="btn btn-outline" type="button" data-action="bulk-import-apply-mapping"' + (!job ? ' disabled' : '') + '><i class="fa-solid fa-shuffle"></i>Apply Mapping</button><button class="btn btn-secondary" type="button" data-action="bulk-import-start"' + (!job || bulkImportJobIsActive(job) ? ' disabled' : '') + '><i class="fa-solid fa-play"></i>Start Import</button></div></label><div class="inventory-checkbox"><span>Categorization</span><label class="inventory-check inventory-check--box"><input type="checkbox" id="bulkImportRecategorize"' + (state.importer.recategorize ? ' checked' : '') + ' /><span>Re-categorize even when category column is filled</span></label></div></div>' +
         (job ? '<div class="stats-inline" style="margin-top:16px">' +
           renderDocumentChip("Imported", firstNumber(job.created_count, 0)) +
           renderDocumentChip("Updated", firstNumber(job.updated_count, 0)) +
           renderDocumentChip("Skipped", firstNumber(job.skipped_rows, 0)) +
+          renderDocumentChip("Auto Categorized", firstNumber(summary.auto_categorized_count, 0)) +
+          renderDocumentChip("Needs Review", firstNumber(summary.uncategorized_count, 0)) +
           renderDocumentChip("Failed", firstNumber(job.error_count, summary.error_count, 0)) +
           '</div>' : '') +
       '</section>',
@@ -1866,7 +1908,7 @@
         (preview.length ? '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Row</th><th>Status</th><th>Product</th><th>SKU / Barcode</th><th>Category</th><th>Prices</th><th>Errors</th><th>Actions</th></tr></thead><tbody>' + preview.map(function (row) {
           const normalized = row.normalized_data || {};
           const errors = row.validation_errors || [];
-          return '<tr class="' + (errors.length ? 'bulk-import-row--error' : '') + '"><td>' + escapeHtml(String(row.row_number)) + '</td><td>' + renderBadge(firstText(row.status, errors.length ? "invalid" : row.action || "draft")) + '</td><td><strong>' + escapeHtml(firstText(normalized.product_name, "—")) + '</strong><div class="table-caption">' + escapeHtml(firstText(normalized.description, "")) + '</div></td><td>' + escapeHtml(firstText(normalized.product_code, normalized.barcode, "—")) + '</td><td>' + escapeHtml(firstText(normalized.category, "—")) + '</td><td><div>' + money(firstNumber(normalized.selling_price, 0)) + '</div><div class="table-caption">Cost: ' + money(firstNumber(normalized.cost_price, 0)) + '</div></td><td>' + (errors.length ? '<ul class="bulk-import-errors">' + errors.map(function (error) { return '<li>' + escapeHtml(error) + '</li>'; }).join("") + '</ul>' : '<span class="muted">Ready</span>') + '</td><td><button class="btn btn-outline" type="button" data-action="bulk-import-edit-row" data-row-id="' + escapeAttr(String(row.id)) + '"><i class="fa-solid fa-pen"></i>Edit</button></td></tr>';
+          return '<tr class="' + (errors.length ? 'bulk-import-row--error' : '') + '"><td>' + escapeHtml(String(row.row_number)) + '</td><td>' + renderBadge(firstText(row.status, errors.length ? "invalid" : row.action || "draft")) + '</td><td><strong>' + escapeHtml(firstText(normalized.product_name, "—")) + '</strong><div class="table-caption">' + escapeHtml(firstText(normalized.description, "")) + '</div></td><td>' + escapeHtml(firstText(normalized.product_code, normalized.barcode, "—")) + '</td><td>' + escapeHtml(firstText(normalized.category, "—")) + (normalized.category_detection && normalized.category_detection.rule_name ? '<div class="table-caption">Rule: ' + escapeHtml(firstText(normalized.category_detection.rule_name, "Auto")) + '</div>' : (!firstText(normalized.category, "") ? '<div class="table-caption">Needs manual review</div>' : '')) + '</td><td><div>' + money(firstNumber(normalized.selling_price, 0)) + '</div><div class="table-caption">Cost: ' + money(firstNumber(normalized.cost_price, 0)) + '</div></td><td>' + (errors.length ? '<ul class="bulk-import-errors">' + errors.map(function (error) { return '<li>' + escapeHtml(error) + '</li>'; }).join("") + '</ul>' : '<span class="muted">Ready</span>') + '</td><td><button class="btn btn-outline" type="button" data-action="bulk-import-edit-row" data-row-id="' + escapeAttr(String(row.id)) + '"><i class="fa-solid fa-pen"></i>Edit</button></td></tr>';
         }).join("") + '</tbody></table></div>' : '<div class="empty-state"><i class="fa-solid fa-list-check"></i>No preview rows yet.</div>') +
         (selected ? renderBulkImportEditForm(selected) : '') +
       '</section>',
@@ -2148,9 +2190,42 @@
       '<section class="card section-card"><div class="section-head"><div><h3>Business Settings</h3><p>Primary business identity used across transactions.</p></div></div><form id="settingsBusinessForm" class="form-grid two"><label><span>Business Name</span><input name="business_name" value="' + escapeAttr(firstText(settings.business_name, branding.business_name, DEFAULT_BRANDING.business_name)) + '" /></label><label><span>Currency</span><input name="currency" value="' + escapeAttr(firstText(settings.currency, "KES")) + '" /></label><label><span>Currency Symbol</span><input name="currency_symbol" value="' + escapeAttr(firstText(settings.currency_symbol, "")) + '" /></label><label><span>Primary Phone</span><input name="business_phone" value="' + escapeAttr(firstText(settings.business_phone, branding.business_phone, DEFAULT_BRANDING.business_phone)) + '" /></label><label><span>Alternative Phone</span><input name="business_phone2" value="' + escapeAttr(firstText(settings.business_phone2, branding.business_phone2, "")) + '" /></label><label><span>Business Email</span><input name="business_email" type="email" value="' + escapeAttr(firstText(settings.business_email, branding.business_email, DEFAULT_BRANDING.business_email)) + '" /></label><label><span>KRA PIN / Tax PIN</span><input name="tax_number" value="' + escapeAttr(firstText(settings.tax_number, branding.tax_number, "")) + '" /></label><label><span>Country</span><input name="country" value="' + escapeAttr(firstText(settings.country, "")) + '" /></label><label><span>Timezone</span><input name="timezone" value="' + escapeAttr(firstText(settings.timezone, "")) + '" /></label><label><span>SMTP Host</span><input name="smtp_host" value="' + escapeAttr(firstText(settings.smtp_host, "")) + '" /></label><label><span>SMTP Port</span><input name="smtp_port" type="number" min="1" step="1" value="' + escapeAttr(firstText(settings.smtp_port, "587")) + '" /></label><label><span>SMTP User</span><input name="smtp_user" value="' + escapeAttr(firstText(settings.smtp_user, "")) + '" /></label><label><span>SMTP From</span><input name="smtp_from" type="email" value="' + escapeAttr(firstText(settings.smtp_from, "")) + '" /></label><label class="form-span-2"><span>Address</span><textarea name="business_address">' + escapeHtml(firstText(settings.business_address, branding.business_address, DEFAULT_BRANDING.business_address)) + '</textarea></label><label class="form-span-2"><span>Receipt Footer</span><textarea name="receipt_footer">' + escapeHtml(firstText(settings.receipt_footer, "")) + '</textarea></label><div class="form-span-2"><button class="btn btn-primary" type="submit">Save Business Settings</button></div></form></section>',
       '<section class="card section-card"><div class="section-head"><div><h3>Branding &amp; Documents</h3><p>Logo, colours, document headers and terms used on quotations, invoices and receipts.</p></div></div><form id="settingsBrandingForm" class="form-grid two"><label><span>Display Name</span><input name="business_name" value="' + escapeAttr(firstText(branding.business_name, DEFAULT_BRANDING.business_name)) + '" /></label><label><span>Tagline</span><input name="tagline" value="' + escapeAttr(firstText(branding.tagline, branding.description, DEFAULT_BRANDING.tagline)) + '" /></label><label><span>Website</span><input name="website" value="' + escapeAttr(firstText(branding.website, "")) + '" /></label><label><span>VAT Number</span><input name="vat_number" value="' + escapeAttr(firstText(branding.vat_number, "")) + '" /></label><label><span>Primary Colour</span><input name="primary_color" value="' + escapeAttr(firstText(branding.primary_color, "#083d6d")) + '" /></label><label><span>Secondary Colour</span><input name="secondary_color" value="' + escapeAttr(firstText(branding.secondary_color, "#f7931e")) + '" /></label><label><span>Document Phone</span><input name="business_phone" value="' + escapeAttr(firstText(branding.business_phone, settings.business_phone, DEFAULT_BRANDING.business_phone)) + '" /></label><label><span>Document Email</span><input name="business_email" type="email" value="' + escapeAttr(firstText(branding.business_email, settings.business_email, DEFAULT_BRANDING.business_email)) + '" /></label><label class="form-span-2"><span>Document Address</span><textarea name="business_address">' + escapeHtml(firstText(branding.business_address, settings.business_address, DEFAULT_BRANDING.business_address)) + '</textarea></label><label class="form-span-2"><span>Company Logo</span><input type="hidden" name="logo_url" value="' + escapeAttr(firstText(branding.logo_url, branding.logoUrl, "")) + '" /><div class="branding-upload"><img id="brandingLogoPreview" class="branding-upload__preview" alt="Logo preview" /><div class="branding-upload__meta"><input id="brandingLogoFile" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" /><p class="branding-upload__hint">Upload PNG, JPG, WebP, or SVG up to 2 MB. Stored logos are reused in the UI, previews, PDFs, and emails.</p><div class="branding-upload__actions"><button class="btn btn-outline" id="brandingLogoUploadBtn" type="button">Upload selected logo</button><button class="btn btn-outline" id="brandingLogoClearBtn" type="button">Use placeholder</button></div><div class="branding-upload__status" id="brandingLogoStatus">Current logo stays active until you save branding.</div></div></div></label><label><span>Quotation Validity Days</span><input name="quotation_validity_days" type="number" min="1" step="1" value="' + escapeAttr(firstText(settings.quotation_validity_days, branding.quotation_validity_days, "30")) + '" /></label><label><span>Document Footer Text</span><input name="document_footer" value="' + escapeAttr(firstText(branding.document_footer, "")) + '" /></label><label class="form-span-2"><span>Terms &amp; Conditions (one line per term — shown on quotations and invoices)</span><textarea name="invoice_payment_terms" rows="6">' + escapeHtml(firstText(settings.invoice_payment_terms, branding.invoice_payment_terms, "Quotation valid for 30 days.\nGoods remain the property of the seller until paid in full.\nWarranty applies where specified.\nReturns are subject to our return policy.\nErrors and Omissions Excepted (E&OE).")) + '</textarea></label><label class="form-span-2"><span>Warranty Text</span><textarea name="warranty_text">' + escapeHtml(firstText(branding.warranty_text, "")) + '</textarea></label><label class="form-span-2"><span>Return Policy</span><textarea name="return_policy">' + escapeHtml(firstText(branding.return_policy, "")) + '</textarea></label><div class="form-span-2"><button class="btn btn-primary" type="submit">Save Branding &amp; Documents</button></div></form></section>',
       '<section class="card section-card"><div class="section-head"><div><h3>Payment &amp; Banking</h3><p>M-PESA and bank details printed on invoices and quotations. Editable by administrators only.</p></div></div><form id="settingsPaymentForm" class="form-grid two"><label><span>M-PESA Paybill No.</span><input name="mpesa_paybill" value="' + escapeAttr(firstText(settings.mpesa_paybill, "")) + '" placeholder="e.g. 400200" /></label><label><span>M-PESA Paybill Account</span><input name="mpesa_paybill_account" value="' + escapeAttr(firstText(settings.mpesa_paybill_account, "")) + '" placeholder="e.g. Use invoice number as account" /></label><label><span>M-PESA Till No. (Buy Goods)</span><input name="mpesa_till" value="' + escapeAttr(firstText(settings.mpesa_till, "")) + '" placeholder="e.g. 123456" /></label><label><span>Other Payment Methods</span><input name="other_payment_methods" value="' + escapeAttr(firstText(settings.other_payment_methods, "")) + '" placeholder="e.g. Cheque, Credit" /></label><label><span>Bank Name</span><input name="bank_name" value="' + escapeAttr(firstText(settings.bank_name, "")) + '" placeholder="e.g. Equity Bank" /></label><label><span>Bank Branch</span><input name="bank_branch" value="' + escapeAttr(firstText(settings.bank_branch, "")) + '" placeholder="e.g. Westlands" /></label><label><span>Bank Account Name</span><input name="bank_account_name" value="' + escapeAttr(firstText(settings.bank_account_name, "")) + '" placeholder="e.g. Unique Solar Kenya Ltd" /></label><label><span>Bank Account Number</span><input name="bank_account_number" value="' + escapeAttr(firstText(settings.bank_account_number, "")) + '" placeholder="e.g. 0123456789" /></label><label><span>Swift Code (optional)</span><input name="bank_swift_code" value="' + escapeAttr(firstText(settings.bank_swift_code, "")) + '" placeholder="e.g. EQBLKENA" /></label><label class="form-span-2"><span>Additional Payment Instructions (free text shown in notes)</span><textarea name="payment_instructions">' + escapeHtml(firstText(settings.payment_instructions, "")) + '</textarea></label><div class="form-span-2"><button class="btn btn-primary" type="submit">Save Payment Details</button></div></form></section>',
+      renderCategorizationRulesSection(data),
       '</div>'
     ].join("");
     bindBrandingUploadControls();
+  }
+
+  function renderCategorizationRulesSection(data) {
+    const rules = normalizeList(data && data.categorizationRules);
+    return '<section class="card section-card"><div class="section-head"><div><h3>Product Categorization Rules</h3><p>Manage keyword-based category detection priority and status.</p></div></div>' +
+      '<form id="settingsCategorizationForm" class="form-grid two"><input type="hidden" name="rule_id" value="" />' +
+      '<label><span>Rule Name</span><input name="rule_name" required placeholder="e.g. Solar Inverters" /></label>' +
+      '<label><span>Target Category</span><input name="category_name" required placeholder="e.g. Solar > Inverters" /></label>' +
+      '<label class="form-span-2"><span>Keywords (comma separated)</span><input name="keywords" required placeholder="inverter, hybrid inverter, pure sine" /></label>' +
+      '<label><span>Priority (lower runs first)</span><input name="priority" type="number" min="1" step="1" value="100" /></label>' +
+      '<div class="inventory-checkbox"><span>Status</span><label class="inventory-check inventory-check--box"><input name="is_enabled" type="checkbox" checked /><span>Enabled</span></label></div>' +
+      '<div class="form-span-2 inline-group"><button class="btn btn-primary" type="submit">Save Rule</button><button class="btn btn-outline" type="button" data-action="categorization-rule-clear-form">Clear</button></div></form>' +
+      (rules.length ? '<div class="data-table-wrap" style="margin-top:16px"><table class="data-table"><thead><tr><th>Priority</th><th>Rule</th><th>Category</th><th>Keywords</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + rules.map(function (rule) {
+        const keywords = Array.isArray(rule.keywords) ? rule.keywords.join(", ") : "";
+        return '<tr><td>' + escapeHtml(String(firstNumber(rule.priority, 100))) + '</td><td><strong>' + escapeHtml(firstText(rule.rule_name, "Rule")) + '</strong></td><td>' + escapeHtml(firstText(rule.category_name, "—")) + '</td><td>' + escapeHtml(keywords) + '</td><td>' + renderBadge(rule.is_enabled === false ? "disabled" : "enabled") + '</td><td><div class="table-actions"><button class="btn btn-outline" type="button" data-action="categorization-rule-edit" data-rule-id="' + escapeAttr(String(rule.id)) + '"><i class="fa-solid fa-pen"></i>Edit</button><button class="btn btn-outline" type="button" data-action="categorization-rule-toggle" data-rule-id="' + escapeAttr(String(rule.id)) + '" data-enabled="' + escapeAttr(String(rule.is_enabled !== false)) + '"><i class="fa-solid fa-power-off"></i>' + (rule.is_enabled === false ? "Enable" : "Disable") + '</button><button class="btn btn-outline" type="button" data-action="categorization-rule-up" data-rule-id="' + escapeAttr(String(rule.id)) + '"><i class="fa-solid fa-arrow-up"></i></button><button class="btn btn-outline" type="button" data-action="categorization-rule-down" data-rule-id="' + escapeAttr(String(rule.id)) + '"><i class="fa-solid fa-arrow-down"></i></button><button class="btn btn-danger" type="button" data-action="categorization-rule-delete" data-rule-id="' + escapeAttr(String(rule.id)) + '"><i class="fa-solid fa-trash"></i></button></div></td></tr>';
+      }).join("") + '</tbody></table></div>' : renderEmptyInline("No categorization rules yet.")) +
+      '</section>';
+  }
+
+  function populateCategorizationRuleForm(ruleId) {
+    const form = document.getElementById("settingsCategorizationForm");
+    if (!form) return;
+    const rules = normalizeList((state.cache.settings || {}).categorizationRules);
+    const rule = rules.find(function (item) { return String(item.id) === String(ruleId); });
+    if (!rule) return;
+    form.elements.rule_id.value = String(rule.id);
+    form.elements.rule_name.value = firstText(rule.rule_name, "");
+    form.elements.category_name.value = firstText(rule.category_name, "");
+    form.elements.keywords.value = Array.isArray(rule.keywords) ? rule.keywords.join(", ") : "";
+    form.elements.priority.value = String(firstNumber(rule.priority, 100));
+    form.elements.is_enabled.checked = rule.is_enabled !== false;
+    showToast("Rule loaded into form.", "success");
   }
 
   function renderDashboardPrimaryKpis(stats) {
@@ -3345,7 +3420,10 @@
     els.modalActions.innerHTML = "";
     els.modalBody.innerHTML = "";
     stopBulkImportPolling();
-    state.productWorkspace.editor = { productId: null, photos: [], uploading: false };
+    if (state.productWorkspace.editor.suggestTimer) {
+      window.clearTimeout(state.productWorkspace.editor.suggestTimer);
+    }
+    state.productWorkspace.editor = { productId: null, photos: [], uploading: false, categorySuggestion: null, suggestTimer: null };
     resetModalDocument();
   }
 
@@ -3364,6 +3442,8 @@
       state.productWorkspace.editor.productId = product ? product.id : null;
       state.productWorkspace.editor.photos = (product && product.product_photos ? product.product_photos.slice() : []);
       state.productWorkspace.editor.uploading = false;
+      state.productWorkspace.editor.categorySuggestion = null;
+      if (state.productWorkspace.editor.suggestTimer) window.clearTimeout(state.productWorkspace.editor.suggestTimer);
       openModal({
         title: product ? 'Edit Product' : 'Add Product',
         subtitle: product ? 'Update catalog details, pricing, branch assignment and stock controls.' : 'Create a stock-tracked product with pricing, photos and branch assignment.',
@@ -3371,6 +3451,9 @@
         body: renderProductEditorForm(product, refs)
       });
       bindProductPhotoDropzone();
+      renderProductCategorySuggestion();
+      const initialName = firstText(product && product.product_name, "");
+      if (initialName) scheduleProductCategorizationSuggestion(initialName);
     } catch (error) {
       showToast(error.message || 'Unable to load the product editor.', 'error');
     }
@@ -3388,12 +3471,15 @@
       '<input id="productPhotoInput" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" multiple class="hidden" />' +
       '<div id="productPhotoDropzone" class="inventory-upload-dropzone"><i class="fa-solid fa-cloud-arrow-up"></i><strong>' + escapeHtml(state.productWorkspace.editor.uploading ? 'Uploading product photos…' : 'Drop product images here') + '</strong><p>PNG, JPG, WebP or SVG. Uploaded files are stored securely for the catalog.</p></div>' +
       '<div id="productPhotoPreviewGrid" class="inventory-photo-grid">' + renderProductEditorPhotoGrid(photos) + '</div></div>' +
-      '<label><span>Product Name</span><input name="product_name" required value="' + escapeAttr(firstText(product && product.product_name, '')) + '" /></label>' +
+      '<label><span>Product Name</span><input id="productNameInput" name="product_name" required value="' + escapeAttr(firstText(product && product.product_name, '')) + '" /></label>' +
       '<label><span>SKU</span><input name="product_code" required value="' + escapeAttr(firstText(product && (product.sku || product.product_code), '')) + '" /></label>' +
       '<label><span>Barcode</span><input name="barcode" value="' + escapeAttr(firstText(product && product.barcode, '')) + '" /></label>' +
       '<label><span>Brand</span><select name="brand_id"><option value="">Select brand</option>' + brands.map(function (item) { return '<option value="' + escapeAttr(String(item.id)) + '"' + (String(firstText(product && product.brand_id, '')) === String(item.id) ? ' selected' : '') + '>' + escapeHtml(firstText(item.name, 'Brand')) + '</option>'; }).join('') + '</select></label>' +
       '<label><span>Category</span><select id="productCategorySelect" name="category_id"><option value="">Select category</option>' + categories.map(function (item) { return '<option value="' + escapeAttr(String(item.id)) + '"' + (String(firstText(product && product.category_id, '')) === String(item.id) ? ' selected' : '') + '>' + escapeHtml(firstText(item.name, 'Category')) + '</option>'; }).join('') + '</select></label>' +
+      '<input type="hidden" id="productCategoryNameInput" name="category_name" value="" />' +
+      '<div id="productCategorySuggestion" class="form-span-2"></div>' +
       '<div class="inventory-inline-label"><span>Category Management</span><button class="btn btn-outline" type="button" data-action="product-create-category"><i class="fa-solid fa-plus"></i>Create New Category</button></div>' +
+      '<div class="inventory-checkbox"><span>Auto Categorization</span><label class="inventory-check inventory-check--box"><input type="checkbox" name="recategorize" value="1" /><span>Re-categorize this product automatically when saving</span></label></div>' +
       '<label><span>Buying Price</span><input type="number" min="0" step="0.01" name="cost_price" required value="' + escapeAttr(String(firstNumber(product && product.buying_price, product && product.cost_price, 0))) + '" /></label>' +
       '<label><span>Selling Price</span><input type="number" min="0" step="0.01" name="selling_price" required value="' + escapeAttr(String(firstNumber(product && product.selling_price, 0))) + '" /></label>' +
       '<label><span>Tax Rate (%)</span><input type="number" min="0" step="0.01" name="vat_rate" value="' + escapeAttr(String(firstNumber(product && product.vat_rate, 16))) + '" /></label>' +
@@ -3513,6 +3599,12 @@
     payload.min_stock = payload.min_stock === undefined ? undefined : Number(payload.min_stock || 0);
     payload.current_stock = payload.current_stock === undefined ? undefined : Number(payload.current_stock || 0);
     payload.stock_adjustment = payload.stock_adjustment === undefined ? 0 : Number(payload.stock_adjustment || 0);
+    if (form.elements.category_id && form.elements.category_id.value) {
+      delete payload.category_name;
+    } else {
+      payload.category_name = firstText(payload.category_name, "");
+      if (!payload.category_name) delete payload.category_name;
+    }
     try {
       await apiJson(productId ? '/api/products/' + encodeURIComponent(productId) : '/api/products', {
         method: productId ? 'PATCH' : 'POST',
@@ -3525,6 +3617,54 @@
     } catch (error) {
       showToast(error.message || 'Unable to save product.', 'error');
     }
+  }
+
+  function renderProductCategorySuggestion() {
+    const container = document.getElementById("productCategorySuggestion");
+    if (!container) return;
+    const suggestion = state.productWorkspace.editor.categorySuggestion;
+    if (!suggestion || !suggestion.detected) {
+      container.innerHTML = '<small class="muted">Start typing a product name to auto-detect a category suggestion.</small>';
+      return;
+    }
+    container.innerHTML = '<div class="inline-message info">Suggested category: <strong>' + escapeHtml(firstText(suggestion.category_name, "Uncategorized")) + '</strong>' + (suggestion.rule_name ? ' <span class="muted">(' + escapeHtml(suggestion.rule_name) + ')</span>' : '') + ' <button class="btn btn-outline" type="button" data-action="product-accept-category-suggestion"><i class="fa-solid fa-check"></i>Accept</button></div>';
+  }
+
+  function applyDetectedProductCategory() {
+    const suggestion = state.productWorkspace.editor.categorySuggestion;
+    if (!suggestion || !suggestion.detected) return;
+    const select = document.getElementById("productCategorySelect");
+    const categoryNameInput = document.getElementById("productCategoryNameInput");
+    if (select && suggestion.category_id && Array.from(select.options).some(function (option) { return String(option.value) === String(suggestion.category_id); })) {
+      select.value = String(suggestion.category_id);
+      if (categoryNameInput) categoryNameInput.value = "";
+      showToast("Suggested category applied.", "success");
+      return;
+    }
+    if (categoryNameInput) {
+      categoryNameInput.value = firstText(suggestion.category_name, "");
+      if (select) select.value = "";
+      showToast("Category suggestion saved. It will be created on save if needed.", "success");
+    }
+  }
+
+  function scheduleProductCategorizationSuggestion(productName) {
+    const name = firstText(productName, "");
+    if (state.productWorkspace.editor.suggestTimer) window.clearTimeout(state.productWorkspace.editor.suggestTimer);
+    if (!name) {
+      state.productWorkspace.editor.categorySuggestion = null;
+      renderProductCategorySuggestion();
+      return;
+    }
+    state.productWorkspace.editor.suggestTimer = window.setTimeout(async function () {
+      try {
+        const suggestion = await apiJson("/api/products/categorization/suggest?product_name=" + encodeURIComponent(name));
+        state.productWorkspace.editor.categorySuggestion = suggestion && suggestion.detected ? suggestion : null;
+      } catch (_error) {
+        state.productWorkspace.editor.categorySuggestion = null;
+      }
+      renderProductCategorySuggestion();
+    }, 220);
   }
 
   async function quickCreateCategoryFromEditor() {
@@ -3541,6 +3681,8 @@
       state.cache.products.categories = normalizeList(latestCategories);
       const select = document.getElementById('productCategorySelect');
       if (select) select.value = String(category.id);
+      const categoryNameInput = document.getElementById("productCategoryNameInput");
+      if (categoryNameInput) categoryNameInput.value = "";
       showToast('Category created.', 'success');
     } catch (error) {
       showToast(error.message || 'Unable to create category.', 'error');
@@ -3844,6 +3986,89 @@
       showToast("Payment details saved.", "success");
     } catch (error) {
       showToast(error.message || "Unable to save payment details.", "error");
+    }
+  }
+
+  function clearCategorizationRuleForm() {
+    const form = document.getElementById("settingsCategorizationForm");
+    if (!form) return;
+    form.reset();
+    if (form.elements.is_enabled) form.elements.is_enabled.checked = true;
+    if (form.elements.priority) form.elements.priority.value = "100";
+    if (form.elements.rule_id) form.elements.rule_id.value = "";
+  }
+
+  async function handleSettingsCategorizationSubmit(event) {
+    event.preventDefault();
+    const form = event.target;
+    const payload = formToObject(form);
+    payload.is_enabled = !!(form.elements.is_enabled && form.elements.is_enabled.checked);
+    payload.priority = Number(payload.priority || 100);
+    payload.keywords = firstText(payload.keywords, "").split(",").map(function (item) { return item.trim(); }).filter(Boolean);
+    const ruleId = firstText(payload.rule_id, "");
+    delete payload.rule_id;
+    try {
+      await apiJson(ruleId ? "/api/settings/product-categorization-rules/" + encodeURIComponent(ruleId) : "/api/settings/product-categorization-rules", {
+        method: ruleId ? "PATCH" : "POST",
+        body: JSON.stringify(payload)
+      });
+      await loadSettingsData();
+      renderCurrentRoute();
+      clearCategorizationRuleForm();
+      showToast(ruleId ? "Categorization rule updated." : "Categorization rule created.", "success");
+    } catch (error) {
+      showToast(error.message || "Unable to save categorization rule.", "error");
+    }
+  }
+
+  async function deleteCategorizationRule(ruleId) {
+    if (!ruleId) return;
+    if (!window.confirm("Delete this categorization rule?")) return;
+    try {
+      await apiJson("/api/settings/product-categorization-rules/" + encodeURIComponent(ruleId), { method: "DELETE" });
+      await loadSettingsData();
+      renderCurrentRoute();
+      clearCategorizationRuleForm();
+      showToast("Categorization rule deleted.", "success");
+    } catch (error) {
+      showToast(error.message || "Unable to delete categorization rule.", "error");
+    }
+  }
+
+  async function toggleCategorizationRule(ruleId, currentlyEnabled) {
+    if (!ruleId) return;
+    try {
+      await apiJson("/api/settings/product-categorization-rules/" + encodeURIComponent(ruleId), {
+        method: "PATCH",
+        body: JSON.stringify({ is_enabled: !currentlyEnabled })
+      });
+      await loadSettingsData();
+      renderCurrentRoute();
+      showToast("Categorization rule updated.", "success");
+    } catch (error) {
+      showToast(error.message || "Unable to update categorization rule.", "error");
+    }
+  }
+
+  async function moveCategorizationRule(ruleId, delta) {
+    const rules = normalizeList((state.cache.settings || {}).categorizationRules);
+    const index = rules.findIndex(function (item) { return String(item.id) === String(ruleId); });
+    if (index === -1) return;
+    const targetIndex = index + delta;
+    if (targetIndex < 0 || targetIndex >= rules.length) return;
+    const reordered = rules.slice();
+    const removed = reordered.splice(index, 1)[0];
+    reordered.splice(targetIndex, 0, removed);
+    try {
+      await apiJson("/api/settings/product-categorization-rules/reorder", {
+        method: "POST",
+        body: JSON.stringify({ ids: reordered.map(function (item) { return item.id; }) })
+      });
+      await loadSettingsData();
+      renderCurrentRoute();
+      showToast("Rule priority updated.", "success");
+    } catch (error) {
+      showToast(error.message || "Unable to reorder rules.", "error");
     }
   }
 

@@ -68,7 +68,8 @@ function createProductBulkRouter(deps) {
     pool,
     logAudit,
     makeBarcode,
-    resolveWriteBranchId
+    resolveWriteBranchId,
+    detectProductCategorySuggestion
   } = deps;
 
   const router = Router();
@@ -173,6 +174,16 @@ function createProductBulkRouter(deps) {
 
   function trimText(value) {
     return String(value == null ? "" : value).trim();
+  }
+  const categorizationMemo = new Map();
+  async function suggestCategory(productName) {
+    const name = trimText(productName);
+    if (!name || typeof detectProductCategorySuggestion !== "function") return null;
+    const key = name.toLowerCase();
+    if (categorizationMemo.has(key)) return categorizationMemo.get(key);
+    const result = await detectProductCategorySuggestion(name).catch(() => null);
+    categorizationMemo.set(key, result || null);
+    return result || null;
   }
 
   function importValidationError(message) {
@@ -551,15 +562,21 @@ function createProductBulkRouter(deps) {
     let valid = 0;
     let invalid = 0;
     let duplicates = 0;
+    let autoCategorized = 0;
+    let uncategorized = 0;
     for (const row of preparedRows) {
       if (Array.isArray(row.validation_errors) && row.validation_errors.length) invalid += 1;
       else valid += 1;
       if (row.action === "duplicate") duplicates += 1;
+      if (row.normalized_data?.category_detection?.auto_applied) autoCategorized += 1;
+      if (!trimText(row.normalized_data?.category)) uncategorized += 1;
     }
     return {
       valid_rows: valid,
       invalid_rows: invalid,
       duplicate_rows: duplicates,
+      auto_categorized_count: autoCategorized,
+      uncategorized_count: uncategorized,
       error_count: invalid
     };
   }
@@ -585,13 +602,30 @@ function createProductBulkRouter(deps) {
 
   async function prepareDraftRows(source) {
     const mapping = detectMapping(source.headers);
-    const prepared = source.rows.map((row) => ({
-      row_number: row.row_number,
-      raw_data: row.raw_data,
-      normalized_data: applyImportDefaults(normalizeImportedRow(row.raw_data, mapping), row.row_number),
-      validation_errors: [],
-      action: "create"
-    }));
+    const prepared = [];
+    for (const row of source.rows) {
+      const normalized = applyImportDefaults(normalizeImportedRow(row.raw_data, mapping), row.row_number);
+      if (!trimText(normalized.category)) {
+        const suggestion = await suggestCategory(normalized.product_name);
+        if (suggestion && suggestion.categoryName) {
+          normalized.category = suggestion.categoryName;
+          normalized.category_detection = {
+            category_name: suggestion.categoryName,
+            rule_id: suggestion.ruleId || null,
+            rule_name: suggestion.ruleName || null,
+            matched_keyword: suggestion.matchedKeyword || null,
+            auto_applied: true
+          };
+        }
+      }
+      prepared.push({
+        row_number: row.row_number,
+        raw_data: row.raw_data,
+        normalized_data: normalized,
+        validation_errors: [],
+        action: "create"
+      });
+    }
     const codeSet = new Set();
     const barcodeSet = new Set();
     const nameSet = new Set();
@@ -668,12 +702,26 @@ function createProductBulkRouter(deps) {
 
   async function remapJob(jobId, mapping) {
     const rows = (await pool.query(`SELECT id, row_number, raw_data FROM product_import_rows WHERE job_id = $1 ORDER BY row_number`, [jobId])).rows;
-    const prepared = rows.map((row) => {
+    const prepared = [];
+    for (const row of rows) {
       const rawData = safeJson(row.raw_data, {});
       const normalized = applyImportDefaults(normalizeImportedRow(rawData, mapping), row.row_number);
+      if (!trimText(normalized.category)) {
+        const suggestion = await suggestCategory(normalized.product_name);
+        if (suggestion && suggestion.categoryName) {
+          normalized.category = suggestion.categoryName;
+          normalized.category_detection = {
+            category_name: suggestion.categoryName,
+            rule_id: suggestion.ruleId || null,
+            rule_name: suggestion.ruleName || null,
+            matched_keyword: suggestion.matchedKeyword || null,
+            auto_applied: true
+          };
+        }
+      }
       const validationErrors = validateImportedRow(normalized);
-      return { id: row.id, normalized, validationErrors };
-    });
+      prepared.push({ id: row.id, normalized, validationErrors });
+    }
     const codes = new Set();
     const barcodes = new Set();
     const names = new Set();
@@ -688,6 +736,8 @@ function createProductBulkRouter(deps) {
     const existingByName = new Map(existing.filter((item) => item.product_name).map((item) => [normalizedNameKey(item.product_name), item]));
     let valid = 0;
     let invalid = 0;
+    let autoCategorized = 0;
+    let uncategorized = 0;
     for (const row of prepared) {
       const existingMatch = existingByCode.get(row.normalized.product_code) || existingByBarcode.get(row.normalized.barcode) || existingByName.get(normalizedNameKey(row.normalized.product_name));
       if (existingMatch) {
@@ -698,12 +748,14 @@ function createProductBulkRouter(deps) {
         `UPDATE product_import_rows SET normalized_data = $2::jsonb, validation_errors = $3::jsonb, action = $4 WHERE id = $1`,
         [row.id, JSON.stringify(row.normalized), JSON.stringify(row.validationErrors), action]
       );
+      if (row.normalized?.category_detection?.auto_applied) autoCategorized += 1;
+      if (!trimText(row.normalized?.category)) uncategorized += 1;
       if (row.validationErrors.length) invalid += 1;
       else valid += 1;
     }
     await pool.query(
       `UPDATE product_import_jobs SET column_mapping = $2::jsonb, valid_rows = $3, invalid_rows = $4, error_count = $4, summary = $5::jsonb WHERE id = $1`,
-      [jobId, JSON.stringify(mapping), valid, invalid, JSON.stringify({ valid_rows: valid, invalid_rows: invalid, error_count: invalid })]
+      [jobId, JSON.stringify(mapping), valid, invalid, JSON.stringify({ valid_rows: valid, invalid_rows: invalid, auto_categorized_count: autoCategorized, uncategorized_count: uncategorized, error_count: invalid })]
     );
   }
 
@@ -819,7 +871,7 @@ function createProductBulkRouter(deps) {
     try {
       const job = await loadJob(jobId);
       if (!job) return;
-      const options = Object.assign({ on_duplicate: "update", auto_create_references: true }, safeJson(job.options, {}));
+      const options = Object.assign({ on_duplicate: "update", auto_create_references: true, recategorize: false }, safeJson(job.options, {}));
       await pool.query(`UPDATE product_import_jobs SET status = 'processing', started_at = COALESCE(started_at, NOW()), last_error = NULL WHERE id = $1`, [jobId]);
       const rows = (await client.query(`SELECT * FROM product_import_rows WHERE job_id = $1 ORDER BY row_number`, [jobId])).rows;
       const undoData = { created_product_ids: [], updated_products: [] };
@@ -829,6 +881,9 @@ function createProductBulkRouter(deps) {
       let skippedCount = 0;
       let duplicateCount = 0;
       let errorCount = 0;
+      let autoCategorizedCount = 0;
+      let uncategorizedCount = 0;
+      const uncategorizedRows = [];
       for (const row of rows) {
         const normalized = safeJson(row.normalized_data, {});
         const validationErrors = safeJson(row.validation_errors, []);
@@ -839,16 +894,35 @@ function createProductBulkRouter(deps) {
           continue;
         }
         const branchId = await resolveBranchId(client, normalized.location, options.default_branch_id || actor.branchId || null);
-        const categoryId = options.auto_create_references ? await getReferenceId(client, "categories", normalized.category, actor, "category") : null;
         const brandId = options.auto_create_references ? await getReferenceId(client, "brands", normalized.brand, actor, "brand") : null;
         const supplierId = options.auto_create_references ? await getReferenceId(client, "suppliers", normalized.supplier, actor, "supplier", { branchId }) : null;
         const existing = await fetchExistingProduct(client, normalized);
+        const hasCategoryText = !!trimText(normalized.category);
+        if ((!hasCategoryText || (options.recategorize && normalized.product_name)) && normalized.product_name) {
+          const suggestion = await suggestCategory(normalized.product_name);
+          if (suggestion && suggestion.categoryName && (options.recategorize || (!hasCategoryText && !existing?.category_id))) {
+            normalized.category = suggestion.categoryName;
+            normalized.category_detection = {
+              category_name: suggestion.categoryName,
+              rule_id: suggestion.ruleId || null,
+              rule_name: suggestion.ruleName || null,
+              matched_keyword: suggestion.matchedKeyword || null,
+              auto_applied: true
+            };
+          }
+        }
+        if (normalized?.category_detection?.auto_applied) autoCategorizedCount += 1;
+        if (!trimText(normalized.category)) {
+          uncategorizedCount += 1;
+          if (uncategorizedRows.length < 50) uncategorizedRows.push(row.row_number);
+        }
+        const categoryId = options.auto_create_references ? await getReferenceId(client, "categories", normalized.category, actor, "category") : null;
         let action = row.action || (existing ? "update" : "create");
         if (existing && options.on_duplicate === "skip") action = "skip";
         if (existing && options.on_duplicate === "duplicate") action = "duplicate";
         if (action === "skip") {
           skippedCount += 1;
-          await client.query(`UPDATE product_import_rows SET status = 'skipped', action = 'skip', product_id = $2 WHERE id = $1`, [row.id, existing?.id || null]);
+          await client.query(`UPDATE product_import_rows SET status = 'skipped', action = 'skip', product_id = $2, normalized_data = $3::jsonb WHERE id = $1`, [row.id, existing?.id || null, JSON.stringify(normalized)]);
           processed += 1;
           continue;
         }
@@ -889,7 +963,7 @@ function createProductBulkRouter(deps) {
           if (branchId) {
             await upsertBranchStock(client, branchId, existing.id, Number(normalized.current_stock ?? 0), Number(normalized.min_stock ?? 0));
           }
-          await client.query(`UPDATE product_import_rows SET status = 'updated', action = 'update', product_id = $2 WHERE id = $1`, [row.id, updated.rows[0].id]);
+          await client.query(`UPDATE product_import_rows SET status = 'updated', action = 'update', product_id = $2, normalized_data = $3::jsonb WHERE id = $1`, [row.id, updated.rows[0].id, JSON.stringify(normalized)]);
           updatedCount += 1;
         } else {
           let productCode = normalized.product_code;
@@ -927,7 +1001,7 @@ function createProductBulkRouter(deps) {
           if (branchId) {
             await upsertBranchStock(client, branchId, productId, Number(normalized.current_stock ?? 0), Number(normalized.min_stock ?? 0));
           }
-          await client.query(`UPDATE product_import_rows SET status = 'created', action = $2, product_id = $3 WHERE id = $1`, [row.id, action, productId]);
+          await client.query(`UPDATE product_import_rows SET status = 'created', action = $2, product_id = $3, normalized_data = $4::jsonb WHERE id = $1`, [row.id, action, productId, JSON.stringify(normalized)]);
           createdCount += 1;
         }
         processed += 1;
@@ -953,7 +1027,7 @@ function createProductBulkRouter(deps) {
           skippedCount,
           duplicateCount,
           errorCount,
-          JSON.stringify({ processed_rows: processed, created_count: createdCount, updated_count: updatedCount, skipped_rows: skippedCount, duplicate_count: duplicateCount, error_count: errorCount }),
+          JSON.stringify({ processed_rows: processed, created_count: createdCount, updated_count: updatedCount, skipped_rows: skippedCount, duplicate_count: duplicateCount, auto_categorized_count: autoCategorizedCount, uncategorized_count: uncategorizedCount, uncategorized_rows: uncategorizedRows, error_count: errorCount }),
           JSON.stringify(undoData)
         ]
       );
@@ -962,7 +1036,7 @@ function createProductBulkRouter(deps) {
         entityType: "product_import",
         entityId: jobId,
         description: `Completed bulk product import #${jobId}`,
-        metadata: { processed, createdCount, updatedCount, skippedCount, duplicateCount, errorCount }
+        metadata: { processed, createdCount, updatedCount, skippedCount, duplicateCount, autoCategorizedCount, uncategorizedCount, errorCount }
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1179,6 +1253,7 @@ function createProductBulkRouter(deps) {
     const options = {
       on_duplicate: ["skip", "update", "duplicate"].includes(req.body?.on_duplicate) ? req.body.on_duplicate : "update",
       auto_create_references: req.body?.auto_create_references !== false,
+      recategorize: req.body?.recategorize === true,
       default_branch_id: await resolveWriteBranchId(req)
     };
     await pool.query(`UPDATE product_import_jobs SET status = 'queued', options = $2::jsonb WHERE id = $1`, [jobId, JSON.stringify(options)]);
@@ -1227,8 +1302,22 @@ function createProductBulkRouter(deps) {
       }
     });
     delete merged.existing_match;
+    delete merged.category_detection;
     // Re-apply defaults in case product_code was cleared
     const withDefaults = applyImportDefaults(merged, rows[0].row_number);
+    if (!trimText(withDefaults.category) && trimText(withDefaults.product_name)) {
+      const suggestion = await suggestCategory(withDefaults.product_name);
+      if (suggestion && suggestion.categoryName) {
+        withDefaults.category = suggestion.categoryName;
+        withDefaults.category_detection = {
+          category_name: suggestion.categoryName,
+          rule_id: suggestion.ruleId || null,
+          rule_name: suggestion.ruleName || null,
+          matched_keyword: suggestion.matchedKeyword || null,
+          auto_applied: true
+        };
+      }
+    }
     const validationErrors = validateImportedRow(withDefaults);
     const match = await fetchExistingProduct(pool, withDefaults);
     if (match) withDefaults.existing_match = { id: match.id, product_code: match.product_code, barcode: match.barcode, product_name: match.product_name };
@@ -1239,16 +1328,20 @@ function createProductBulkRouter(deps) {
     );
     // Update job-level counts
     const allRows = (await pool.query(
-      `SELECT validation_errors FROM product_import_rows WHERE job_id = $1`, [jobId]
+      `SELECT normalized_data, validation_errors FROM product_import_rows WHERE job_id = $1`, [jobId]
     )).rows;
     const errorCount = allRows.filter((r) => {
       const errs = safeJson(r.validation_errors, []);
       return errs.length > 0;
     }).length;
     const validCount = allRows.length - errorCount;
+    const autoCategorizedCount = allRows.filter((r) => safeJson(r.normalized_data, {})?.category_detection?.auto_applied).length;
+    const uncategorizedCount = allRows.filter((r) => !trimText(safeJson(r.normalized_data, {})?.category)).length;
     await pool.query(
-      `UPDATE product_import_jobs SET invalid_rows = $2, valid_rows = $3, error_count = $4 WHERE id = $1`,
-      [jobId, errorCount, validCount, errorCount]
+      `UPDATE product_import_jobs
+       SET invalid_rows = $2, valid_rows = $3, error_count = $4, summary = $5::jsonb
+       WHERE id = $1`,
+      [jobId, errorCount, validCount, errorCount, JSON.stringify({ valid_rows: validCount, invalid_rows: errorCount, auto_categorized_count: autoCategorizedCount, uncategorized_count: uncategorizedCount, error_count: errorCount })]
     );
     res.json({
       row: serializeImportRow(Object.assign({}, rows[0], {
