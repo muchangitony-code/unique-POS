@@ -1273,6 +1273,7 @@
   }
 
   function renderProductSelectionSummary(pageRows, totalRows) {
+    if (!canEditProducts()) return '';
     const selected = new Set((state.productWorkspace.selectedIds || []).map(String));
     const allVisibleSelected = pageRows.length && pageRows.every(function (item) { return selected.has(String(item.id)); });
     return '<div class="inventory-bulkbar">' +
@@ -1289,9 +1290,10 @@
   function renderProductDesktopTable(rows) {
     if (!rows.length) return renderEmptyInline("No products match the current filters.");
     const selected = new Set((state.productWorkspace.selectedIds || []).map(String));
+    const editable = canEditProducts();
     return '<div class="data-table-wrap inventory-table-wrap"><table class="data-table inventory-table"><thead><tr><th style="width:44px"></th><th>Photo</th><th>SKU</th><th>Barcode</th><th>Product Name</th><th>Category</th><th>Buying Price</th><th>Selling Price</th><th>Current Stock</th><th>Branch</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + rows.map(function (item) {
       return '<tr>' +
-        '<td><button class="icon-btn inventory-row-check' + (selected.has(String(item.id)) ? ' is-selected' : '') + '" type="button" data-action="product-row-select" data-product-id="' + escapeAttr(String(item.id)) + '" aria-label="Select product"><i class="fa-solid ' + (selected.has(String(item.id)) ? 'fa-check' : 'fa-plus') + '"></i></button></td>' +
+        '<td><button class="icon-btn inventory-row-check' + (selected.has(String(item.id)) ? ' is-selected' : '') + '" type="button"' + (editable ? ' data-action="product-row-select" data-product-id="' + escapeAttr(String(item.id)) + '"' : ' disabled') + ' aria-label="Select product"><i class="fa-solid ' + (editable ? (selected.has(String(item.id)) ? 'fa-check' : 'fa-plus') : 'fa-lock') + '"></i></button></td>' +
         '<td>' + renderProductPhoto(firstText(item.image_url, (item.product_photos || [])[0], ""), firstText(item.product_name, 'Product'), true) + '</td>' +
         '<td><strong>' + escapeHtml(firstText(item.sku, item.product_code, '—')) + '</strong></td>' +
         '<td>' + escapeHtml(firstText(item.barcode, '—')) + '</td>' +
@@ -1316,11 +1318,12 @@
     const pageInfo = getVisibleProductPageRows(activeProducts);
     const canImport = canBulkImportProducts();
     const showArchived = isSuperAdmin() && collections.includeArchived;
+    const editable = canEditProducts();
     els.viewRoot.innerHTML = [
       '<section class="card section-card inventory-shell">' +
         '<div class="inventory-header">' +
           '<div><span class="workspace-hero__eyebrow">Inventory Management</span><h2>Products</h2><p>Manage catalog data, pricing, stock and photo-rich inventory records across branches.</p></div>' +
-          '<div class="inventory-header__actions"><button class="btn btn-primary" data-action="quick-add-product"><i class="fa-solid fa-plus"></i>Add Product</button><button class="btn btn-outline" data-action="manage-categories"><i class="fa-solid fa-tags"></i>Manage Categories</button><button class="btn btn-outline" data-route="inventory"><i class="fa-solid fa-warehouse"></i>Inventory</button>' + (canImport ? '<button class="btn btn-secondary" data-action="bulk-import-products"><i class="fa-solid fa-file-import"></i>Bulk Import</button>' : '') + (isSuperAdmin() ? '<button class="btn btn-outline" data-action="toggle-archived-products"><i class="fa-solid fa-box-archive"></i>' + (showArchived ? 'Hide Archived' : 'Show Archived') + '</button>' : '') + '</div>' +
+          '<div class="inventory-header__actions">' + (editable ? '<button class="btn btn-primary" data-action="quick-add-product"><i class="fa-solid fa-plus"></i>Add Product</button><button class="btn btn-outline" data-action="manage-categories"><i class="fa-solid fa-tags"></i>Manage Categories</button>' : '') + '<button class="btn btn-outline" data-route="inventory"><i class="fa-solid fa-warehouse"></i>Inventory</button>' + (canImport ? '<button class="btn btn-secondary" data-action="bulk-import-products"><i class="fa-solid fa-file-import"></i>Bulk Import</button>' : '') + (isSuperAdmin() ? '<button class="btn btn-outline" data-action="toggle-archived-products"><i class="fa-solid fa-box-archive"></i>' + (showArchived ? 'Hide Archived' : 'Show Archived') + '</button>' : '') + '</div>' +
         '</div>' +
         renderOverviewTiles([
           ['Products', numberText(summary.total)],
@@ -1371,6 +1374,7 @@
   }
 
   function renderProductActionButtons(product) {
+    if (!canEditProducts()) return '<span class="muted">View only</span>';
     var buttons = [
       '<button class="btn btn-outline" type="button" data-action="product-edit" data-product-id="' + escapeAttr(String(product.id)) + '"><i class="fa-solid fa-pen"></i>Edit</button>',
       '<button class="btn btn-outline" type="button" data-action="product-duplicate" data-product-id="' + escapeAttr(String(product.id)) + '"><i class="fa-regular fa-clone"></i>Duplicate</button>',
