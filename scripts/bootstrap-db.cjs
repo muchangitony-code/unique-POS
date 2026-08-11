@@ -172,7 +172,6 @@ async function bootstrapDatabaseIfNeeded(options = {}) {
     // were missing before migrations ran. For existing databases skip seeding so
     // that the production admin-password guard does not block normal startup.
     if (missingBefore.length === 0) {
-      await pool.end();
       return {
         migrationsApplied: migrationResult.applied,
         adminBootstrapped: false,
@@ -188,7 +187,6 @@ async function bootstrapDatabaseIfNeeded(options = {}) {
     const adminPassword = process.env.UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD || DEFAULT_ADMIN_PASSWORD;
     if (bootstrapAdminEnabled && adminPassword === DEFAULT_ADMIN_PASSWORD) {
       if (nodeEnv === "production") {
-        await pool.end();
         throw new Error("UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD must be set in production.");
       }
       console.warn("[bootstrap-db] Using the default bootstrap admin password; override UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD before production deployment.");
