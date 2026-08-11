@@ -1768,7 +1768,7 @@
     if (!products.length) return renderEmptyInline("No products match the current search or category.");
     return '<div class="product-grid">' + products.map(function (product) {
       const image = sanitizeUrl(product.image_url);
-      return '<article class="product-card" data-action="add-to-basket" data-id="' + escapeAttr(String(product.id)) + '"><div class="product-card__image">' + (image ? '<img src="' + escapeAttr(image) + '" alt="' + escapeAttr(firstText(product.product_name, 'Product')) + '" />' : '<i class="fa-solid fa-solar-panel"></i>') + '</div><div class="product-card__body"><div class="product-card__title">' + escapeHtml(firstText(product.product_name, 'Product')) + '</div><div class="product-card__meta"><span>' + money(firstNumber(product.selling_price, 0)) + '</span>' + renderStockPill(product) + '</div><button type="button" class="btn btn-primary" data-action="add-to-basket" data-id="' + escapeAttr(String(product.id)) + '"><i class="fa-solid fa-plus"></i>Add</button></div></article>';
+      return '<article class="product-card" data-action="add-to-basket" data-id="' + escapeAttr(String(product.id)) + '"><div class="product-card__image">' + (image ? '<img src="' + escapeAttr(image) + '" alt="' + escapeAttr(firstText(product.product_name, 'Product')) + '" />' : '<i class="fa-solid fa-solar-panel"></i>') + '</div><div class="product-card__body"><div class="product-card__title">' + escapeHtml(firstText(product.product_name, 'Product')) + '</div><div class="product-card__meta"><span>' + money(firstNumber(product.selling_price, 0)) + '</span>' + renderStockPill(product) + '</div><button type="button" class="btn btn-primary"><i class="fa-solid fa-plus"></i>Add</button></div></article>';
     }).join("") + '</div>';
   }
 

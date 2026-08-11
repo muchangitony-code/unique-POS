@@ -70084,11 +70084,16 @@ router6.get("/products", async (req, res) => {
   const brandMap = Object.fromEntries(brands.map((b) => [b.id, b.name]));
   const supplierMap = Object.fromEntries(suppliers.map((s) => [s.id, s.name]));
   const useProductFallbackStock = fallback_product_stock === "true" || !hasExplicitBranch;
-  let formatted = allProducts.map(
-    (prod) => formatProduct(prod, prod.categoryId ? catMap[prod.categoryId] : null, prod.brandId ? brandMap[prod.brandId] : null, prod.supplierId ? supplierMap[prod.supplierId] : null, stockFor(stockMap, prod, { fallbackToProductCurrent: useProductFallbackStock }))
+  const productsWithStock = allProducts.map((prod) => ({
+    product: prod,
+    stock: stockFor(stockMap, prod, { fallbackToProductCurrent: useProductFallbackStock })
+  }));
+  const inStockOnly = in_stock_only === "true";
+  const scopedProducts = inStockOnly ? productsWithStock.filter((row) => Number(row.stock.current) > 0) : productsWithStock;
+  let formatted = scopedProducts.map(
+    (row) => formatProduct(row.product, row.product.categoryId ? catMap[row.product.categoryId] : null, row.product.brandId ? brandMap[row.product.brandId] : null, row.product.supplierId ? supplierMap[row.product.supplierId] : null, row.stock)
   );
   if (low_stock === "true") formatted = formatted.filter((r) => r.current_stock <= r.min_stock);
-  if (in_stock_only === "true") formatted = formatted.filter((r) => Number(r.current_stock) > 0);
   const total = formatted.length;
   const offset = (p - 1) * l;
   res.json({ data: formatted.slice(offset, offset + l), total, page: p, limit: l });
