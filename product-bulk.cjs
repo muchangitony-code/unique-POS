@@ -17,7 +17,6 @@ const TEMPLATE_HEADERS = [
   "Unit",
   "Cost Price",
   "Selling Price",
-  "Wholesale Price",
   "VAT",
   "Reorder Level",
   "Opening Stock",
@@ -36,7 +35,6 @@ const FIELD_LABELS = {
   unit: "Unit",
   cost_price: "Cost Price",
   selling_price: "Selling Price",
-  wholesale_price: "Wholesale Price",
   vat_rate: "VAT",
   min_stock: "Reorder Level",
   current_stock: "Opening Stock",
@@ -55,7 +53,6 @@ const HEADER_ALIASES = {
   unit: ["unit", "uom", "measure", "symbol"],
   cost_price: ["costprice", "cost", "buyprice", "purchaseprice"],
   selling_price: ["sellingprice", "saleprice", "price", "retailprice", "unitprice"],
-  wholesale_price: ["wholesaleprice", "wholesale", "tradeprice", "bulkprice", "dealerprice"],
   vat_rate: ["vat", "vatrate", "tax", "taxrate"],
   min_stock: ["reorderlevel", "minimumstock", "minstock", "reorderqty"],
   current_stock: ["openingstock", "stock", "currentstock", "qty", "quantity"],
@@ -84,7 +81,6 @@ function createProductBulkRouter(deps) {
     unit: "text",
     cost_price: "number",
     selling_price: "number",
-    wholesale_price: "number",
     vat_rate: "number",
     min_stock: "number",
     current_stock: "number",
@@ -338,7 +334,6 @@ function createProductBulkRouter(deps) {
       unit: getValue("unit"),
       cost_price: toNumber(getValue("cost_price")),
       selling_price: toNumber(getValue("selling_price")),
-      wholesale_price: toNumber(getValue("wholesale_price")),
       vat_rate: toNumber(getValue("vat_rate")),
       min_stock: toNumber(getValue("min_stock")),
       current_stock: toNumber(getValue("current_stock")),
@@ -712,11 +707,29 @@ function createProductBulkRouter(deps) {
     );
   }
 
-  async function getReferenceId(client, table, name, actor, type) {
+  async function getReferenceId(client, table, name, actor, type, options = {}) {
     const normalized = trimText(name);
     if (!normalized) return null;
     const existing = await client.query(`SELECT id FROM ${table} WHERE lower(name) = lower($1) LIMIT 1`, [normalized]);
     if (existing.rows[0]) return existing.rows[0].id;
+    if (table === "suppliers") {
+      let branchId = Number(options.branchId || actor?.branchId || 0);
+      if (!Number.isInteger(branchId) || branchId <= 0) {
+        const fallbackBranch = await client.query(`SELECT id FROM branches ORDER BY id LIMIT 1`);
+        branchId = Number(fallbackBranch.rows[0]?.id || 0);
+      }
+      if (!Number.isInteger(branchId) || branchId <= 0) {
+        throw importValidationError("A branch is required before creating suppliers during bulk import.");
+      }
+      const created = await client.query(`INSERT INTO suppliers (name, branch_id, created_at) VALUES ($1, $2, NOW()) RETURNING id`, [normalized, branchId]);
+      await logAudit({ user: actor, headers: {}, socket: {} }, {
+        action: `${type}.created_by_import`,
+        entityType: type,
+        entityId: created.rows[0].id,
+        description: `Created ${type} "${normalized}" during bulk import`
+      });
+      return created.rows[0].id;
+    }
     const created = await client.query(`INSERT INTO ${table} (name, created_at) VALUES ($1, NOW()) RETURNING id`, [normalized]);
     await logAudit({ user: actor, headers: {}, socket: {} }, {
       action: `${type}.created_by_import`,
@@ -828,7 +841,7 @@ function createProductBulkRouter(deps) {
         const branchId = await resolveBranchId(client, normalized.location, options.default_branch_id || actor.branchId || null);
         const categoryId = options.auto_create_references ? await getReferenceId(client, "categories", normalized.category, actor, "category") : null;
         const brandId = options.auto_create_references ? await getReferenceId(client, "brands", normalized.brand, actor, "brand") : null;
-        const supplierId = options.auto_create_references ? await getReferenceId(client, "suppliers", normalized.supplier, actor, "supplier") : null;
+        const supplierId = options.auto_create_references ? await getReferenceId(client, "suppliers", normalized.supplier, actor, "supplier", { branchId }) : null;
         const existing = await fetchExistingProduct(client, normalized);
         let action = row.action || (existing ? "update" : "create");
         if (existing && options.on_duplicate === "skip") action = "skip";
@@ -850,13 +863,12 @@ function createProductBulkRouter(deps) {
                description = NULLIF($5, ''),
                category_id = $6,
                brand_id = $7,
-               supplier_id = $8,
-               cost_price = $9,
-               selling_price = $10,
-               wholesale_price = COALESCE(NULLIF($11, '')::numeric, 0),
-               vat_rate = $12,
-               image_url = NULLIF($13, ''),
-               unit = NULLIF($14, '')
+              supplier_id = $8,
+              cost_price = $9,
+              selling_price = $10,
+              vat_rate = $11,
+              image_url = NULLIF($12, ''),
+              unit = NULLIF($13, '')
              WHERE id = $1 RETURNING id`,
             [
               existing.id,
@@ -869,7 +881,6 @@ function createProductBulkRouter(deps) {
               supplierId,
               String(normalized.cost_price ?? 0),
               String(normalized.selling_price ?? 0),
-              normalized.wholesale_price != null ? String(normalized.wholesale_price) : "0",
               String(normalized.vat_rate ?? 16),
               normalized.image_url,
               normalized.unit
@@ -890,9 +901,9 @@ function createProductBulkRouter(deps) {
           }
           const created = await client.query(
             `INSERT INTO products
-              (product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, wholesale_price, vat_rate, current_stock, min_stock, image_url, unit, created_at)
+              (product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, current_stock, min_stock, image_url, unit, created_at)
              VALUES
-              ($1, NULLIF($2, ''), $3, NULLIF($4, ''), $5, $6, $7, $8, $9, COALESCE(NULLIF($10, '')::numeric, 0), $11, $12, $13, NULLIF($14, ''), NULLIF($15, ''), NOW())
+              ($1, NULLIF($2, ''), $3, NULLIF($4, ''), $5, $6, $7, $8, $9, $10, $11, $12, NULLIF($13, ''), NULLIF($14, ''), NOW())
              RETURNING id`,
             [
               productCode,
@@ -904,7 +915,6 @@ function createProductBulkRouter(deps) {
               supplierId,
               String(normalized.cost_price ?? 0),
               String(normalized.selling_price ?? 0),
-              normalized.wholesale_price != null ? String(normalized.wholesale_price) : "0",
               String(normalized.vat_rate ?? 16),
               Number(normalized.current_stock ?? 0),
               Number(normalized.min_stock ?? 0),
@@ -990,7 +1000,6 @@ function createProductBulkRouter(deps) {
     const { rows } = await pool.query(
       `SELECT p.id, p.product_code, p.barcode, p.product_name, p.description, p.unit,
               p.cost_price::numeric::text AS cost_price, p.selling_price::numeric::text AS selling_price,
-              p.wholesale_price::numeric::text AS wholesale_price,
               p.vat_rate::numeric::text AS vat_rate, p.image_url,
               c.name AS category_name, b.name AS brand_name, s.name AS supplier_name,
               COALESCE(ps.current_stock, p.current_stock) AS current_stock, COALESCE(ps.min_stock, p.min_stock) AS min_stock
@@ -1010,7 +1019,6 @@ function createProductBulkRouter(deps) {
     const { rows } = await pool.query(
       `SELECT p.id, p.product_code, p.barcode, p.product_name, p.description, p.unit,
               p.cost_price::numeric::text AS cost_price, p.selling_price::numeric::text AS selling_price,
-              p.wholesale_price::numeric::text AS wholesale_price,
               p.vat_rate::numeric::text AS vat_rate, p.image_url,
               c.name AS category_name, b.name AS brand_name, s.name AS supplier_name,
               COALESCE(SUM(ps.current_stock) FILTER (WHERE $1::int IS NULL OR ps.branch_id = $1), p.current_stock) AS current_stock,
@@ -1381,7 +1389,7 @@ function createProductBulkRouter(deps) {
   router.get("/products/imports/templates/csv", async (_req, res) => {
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="product-import-template.csv"');
-    res.send(`\uFEFF${TEMPLATE_HEADERS.join(",")}\nSKU-001,,Solar Panel 100W,Panels,Generic,pcs,5000,6500,5800,16,5,20,Solar Supplier,MAIN,Sample description,https://example.com/product.jpg\n`);
+    res.send(`\uFEFF${TEMPLATE_HEADERS.join(",")}\nSKU-001,,Solar Panel 100W,Panels,Generic,pcs,5000,6500,16,5,20,Solar Supplier,MAIN,Sample description,https://example.com/product.jpg\n`);
   });
 
   router.get("/products/imports/templates/xlsx", async (_req, res) => {
@@ -1396,7 +1404,6 @@ function createProductBulkRouter(deps) {
         { value: "pcs", type: String },
         { value: 5000, type: Number },
         { value: 6500, type: Number },
-        { value: 5800, type: Number },
         { value: 16, type: Number },
         { value: 5, type: Number },
         { value: 20, type: Number },
@@ -1406,7 +1413,8 @@ function createProductBulkRouter(deps) {
         { value: "https://example.com/product.jpg", type: String }
       ]
     ];
-    const buffer = await writeXlsxFile(sheet, { buffer: true });
+    const workbook = await writeXlsxFile(sheet, { buffer: true });
+    const buffer = await workbook.toBuffer();
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", 'attachment; filename="product-import-template.xlsx"');
     res.send(buffer);
@@ -1543,7 +1551,6 @@ function createProductBulkRouter(deps) {
       { value: product.unit || "", type: String },
       { value: Number(product.cost_price || 0), type: Number },
       { value: Number(product.selling_price || 0), type: Number },
-      { value: product.wholesale_price != null ? Number(product.wholesale_price) : 0, type: Number },
       { value: Number(product.vat_rate || 0), type: Number },
       { value: Number(product.min_stock || 0), type: Number },
       { value: Number(product.current_stock || 0), type: Number },
@@ -1552,7 +1559,8 @@ function createProductBulkRouter(deps) {
       { value: product.description || "", type: String },
       { value: product.image_url || "", type: String }
     ]));
-    const buffer = await writeXlsxFile(sheet, { buffer: true });
+    const workbook = await writeXlsxFile(sheet, { buffer: true });
+    const buffer = await workbook.toBuffer();
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", 'attachment; filename="products-export.xlsx"');
     res.send(buffer);

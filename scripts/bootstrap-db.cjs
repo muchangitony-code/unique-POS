@@ -159,7 +159,7 @@ async function bootstrapDatabaseIfNeeded(options = {}) {
   }
 
   // Always run migrations so that new migration files are applied even when all
-  // required tables already exist (e.g. adding wholesale_price to products).
+  // required tables already exist.
   let client;
   try {
     // Migrations commit independently; the seeding below must stay idempotent so a
