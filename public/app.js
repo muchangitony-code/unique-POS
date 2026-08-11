@@ -416,11 +416,14 @@
       case "toggle-basket":
         document.body.classList.toggle("pos-basket-open");
         return;
+      case "preview-quotation-before-sale":
+        previewSaleDraft("quotation", button.dataset.paper || "a4");
+        return;
       case "preview-receipt-before-sale":
-        previewSaleDraft("receipt");
+        previewSaleDraft("receipt", button.dataset.paper || "80mm");
         return;
       case "preview-invoice-before-sale":
-        previewSaleDraft("invoice");
+        previewSaleDraft("invoice", button.dataset.paper || "a4");
         return;
       case "print-receipt-now":
         completeSaleAndThen("print-receipt");
@@ -1009,13 +1012,12 @@
       '</div>',
       '<div class="pos-checkout-grid">' +
         '<button class="btn btn-primary" data-action="complete-sale"><i class="fa-solid fa-check-circle"></i>Save Sale <kbd style="opacity:0.7;font-size:0.75rem;padding:2px 5px;border-radius:5px;border:1px solid rgba(255,255,255,0.4);background:rgba(255,255,255,0.15)">F9</kbd></button>' +
-        '<button class="btn btn-secondary" data-action="print-receipt-now"><i class="fa-solid fa-receipt"></i>Print Receipt</button>' +
-        '<button class="btn btn-secondary" data-action="print-invoice-now"><i class="fa-solid fa-print"></i>Print Invoice</button>' +
-        '<button class="btn btn-outline" data-action="preview-receipt-before-sale"><i class="fa-solid fa-eye"></i>Preview Receipt</button>' +
+        '<button class="btn btn-outline" data-action="preview-quotation-before-sale"><i class="fa-solid fa-file-signature"></i>Preview Quote</button>' +
         '<button class="btn btn-outline" data-action="preview-invoice-before-sale"><i class="fa-solid fa-file-lines"></i>Preview Invoice</button>' +
-        '<button class="btn btn-outline" data-action="email-receipt-now"><i class="fa-solid fa-envelope"></i>Email Receipt</button>' +
-        '<button class="btn btn-outline" data-action="email-invoice-now"><i class="fa-solid fa-envelope"></i>Email Invoice</button>' +
+        '<button class="btn btn-outline" data-action="preview-receipt-before-sale" data-paper="80mm"><i class="fa-solid fa-eye"></i>Preview Receipt</button>' +
+        '<button class="btn btn-secondary" data-action="print-receipt-now"><i class="fa-solid fa-print"></i>Print</button>' +
         '<button class="btn btn-outline" data-action="download-receipt-now"><i class="fa-solid fa-file-pdf"></i>Download PDF</button>' +
+        '<button class="btn btn-outline" data-action="email-receipt-now"><i class="fa-solid fa-envelope"></i>Email PDF</button>' +
         '<button class="btn btn-outline" data-action="share-receipt-now"><i class="fa-solid fa-share-nodes"></i>Share PDF</button>' +
       '</div>',
       '<div class="pos-action-grid" style="margin-top:10px;grid-template-columns:repeat(3,minmax(0,1fr))">' +
@@ -2315,158 +2317,279 @@
     }
   }
 
-  function previewSaleDraft(type) {
+  function previewSaleDraft(type, paper) {
     if (!state.pos.basket.length) {
       showToast("Add products to preview a " + type + ".", "error");
       return;
     }
-    const totals = calculatePosTotals();
-    const customer = state.pos.customers.find(function (c) { return String(c.id) === String(state.pos.customer_id); });
-    const meta = {
-      receiptNumber: "PREVIEW-" + Date.now().toString().slice(-6),
-      invoiceNumber: "INV-PREVIEW-" + Date.now().toString().slice(-6),
-      date: new Date(),
-      cashier: firstText(state.user && state.user.name, "Cashier"),
-      customer: customer ? firstText(customer.name, customer.company, "Walk-in Customer") : "Walk-in Customer",
-      customerEmail: customer ? firstText(customer.email, "") : "",
-      paymentMethod: state.pos.payment_method,
-      amountPaid: state.pos.amount_paid,
-      notes: state.pos.notes
-    };
-    const html = type === "receipt"
-      ? renderReceiptPreviewHtml(state.pos.basket, totals, meta)
-      : renderInvoicePreviewHtml(state.pos.basket, totals, meta);
+    const normalizedType = documentType(type);
+    const previewPaper = paper || defaultDocumentPaper(normalizedType);
+    const preview = buildDraftDocumentPreview(normalizedType, previewPaper);
     openModal({
-      title: type === "receipt" ? "Receipt Preview (Draft)" : "Invoice Preview (Draft)",
-      subtitle: "This is a draft preview. No sale has been recorded yet.",
+      title: preview.title,
+      subtitle: "Draft preview using the final print layout.",
       wide: true,
-      body: html
+      actions: renderDraftPreviewActions(normalizedType, previewPaper),
+      body: renderDocumentPreviewFrame()
     });
+    setDocumentPreviewFrame(preview.html);
   }
 
-  function renderReceiptPreviewHtml(basket, totals, meta) {
+  function buildDraftDocumentPreview(type, paper) {
+    const totals = calculatePosTotals();
+    const customer = state.pos.customers.find(function (item) { return String(item.id) === String(state.pos.customer_id); }) || null;
     const branding = state.branding || {};
-    const businessName = escapeHtml(firstText(branding.business_name, DEFAULT_BRANDING.business_name));
-    const address = escapeHtml(firstText(branding.business_address, DEFAULT_BRANDING.business_address));
-    const phone = escapeHtml(firstText(branding.business_phone, DEFAULT_BRANDING.business_phone));
-    const pin = escapeHtml(firstText(branding.pin_number, branding.pin, ""));
-    const vatNumber = escapeHtml(firstText(branding.vat_number, branding.vat, ""));
-    const branch = escapeHtml(firstText(branding.branch_name, branding.branch, "Main Branch"));
-    const logoUrl = sanitizeUrl(branding.logo_url) || "/assets/unique-solar-kenya-logo.svg";
-    const dateStr = meta.date ? meta.date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
-    const timeStr = meta.date ? meta.date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "";
-    const qrData = encodeURIComponent(meta.receiptNumber + "|" + businessName.replace(/&amp;/g, "&") + "|" + totals.total);
-    const qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=" + qrData;
-    return [
-      '<div class="pos-receipt-preview">',
-      '<img class="pos-receipt-preview__logo" src="' + escapeAttr(logoUrl) + '" alt="logo" />',
-      '<div class="pos-receipt-preview__header">',
-      '<p class="pos-receipt-preview__title">' + businessName + '</p>',
-      '<p class="pos-receipt-preview__sub">' + address + '</p>',
-      '<p class="pos-receipt-preview__sub">' + phone + '</p>',
-      pin ? '<p class="pos-receipt-preview__sub">PIN: ' + pin + '</p>' : '',
-      vatNumber ? '<p class="pos-receipt-preview__sub">VAT: ' + vatNumber + '</p>' : '',
-      '</div>',
-      '<div class="pos-receipt-preview__meta">',
-      '<div class="pos-receipt-preview__meta-row"><span>Receipt #</span><span>' + escapeHtml(meta.receiptNumber) + '</span></div>',
-      '<div class="pos-receipt-preview__meta-row"><span>Branch</span><span>' + branch + '</span></div>',
-      '<div class="pos-receipt-preview__meta-row"><span>Date</span><span>' + escapeHtml(dateStr + " " + timeStr) + '</span></div>',
-      '<div class="pos-receipt-preview__meta-row"><span>Cashier</span><span>' + escapeHtml(meta.cashier) + '</span></div>',
-      '<div class="pos-receipt-preview__meta-row"><span>Customer</span><span>' + escapeHtml(meta.customer) + '</span></div>',
-      '</div>',
-      '<table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead><tbody>',
-      basket.map(function (line) {
-        return '<tr><td>' + escapeHtml(line.product_name) + (line.product_code ? '<br><small style="color:#999">' + escapeHtml(line.product_code) + '</small>' : '') + '</td><td>' + escapeHtml(String(line.quantity)) + '</td><td>' + money(line.unit_price) + '</td><td>' + money(lineTotal(line)) + '</td></tr>';
-      }).join(""),
-      '</tbody></table>',
-      '<div class="pos-receipt-preview__totals">',
-      '<div class="pos-receipt-preview__total-row"><span>Subtotal</span><span>' + money(totals.subtotal) + '</span></div>',
-      totals.discount > 0 ? '<div class="pos-receipt-preview__total-row"><span>Discount</span><span>-' + money(totals.discount) + '</span></div>' : '',
-      '<div class="pos-receipt-preview__total-row"><span>VAT (16%)</span><span>' + money(totals.vat) + '</span></div>',
-      totals.shipping > 0 ? '<div class="pos-receipt-preview__total-row"><span>Shipping</span><span>' + money(totals.shipping) + '</span></div>' : '',
-      '<div class="pos-receipt-preview__total-row grand"><span>Grand Total</span><span>' + money(totals.total) + '</span></div>',
-      '<div class="pos-receipt-preview__total-row"><span>Payment</span><span>' + escapeHtml(titleize(meta.paymentMethod)) + '</span></div>',
-      meta.paymentMethod !== "credit" && meta.amountPaid > 0 ? '<div class="pos-receipt-preview__total-row"><span>Cash Received</span><span>' + money(meta.amountPaid) + '</span></div>' : '',
-      meta.paymentMethod !== "credit" && meta.amountPaid > 0 ? '<div class="pos-receipt-preview__total-row"><span>Balance / Change</span><span>' + money(meta.amountPaid - totals.total) + '</span></div>' : '',
-      '</div>',
-      '<div class="pos-receipt-preview__footer">',
-      '<p>Thank you for your business!</p>',
-      '<p>' + businessName + '</p>',
-      '<img class="pos-receipt-preview__qr" src="' + escapeAttr(qrUrl) + '" alt="QR" />',
-      '</div>',
-      '</div>'
-    ].join("");
+    const settings = (state.cache.settings || {}).settings || {};
+    const now = new Date();
+    const currency = firstText(settings.currency, branding.currency, 'KES');
+    const companyName = firstText(branding.business_name, settings.business_name, DEFAULT_BRANDING.business_name);
+    const companyAddress = firstText(branding.business_address, settings.business_address, DEFAULT_BRANDING.business_address);
+    const companyPhone = [firstText(branding.business_phone, settings.business_phone, DEFAULT_BRANDING.business_phone), firstText(settings.business_phone2, branding.business_phone2, '')].filter(Boolean).join(' / ');
+    const companyEmail = firstText(branding.business_email, settings.business_email, DEFAULT_BRANDING.business_email);
+    const companyWebsite = firstText(branding.website, settings.website, '');
+    const taxNumber = firstText(settings.tax_number, branding.tax_number, branding.pin_number, '');
+    const vatNumber = firstText(branding.vat_number, settings.vat_number, '');
+    const logoUrl = sanitizeUrl(firstText(branding.logo_url, branding.logoUrl, '')) || '/assets/unique-solar-kenya-logo.svg';
+    const numberSeed = String(Date.now()).slice(-6);
+    const documentNumber = type === 'quotation'
+      ? 'QT-PREVIEW-' + numberSeed
+      : type === 'invoice'
+        ? 'INV-PREVIEW-' + numberSeed
+        : 'RCPT-PREVIEW-' + numberSeed;
+    const documentTitle = type === 'quotation' ? 'Quotation' : type === 'invoice' ? 'Tax Invoice' : 'Receipt';
+    const paymentTerms = firstText(branding.invoice_payment_terms, 'Due on receipt');
+    const notesSections = [
+      ['Warranty', firstText(branding.warranty_text, '')],
+      ['Delivery Terms', firstText(state.pos.notes, '')],
+      ['Payment Instructions', firstText(branding.payment_instructions, '')],
+      ['Additional Notes', firstText(branding.document_footer, settings.receipt_footer, '')]
+    ].filter(function (section) { return section[1]; });
+    const rows = state.pos.basket.map(function (line) {
+      return {
+        itemCode: firstText(line.product_code, '—'),
+        description: firstText(line.product_name, 'Item'),
+        quantity: firstNumber(line.quantity, 0),
+        unit: firstText(line.unit, 'pcs'),
+        unitPrice: firstNumber(line.unit_price, 0),
+        discount: firstNumber(line.discount, 0),
+        vatRate: firstNumber(line.vat_rate, 16),
+        total: lineTotal(line)
+      };
+    });
+    const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=' + encodeURIComponent([documentTitle, documentNumber, companyName, totals.total].join('|'));
+    const documentData = {
+      type: type,
+      paper: paper,
+      documentTitle: documentTitle,
+      documentNumber: documentNumber,
+      date: now,
+      dueDate: type === 'invoice' ? addDays(now, 14) : type === 'quotation' ? addDays(now, 14) : null,
+      salesperson: firstText(state.user && state.user.name, state.user && state.user.email, 'Sales Team'),
+      reference: 'Draft preview',
+      paymentTerms: paymentTerms,
+      currency: currency,
+      company: {
+        name: companyName,
+        address: companyAddress,
+        phone: companyPhone,
+        email: companyEmail,
+        website: companyWebsite,
+        taxNumber: taxNumber,
+        vatNumber: vatNumber,
+        logoUrl: logoUrl,
+        slogan: firstText(branding.tagline, ''),
+        supportEmail: companyEmail
+      },
+      customer: {
+        name: firstText(customer && customer.name, customer && customer.company, 'Walk-in Customer'),
+        company: firstText(customer && customer.company, ''),
+        address: firstText(customer && customer.address, ''),
+        phone: firstText(customer && customer.phone, ''),
+        email: firstText(customer && customer.email, ''),
+        taxNumber: firstText(customer && customer.tax_number, ''),
+        cashier: firstText(state.user && state.user.name, 'Cashier')
+      },
+      rows: rows,
+      totals: {
+        subtotal: totals.subtotal,
+        discount: totals.discount,
+        tax: totals.vat,
+        shipping: totals.shipping,
+        total: totals.total,
+        paid: firstNumber(state.pos.amount_paid, 0),
+        balance: firstNumber(state.pos.amount_paid, 0) - totals.total
+      },
+      paymentMethod: firstText(state.pos.payment_method, 'cash'),
+      notesSections: notesSections,
+      qrUrl: qrUrl
+    };
+    return {
+      title: documentTitle + ' Preview',
+      html: buildDocumentPreviewHtml(documentData)
+    };
   }
 
-  function renderInvoicePreviewHtml(basket, totals, meta) {
-    const branding = state.branding || {};
-    const businessName = escapeHtml(firstText(branding.business_name, DEFAULT_BRANDING.business_name));
-    const address = escapeHtml(firstText(branding.business_address, DEFAULT_BRANDING.business_address));
-    const phone = escapeHtml(firstText(branding.business_phone, DEFAULT_BRANDING.business_phone));
-    const bizEmail = escapeHtml(firstText(branding.business_email, DEFAULT_BRANDING.business_email));
-    const pin = escapeHtml(firstText(branding.pin_number, branding.pin, ""));
-    const vatNumber = escapeHtml(firstText(branding.vat_number, branding.vat, ""));
-    const logoUrl = sanitizeUrl(branding.logo_url) || "/assets/unique-solar-kenya-logo.svg";
-    const dateStr = meta.date ? meta.date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
-    const dueDate = meta.date ? new Date(meta.date.getTime() + 14 * 86400000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
-    const qrData = encodeURIComponent(meta.invoiceNumber + "|" + businessName.replace(/&amp;/g, "&") + "|" + totals.total);
-    const qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=" + qrData;
-    return [
-      '<div class="pos-invoice-preview">',
-      '<div class="pos-invoice-preview__header">',
-      '<div class="pos-invoice-preview__company">',
-      '<img class="pos-invoice-preview__logo" src="' + escapeAttr(logoUrl) + '" alt="logo" />',
-      '<h2>' + businessName + '</h2>',
-      '<p>' + address + '</p>',
-      '<p>' + phone + ' · ' + bizEmail + '</p>',
-      pin ? '<p>PIN: ' + pin + '</p>' : '',
-      vatNumber ? '<p>VAT Reg: ' + vatNumber + '</p>' : '',
-      '</div>',
-      '<div class="pos-invoice-preview__number">',
-      '<h3>Invoice</h3>',
-      '<p><strong>' + escapeHtml(meta.invoiceNumber) + '</strong></p>',
-      '<p>Date: ' + escapeHtml(dateStr) + '</p>',
-      '<p>Due: ' + escapeHtml(dueDate) + '</p>',
-      '</div>',
-      '</div>',
-      '<div class="pos-invoice-preview__parties">',
-      '<div class="pos-invoice-preview__party"><h4>From</h4><p>' + businessName + '</p><p>' + address + '</p></div>',
-      '<div class="pos-invoice-preview__party"><h4>Bill To</h4><p>' + escapeHtml(meta.customer) + '</p>' + (meta.customerEmail ? '<p>' + escapeHtml(meta.customerEmail) + '</p>' : '') + '</div>',
-      '</div>',
-      '<table><thead><tr><th>#</th><th>Description</th><th>SKU</th><th>Qty</th><th>Unit Price</th><th>Discount</th><th>Total</th></tr></thead><tbody>',
-      basket.map(function (line, index) {
-        return '<tr>' +
-          '<td>' + (index + 1) + '</td>' +
-          '<td>' + escapeHtml(line.product_name) + '</td>' +
-          '<td>' + escapeHtml(firstText(line.product_code, "—")) + '</td>' +
-          '<td>' + escapeHtml(String(line.quantity)) + '</td>' +
-          '<td>' + money(line.unit_price) + '</td>' +
-          '<td>' + money(firstNumber(line.discount, 0)) + '</td>' +
-          '<td>' + money(lineTotal(line)) + '</td>' +
-          '</tr>';
-      }).join(""),
-      '</tbody></table>',
-      '<div class="pos-invoice-preview__totals">',
-      '<div class="pos-invoice-preview__total-row"><span>Subtotal</span><span>' + money(totals.subtotal) + '</span></div>',
-      totals.discount > 0 ? '<div class="pos-invoice-preview__total-row"><span>Discount</span><span>-' + money(totals.discount) + '</span></div>' : '',
-      '<div class="pos-invoice-preview__total-row"><span>VAT (16%)</span><span>' + money(totals.vat) + '</span></div>',
-      totals.shipping > 0 ? '<div class="pos-invoice-preview__total-row"><span>Shipping</span><span>' + money(totals.shipping) + '</span></div>' : '',
-      '<div class="pos-invoice-preview__total-row grand"><span>Grand Total</span><span>' + money(totals.total) + '</span></div>',
-      '</div>',
-      '<div class="pos-invoice-preview__footer">',
-      '<div>',
-      '<p><strong>Payment Terms</strong></p>',
-      '<p>Payment due within 14 days of invoice date.</p>',
-      '<p>Method: ' + escapeHtml(titleize(meta.paymentMethod)) + '</p>',
-      meta.notes ? '<p>Notes: ' + escapeHtml(meta.notes) + '</p>' : '',
-      '</div>',
-      '<div>',
-      '<img class="pos-invoice-preview__qr" src="' + escapeAttr(qrUrl) + '" alt="QR" />',
-      '<div class="pos-invoice-preview__sig-line">Authorised Signature</div>',
-      '</div>',
-      '</div>',
-      '</div>'
-    ].join("");
+  function renderDraftPreviewActions(type, paper) {
+    const actions = [];
+    if (type === 'receipt') {
+      actions.push('<button class="btn btn-outline" data-action="preview-receipt-before-sale" data-paper="80mm"><i class="fa-solid fa-receipt"></i>Preview 80mm</button>');
+      actions.push('<button class="btn btn-outline" data-action="preview-receipt-before-sale" data-paper="58mm"><i class="fa-solid fa-receipt"></i>Preview 58mm</button>');
+    }
+    actions.push('<button class="btn btn-danger" data-action="close-modal"><i class="fa-solid fa-xmark"></i>Close</button>');
+    return actions.join('');
+  }
+
+  function renderDocumentPreviewFrame() {
+    return '<iframe id="documentPreviewFrame" class="modal-frame modal-frame--document" title="Document Preview"></iframe>';
+  }
+
+  function setDocumentPreviewFrame(html) {
+    const frame = document.getElementById('documentPreviewFrame');
+    if (frame) frame.srcdoc = html;
+  }
+
+  function buildDocumentPreviewHtml(doc) {
+    const company = doc.company || {};
+    const customer = doc.customer || {};
+    const totals = doc.totals || {};
+    const rows = Array.isArray(doc.rows) ? doc.rows : [];
+    const notesSections = Array.isArray(doc.notesSections) ? doc.notesSections : [];
+    const title = escapeHtml(doc.documentTitle || 'Document');
+    const accent = '#f7931e';
+    const primary = '#083d6d';
+    const soft = '#eef5fb';
+    const logo = escapeAttr(firstText(company.logoUrl, '/assets/unique-solar-kenya-logo.svg'));
+    const notesMarkup = notesSections.length ? notesSections.map(function (section) {
+      return '<div class="notes-card"><h4>' + escapeHtml(section[0]) + '</h4><p>' + escapeHtml(section[1]).replace(/\n/g, '<br/>') + '</p></div>';
+    }).join('') : '<div class="notes-card notes-card--full"><h4>Additional Notes</h4><p>No additional notes supplied.</p></div>';
+    const footerMeta = [company.website, company.supportEmail, company.slogan].filter(Boolean).map(escapeHtml).join(' · ');
+    const a4Rows = rows.map(function (row) {
+      return '<tr>' +
+        '<td>' + escapeHtml(firstText(row.itemCode, '—')) + '</td>' +
+        '<td><strong>' + escapeHtml(firstText(row.description, 'Item')) + '</strong></td>' +
+        '<td class="num">' + escapeHtml(numberText(firstNumber(row.quantity, 0))) + '</td>' +
+        '<td>' + escapeHtml(firstText(row.unit, 'pcs')) + '</td>' +
+        '<td class="num">' + money(firstNumber(row.unitPrice, 0), doc.currency) + '</td>' +
+        '<td class="num">' + money(firstNumber(row.discount, 0), doc.currency) + '</td>' +
+        '<td class="num">' + escapeHtml(numberText(firstNumber(row.vatRate, 0))) + '%</td>' +
+        '<td class="num"><strong>' + money(firstNumber(row.total, 0), doc.currency) + '</strong></td>' +
+      '</tr>';
+    }).join('') || '<tr><td colspan="8" class="empty">No line items</td></tr>';
+    const receiptRows = rows.map(function (row) {
+      return '<tr><td><strong>' + escapeHtml(firstText(row.description, 'Item')) + '</strong><div class="thermal-sub">' + escapeHtml(firstText(row.itemCode, '—')) + '</div></td><td class="num">' + escapeHtml(numberText(firstNumber(row.quantity, 0))) + '</td><td class="num">' + money(firstNumber(row.unitPrice, 0), doc.currency) + '</td><td class="num">' + money(firstNumber(row.total, 0), doc.currency) + '</td></tr>';
+    }).join('') || '<tr><td colspan="4" class="empty">No line items</td></tr>';
+    const commonStyle = '<style>' +
+      ':root{color-scheme:light only;font-family:Inter,Arial,sans-serif;}' +
+      '*{box-sizing:border-box;}' +
+      'body{margin:0;background:#eef2f7;color:#0f172a;font-family:Inter,Arial,sans-serif;}' +
+      '.page{padding:24px;}' +
+      '.sheet{margin:0 auto;background:#fff;box-shadow:0 24px 80px rgba(15,23,42,.16);overflow:hidden;}' +
+      '.sheet--a4{width:210mm;min-height:297mm;border-radius:20px;}' +
+      '.sheet--thermal{width:' + escapeHtml(doc.paper === '58mm' ? '58mm' : '80mm') + ';border-radius:18px;}' +
+      '.top-accent{height:10px;background:linear-gradient(90deg,' + primary + ',#0f4f8d,' + accent + ');}' +
+      '.doc-body{padding:28px;}' +
+      '.doc-header{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;}' +
+      '.brand{display:flex;gap:18px;align-items:flex-start;}' +
+      '.brand img{width:82px;height:82px;object-fit:contain;border-radius:20px;background:#fff;border:1px solid #dbe5f0;padding:10px;}' +
+      '.brand h1{margin:0;font-size:28px;color:' + primary + ';}' +
+      '.brand-meta,.panel p,.notes-card p,.signature-label,.footer-copy,.thermal-sub{margin:0;color:#475569;font-size:12px;line-height:1.6;}' +
+      '.doc-title-card{min-width:250px;text-align:right;background:' + soft + ';border:1px solid #d7e4f1;border-radius:22px;padding:20px 22px;position:relative;overflow:hidden;}' +
+      '.doc-title-card:after{content:"";position:absolute;inset:auto -40px -40px auto;width:110px;height:110px;border-radius:50%;background:rgba(247,147,30,.12);}' +
+      '.doc-title-card h2{margin:0 0 10px;font-size:32px;color:' + primary + ';letter-spacing:.08em;text-transform:uppercase;}' +
+      '.meta-grid{display:grid;grid-template-columns:1.35fr .95fr;gap:20px;margin-top:22px;}' +
+      '.panel{border:1px solid #d7e4f1;border-radius:20px;padding:18px;background:#fff;}' +
+      '.panel h3{margin:0 0 12px;font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:' + primary + ';}' +
+      '.panel strong{display:block;font-size:15px;color:#0f172a;margin-bottom:4px;}' +
+      '.info-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 18px;}' +
+      '.info-grid div span,.total-row span{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#64748b;margin-bottom:4px;}' +
+      '.info-grid div strong{font-size:13px;margin:0;word-break:break-word;}' +
+      '.items{margin-top:22px;border:1px solid #d7e4f1;border-radius:20px;overflow:hidden;}' +
+      'table{width:100%;border-collapse:collapse;}' +
+      'thead th{background:' + primary + ';color:#fff;font-size:12px;letter-spacing:.08em;text-transform:uppercase;padding:14px 12px;text-align:left;}' +
+      'tbody td{padding:14px 12px;border-bottom:1px solid #e5edf5;font-size:13px;vertical-align:top;}' +
+      'tbody tr:nth-child(even){background:#f8fbff;}' +
+      'tbody tr:last-child td{border-bottom:none;}' +
+      '.num{text-align:right;white-space:nowrap;}' +
+      '.summary-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:22px;margin-top:22px;align-items:start;}' +
+      '.notes-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;}' +
+      '.notes-card{border:1px solid #d7e4f1;border-radius:18px;padding:16px;background:#f8fbff;min-height:112px;}' +
+      '.notes-card h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:' + primary + ';}' +
+      '.notes-card--full{grid-column:1 / -1;}' +
+      '.totals-card{border-radius:24px;background:' + primary + ';color:#fff;padding:22px;box-shadow:0 18px 40px rgba(8,61,109,.18);}' +
+      '.total-row{display:flex;justify-content:space-between;gap:16px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.14);}' +
+      '.total-row span{color:rgba(255,255,255,.72);margin:0;}' +
+      '.total-row strong{font-size:14px;}' +
+      '.grand-total{margin-top:14px;padding:18px;border-radius:18px;background:#fff;color:' + primary + ';display:flex;justify-content:space-between;gap:16px;align-items:end;}' +
+      '.grand-total span{display:block;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#64748b;}' +
+      '.grand-total strong{font-size:28px;line-height:1.1;}' +
+      '.signatures{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:22px;}' +
+      '.signature-card{padding:24px 16px 10px;border:1px solid #d7e4f1;border-radius:18px;background:#fff;}' +
+      '.signature-line{height:1px;background:#94a3b8;margin-bottom:10px;}' +
+      '.footer{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center;margin-top:22px;padding:18px 20px;border-radius:20px;background:#f8fbff;border:1px solid #d7e4f1;}' +
+      '.footer img.qr{width:88px;height:88px;object-fit:contain;border-radius:14px;border:1px solid #d7e4f1;background:#fff;padding:6px;}' +
+      '.footer h4{margin:0 0 6px;font-size:16px;color:' + primary + ';}' +
+      '.thermal-wrap{padding:16px 12px 18px;}' +
+      '.thermal-wrap .brand{display:block;text-align:center;}' +
+      '.thermal-wrap .brand img{margin:0 auto 10px;width:' + escapeHtml(doc.paper === '58mm' ? '46px' : '58px') + ';height:' + escapeHtml(doc.paper === '58mm' ? '46px' : '58px') + ';border-radius:14px;}' +
+      '.thermal-wrap h1{font-size:' + escapeHtml(doc.paper === '58mm' ? '15px' : '18px') + ';margin-bottom:4px;}' +
+      '.thermal-head,.thermal-footer{border-bottom:1px dashed #cbd5e1;padding-bottom:10px;margin-bottom:10px;text-align:center;}' +
+      '.thermal-meta{display:grid;gap:6px;font-size:' + escapeHtml(doc.paper === '58mm' ? '10px' : '11px') + ';margin-bottom:10px;}' +
+      '.thermal-meta-row,.thermal-total-row{display:flex;justify-content:space-between;gap:8px;}' +
+      '.thermal-items thead th{padding:8px 6px;font-size:10px;}' +
+      '.thermal-items tbody td{padding:8px 6px;font-size:' + escapeHtml(doc.paper === '58mm' ? '10px' : '11px') + ';}' +
+      '.thermal-total-row{font-size:' + escapeHtml(doc.paper === '58mm' ? '10px' : '11px') + ';padding:4px 0;}' +
+      '.thermal-grand{margin-top:8px;padding-top:8px;border-top:1px solid #0f172a;font-weight:800;font-size:' + escapeHtml(doc.paper === '58mm' ? '13px' : '15px') + ';}' +
+      '.thermal-qr{width:' + escapeHtml(doc.paper === '58mm' ? '72px' : '88px') + ';height:' + escapeHtml(doc.paper === '58mm' ? '72px' : '88px') + ';margin:10px auto 0;display:block;border:1px solid #d7e4f1;border-radius:12px;padding:6px;background:#fff;}' +
+      '.empty{text-align:center;color:#64748b;}' +
+      '@media print{body{background:#fff;} .page{padding:0;} .sheet{box-shadow:none;border-radius:0;} @page{margin:0;size:' + escapeHtml(doc.paper === '58mm' ? '58mm auto' : doc.paper === '80mm' ? '80mm auto' : 'A4') + ';}}' +
+      '@media (max-width: 900px){.sheet--a4{width:100%;border-radius:0;min-height:auto;}.doc-header,.meta-grid,.summary-grid,.signatures,.footer{grid-template-columns:1fr;display:grid;}.doc-title-card{text-align:left;}.notes-grid{grid-template-columns:1fr;}}' +
+    '</style>';
+    const body = doc.type === 'receipt'
+      ? '<div class="page"><div class="sheet sheet--thermal"><div class="top-accent"></div><div class="thermal-wrap">' +
+          '<div class="thermal-head"><div class="brand"><img src="' + logo + '" alt="Logo" /><h1>' + escapeHtml(firstText(company.name, 'Company')) + '</h1><p class="brand-meta">' + escapeHtml(firstText(company.address, '')) + '<br/>' + escapeHtml(firstText(company.phone, '')) + '<br/>' + escapeHtml(firstText(company.email, '')) + '</p></div></div>' +
+          '<div class="thermal-meta">' +
+            '<div class="thermal-meta-row"><span>Receipt No.</span><strong>' + escapeHtml(firstText(doc.documentNumber, '—')) + '</strong></div>' +
+            '<div class="thermal-meta-row"><span>Date</span><strong>' + escapeHtml(formatPreviewDateTime(doc.date)) + '</strong></div>' +
+            '<div class="thermal-meta-row"><span>Cashier</span><strong>' + escapeHtml(firstText(customer.cashier, 'Cashier')) + '</strong></div>' +
+            '<div class="thermal-meta-row"><span>Customer</span><strong>' + escapeHtml(firstText(customer.name, 'Walk-in Customer')) + '</strong></div>' +
+          '</div>' +
+          '<table class="thermal-items"><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Total</th></tr></thead><tbody>' + receiptRows + '</tbody></table>' +
+          '<div style="margin-top:10px">' +
+            '<div class="thermal-total-row"><span>Subtotal</span><strong>' + money(firstNumber(totals.subtotal, 0), doc.currency) + '</strong></div>' +
+            (firstNumber(totals.discount, 0) > 0 ? '<div class="thermal-total-row"><span>Discount</span><strong>-' + money(firstNumber(totals.discount, 0), doc.currency) + '</strong></div>' : '') +
+            '<div class="thermal-total-row"><span>VAT</span><strong>' + money(firstNumber(totals.tax, 0), doc.currency) + '</strong></div>' +
+            '<div class="thermal-total-row"><span>Payment</span><strong>' + escapeHtml(titleize(firstText(doc.paymentMethod, 'cash'))) + '</strong></div>' +
+            '<div class="thermal-total-row"><span>Cash</span><strong>' + money(firstNumber(totals.paid, 0), doc.currency) + '</strong></div>' +
+            '<div class="thermal-total-row"><span>Change</span><strong>' + money(firstNumber(totals.balance, 0), doc.currency) + '</strong></div>' +
+            '<div class="thermal-total-row thermal-grand"><span>Total</span><strong>' + money(firstNumber(totals.total, 0), doc.currency) + '</strong></div>' +
+          '</div>' +
+          '<div class="thermal-footer"><img class="thermal-qr" src="' + escapeAttr(firstText(doc.qrUrl, '')) + '" alt="QR code" /><p class="brand-meta">Thank you for your business</p><p class="brand-meta">' + escapeHtml(footerMeta || firstText(company.website, company.email, '')) + '</p></div>' +
+        '</div></div></div>'
+      : '<div class="page"><div class="sheet sheet--a4"><div class="top-accent"></div><div class="doc-body">' +
+          '<div class="doc-header"><div class="brand"><img src="' + logo + '" alt="Logo" /><div><h1>' + escapeHtml(firstText(company.name, 'Company')) + '</h1><p class="brand-meta">' + escapeHtml(firstText(company.address, '')) + '<br/>Telephone: ' + escapeHtml(firstText(company.phone, '—')) + '<br/>Email: ' + escapeHtml(firstText(company.email, '—')) + '<br/>Website: ' + escapeHtml(firstText(company.website, '—')) + '<br/>KRA PIN: ' + escapeHtml(firstText(company.taxNumber, '—')) + '<br/>VAT No.: ' + escapeHtml(firstText(company.vatNumber, '—')) + '</p></div></div>' +
+          '<div class="doc-title-card"><h2>' + title + '</h2><div class="info-grid"><div><span>Document No.</span><strong>' + escapeHtml(firstText(doc.documentNumber, '—')) + '</strong></div><div><span>Date</span><strong>' + escapeHtml(formatPreviewDate(doc.date)) + '</strong></div><div><span>' + escapeHtml(doc.type === 'quotation' ? 'Valid Until' : 'Due Date') + '</span><strong>' + escapeHtml(doc.dueDate ? formatPreviewDate(doc.dueDate) : '—') + '</strong></div><div><span>Salesperson</span><strong>' + escapeHtml(firstText(doc.salesperson, 'Sales Team')) + '</strong></div></div></div></div>' +
+          '<div class="meta-grid"><section class="panel"><h3>Bill To</h3><strong>' + escapeHtml(firstText(customer.name, 'Walk-in Customer')) + '</strong><p>' + escapeHtml(firstText(customer.company, '')) + '</p><p>' + escapeHtml(firstText(customer.address, '')) + '</p><p>' + escapeHtml(firstText(customer.phone, '')) + '</p><p>' + escapeHtml(firstText(customer.email, '')) + '</p><p>' + (customer.taxNumber ? 'KRA PIN: ' + escapeHtml(customer.taxNumber) : '') + '</p></section>' +
+          '<section class="panel"><h3>Document Information</h3><div class="info-grid"><div><span>' + escapeHtml(doc.type === 'quotation' ? 'Quote No.' : 'Invoice No.') + '</span><strong>' + escapeHtml(firstText(doc.documentNumber, '—')) + '</strong></div><div><span>Reference</span><strong>' + escapeHtml(firstText(doc.reference, '—')) + '</strong></div><div><span>Payment Terms</span><strong>' + escapeHtml(firstText(doc.paymentTerms, '—')) + '</strong></div><div><span>Currency</span><strong>' + escapeHtml(firstText(doc.currency, 'KES')) + '</strong></div></div></section></div>' +
+          '<section class="items"><table><thead><tr><th>Item Code</th><th>Description</th><th class="num">Qty</th><th>Unit</th><th class="num">Unit Price</th><th class="num">Discount</th><th class="num">VAT</th><th class="num">Total</th></tr></thead><tbody>' + a4Rows + '</tbody></table></section>' +
+          '<div class="summary-grid"><div class="notes-grid">' + notesMarkup + '</div><div class="totals-card"><div class="total-row"><span>Subtotal</span><strong>' + money(firstNumber(totals.subtotal, 0), doc.currency) + '</strong></div><div class="total-row"><span>Discount</span><strong>' + money(firstNumber(totals.discount, 0), doc.currency) + '</strong></div><div class="total-row"><span>VAT</span><strong>' + money(firstNumber(totals.tax, 0), doc.currency) + '</strong></div><div class="total-row"><span>Shipping</span><strong>' + money(firstNumber(totals.shipping, 0), doc.currency) + '</strong></div><div class="grand-total"><div><span>Grand Total</span><strong>' + money(firstNumber(totals.total, 0), doc.currency) + '</strong></div><div style="text-align:right"><span>Currency</span><strong style="font-size:18px">' + escapeHtml(firstText(doc.currency, 'KES')) + '</strong></div></div></div></div>' +
+          '<div class="signatures"><div class="signature-card"><div class="signature-line"></div><div class="signature-label">Prepared By</div></div><div class="signature-card"><div class="signature-line"></div><div class="signature-label">Customer Acceptance</div></div><div class="signature-card"><div class="signature-line"></div><div class="signature-label">Approved By</div></div></div>' +
+          '<div class="footer"><img class="qr" src="' + escapeAttr(firstText(doc.qrUrl, '')) + '" alt="QR code" /><div><h4>Thank you for your business</h4><p class="footer-copy">' + escapeHtml(firstText(company.website, '')) + (company.website && company.supportEmail ? ' · ' : '') + escapeHtml(firstText(company.supportEmail, '')) + '</p><p class="footer-copy">' + escapeHtml(firstText(company.slogan, '')) + '</p></div></div>' +
+        '</div></div></div>';
+    return '<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />' + commonStyle + '</head><body>' + body + '</body></html>';
+  }
+
+  function formatPreviewDate(value) {
+    if (!value) return '—';
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  function formatPreviewDateTime(value) {
+    if (!value) return '—';
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) + ' ' + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   }
 
   async function createQuotationFromBasket() {
@@ -2538,41 +2661,45 @@
     const relatedDocuments = options && Array.isArray(options.relatedDocuments) ? options.relatedDocuments : [];
     resetModalDocument();
     openModal({
-      title: title + " Preview",
-      subtitle: "Loading PDF preview with print, download and share actions.",
+      title: title + ' Preview',
+      subtitle: 'Loading clean preview with print, download, email and share actions.',
       wide: true,
-      actions: renderDocumentActionBar(docType, id, normalizedPaper, relatedDocuments)
+      actions: renderDocumentActionBar(docType, id, normalizedPaper, relatedDocuments),
+      body: '<div class="loader-card"><i class="fa-solid fa-spinner fa-spin fa-2x"></i><div>Loading document preview…</div></div>'
     });
-    els.modalBody.innerHTML = '<div class="loader-card"><i class="fa-solid fa-spinner fa-spin fa-2x"></i><div>Generating PDF preview…</div></div>';
     try {
-      const pdfDocument = await fetchDocumentPdf(docType, id, normalizedPaper);
+      const html = await fetchDocumentPreviewHtml(docType, id, normalizedPaper);
       state.modalDocument = {
         type: docType,
         id: String(id),
         paper: normalizedPaper,
         title: title || titleize(docType),
-        objectUrl: pdfDocument.objectUrl,
-        fileName: pdfDocument.fileName,
         relatedDocuments: relatedDocuments
       };
-      els.modalBody.innerHTML = '<div class="document-view"><div class="document-meta"><span class="document-chip">Type: ' + escapeHtml(title || titleize(docType)) + '</span><span class="document-chip">Paper: ' + escapeHtml(normalizedPaper.toUpperCase()) + '</span><span class="document-chip">File: ' + escapeHtml(pdfDocument.fileName) + '</span></div><iframe class="modal-frame" title="Document Preview" src="' + escapeAttr(pdfDocument.objectUrl + '#toolbar=1&navpanes=0&scrollbar=1') + '"></iframe></div>';
+      els.modalBody.innerHTML = '<div class="document-view"><div class="document-meta"><span class="document-chip">Type: ' + escapeHtml(title || titleize(docType)) + '</span><span class="document-chip">Paper: ' + escapeHtml(normalizedPaper.toUpperCase()) + '</span></div>' + renderDocumentPreviewFrame() + '</div>';
+      setDocumentPreviewFrame(html);
     } catch (error) {
       els.modalBody.innerHTML = '<div class="page-empty"><i class="fa-solid fa-circle-exclamation"></i><p>' + escapeHtml(error.message || 'Unable to load document preview.') + '</p></div>';
-      showToast(error.message || "Unable to generate document PDF.", "error");
+      showToast(error.message || 'Unable to load document preview.', 'error');
     }
   }
 
   function renderDocumentActionBar(type, id, paper, relatedDocuments) {
     const related = Array.isArray(relatedDocuments) ? relatedDocuments : [];
-    return related.map(function (document) {
+    const previewButtons = related.map(function (document) {
       return '<button class="btn btn-outline" data-action="open-document" data-type="' + escapeAttr(document.type) + '" data-id="' + escapeAttr(String(document.id)) + '" data-paper="' + escapeAttr(document.paper || defaultDocumentPaper(document.type)) + '" data-title="' + escapeAttr(document.title || titleize(document.type)) + '"><i class="fa-solid fa-file-lines"></i>Preview ' + escapeHtml(document.title || titleize(document.type)) + '</button>';
-    }).concat([
+    });
+    if (type === 'receipt') {
+      previewButtons.unshift('<button class="btn btn-outline" data-action="open-document" data-type="receipt" data-id="' + escapeAttr(String(id)) + '" data-paper="58mm" data-title="Receipt"><i class="fa-solid fa-receipt"></i>Preview 58mm</button>');
+      previewButtons.unshift('<button class="btn btn-outline" data-action="open-document" data-type="receipt" data-id="' + escapeAttr(String(id)) + '" data-paper="80mm" data-title="Receipt"><i class="fa-solid fa-receipt"></i>Preview 80mm</button>');
+    }
+    return previewButtons.concat([
       '<button class="btn btn-primary" data-action="print-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '" data-paper="' + escapeAttr(paper) + '"><i class="fa-solid fa-print"></i>Print</button>',
       '<button class="btn btn-outline" data-action="download-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '" data-paper="' + escapeAttr(paper) + '"><i class="fa-solid fa-file-pdf"></i>Download PDF</button>',
-      '<button class="btn btn-outline" data-action="share-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '" data-paper="' + escapeAttr(paper) + '"><i class="fa-solid fa-share-nodes"></i>Share</button>',
-      '<button class="btn btn-outline" data-action="email-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '"><i class="fa-solid fa-envelope"></i>Email</button>',
+      '<button class="btn btn-outline" data-action="email-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '"><i class="fa-solid fa-envelope"></i>Email PDF</button>',
+      '<button class="btn btn-outline" data-action="share-document" data-type="' + escapeAttr(type) + '" data-id="' + escapeAttr(String(id)) + '" data-paper="' + escapeAttr(paper) + '"><i class="fa-solid fa-share-nodes"></i>Share PDF</button>',
       '<button class="btn btn-danger" data-action="close-modal"><i class="fa-solid fa-xmark"></i>Close</button>'
-    ]).join("");
+    ]).join('');
   }
 
   async function printDocument(type, id, paper) {
@@ -2627,9 +2754,10 @@
   async function downloadDocumentPdf(type, id, paper) {
     const docType = documentType(type);
     try {
-      const pdfDocument = await fetchDocumentPdf(docType, id, paper || defaultDocumentPaper(docType));
+      const normalizedPaper = paper || defaultDocumentPaper(docType);
+      const pdfDocument = await fetchDocumentPdf(docType, id, normalizedPaper);
       triggerBlobDownload(pdfDocument.objectUrl, pdfDocument.fileName);
-      if (!state.modalDocument || String(state.modalDocument.id) !== String(id) || state.modalDocument.type !== docType) {
+      if (!state.modalDocument || String(state.modalDocument.id) !== String(id) || state.modalDocument.type !== docType || state.modalDocument.paper !== normalizedPaper) {
         window.setTimeout(function () {
           URL.revokeObjectURL(pdfDocument.objectUrl);
         }, 1000);
@@ -2774,9 +2902,13 @@
             vat_rate: firstNumber(line.vat_rate, 16)
           };
         });
-        await apiJson("/api/quotations", { method: "POST", body: JSON.stringify(payload) });
+        const quotation = await apiJson("/api/quotations", { method: "POST", body: JSON.stringify(payload) });
         await loadQuotationsData();
         showToast("Quotation created.", "success");
+        closeModal();
+        renderCurrentRoute();
+        if (quotation && quotation.id) openDocumentModal("quotation", quotation.id, "a4", "Quotation");
+        return;
       }
       closeModal();
       renderCurrentRoute();
@@ -2879,6 +3011,28 @@
 
   function buildDocumentPdfEndpoint(type, id, paper) {
     return "/api/documents/" + encodeURIComponent(documentType(type)) + "/" + encodeURIComponent(id) + "/pdf?paper=" + encodeURIComponent(paper || defaultDocumentPaper(type));
+  }
+
+  function buildDocumentPreviewEndpoint(type, id, paper) {
+    return "/api/documents/" + encodeURIComponent(documentType(type)) + "/" + encodeURIComponent(id) + "/preview?paper=" + encodeURIComponent(paper || defaultDocumentPaper(type));
+  }
+
+  async function fetchDocumentPreviewHtml(type, id, paper) {
+    const url = buildDocumentPreviewEndpoint(type, id, paper);
+    const res = await authorizedFetch(url, { headers: { Accept: 'application/json' } });
+    if (res.status === 401) {
+      clearSession();
+      showLogin();
+      throw new Error('Your session expired. Please sign in again.');
+    }
+    const body = await res.json().catch(function () { return null; });
+    if (!res.ok) {
+      throw new Error(firstText(body && body.error, body && body.message, res.statusText, 'Unable to build document preview'));
+    }
+    if (!body || typeof body.html !== 'string' || !body.html.trim()) {
+      throw new Error('The server returned an empty document preview.');
+    }
+    return body.html;
   }
 
   async function fetchDocumentPdf(type, id, paper) {

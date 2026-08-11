@@ -1809,6 +1809,11 @@ body.pos-basket-open .pos-basket-overlay {
   background: var(--white);
 }
 
+.modal-frame--document {
+  min-height: 82vh;
+  background: #edf2f8;
+}
+
 .form-grid {
   display: grid;
   gap: 16px;
