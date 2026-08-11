@@ -1395,7 +1395,7 @@ function createProductBulkRouter(deps) {
         { value: "https://example.com/product.jpg", type: String }
       ]
     ];
-    const buffer = await writeXlsxFile(sheet, { buffer: true });
+    const buffer = Buffer.from(await writeXlsxFile(sheet, { buffer: true }));
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", 'attachment; filename="product-import-template.xlsx"');
     res.send(buffer);
@@ -1540,7 +1540,7 @@ function createProductBulkRouter(deps) {
       { value: product.description || "", type: String },
       { value: product.image_url || "", type: String }
     ]));
-    const buffer = await writeXlsxFile(sheet, { buffer: true });
+    const buffer = Buffer.from(await writeXlsxFile(sheet, { buffer: true }));
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", 'attachment; filename="products-export.xlsx"');
     res.send(buffer);
