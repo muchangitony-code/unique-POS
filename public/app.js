@@ -276,6 +276,46 @@
     els.modalOverlay.addEventListener("click", function (event) {
       if (event.target === els.modalOverlay) closeModal();
     });
+
+    document.addEventListener("keydown", function (event) {
+      if (state.activeRoute !== "sales") return;
+      if (event.target && (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA" || event.target.tagName === "SELECT")) {
+        if (event.key === "Escape") event.target.blur();
+        return;
+      }
+      switch (event.key) {
+        case "F2":
+          event.preventDefault();
+          var searchEl = document.getElementById("posProductSearch");
+          if (searchEl) searchEl.focus();
+          break;
+        case "F4":
+          event.preventDefault();
+          document.body.classList.toggle("pos-basket-open");
+          break;
+        case "F6":
+          event.preventDefault();
+          previewSaleDraft("receipt");
+          break;
+        case "F7":
+          event.preventDefault();
+          previewSaleDraft("invoice");
+          break;
+        case "F8":
+          event.preventDefault();
+          completeSaleAndThen("print-receipt");
+          break;
+        case "F9":
+          event.preventDefault();
+          completeSale();
+          break;
+        case "Escape":
+          if (!els.modalOverlay.classList.contains("hidden")) return;
+          event.preventDefault();
+          if (window.confirm("Cancel and clear the current basket?")) clearBasket(true);
+          break;
+      }
+    });
   }
 
   async function handleAction(action, button, event) {
@@ -369,6 +409,36 @@
         return;
       case "complete-sale":
         completeSale();
+        return;
+      case "basket-clear":
+        if (window.confirm("Clear all items from the basket?")) clearBasket(true);
+        return;
+      case "toggle-basket":
+        document.body.classList.toggle("pos-basket-open");
+        return;
+      case "preview-receipt-before-sale":
+        previewSaleDraft("receipt");
+        return;
+      case "preview-invoice-before-sale":
+        previewSaleDraft("invoice");
+        return;
+      case "print-receipt-now":
+        completeSaleAndThen("print-receipt");
+        return;
+      case "print-invoice-now":
+        completeSaleAndThen("print-invoice");
+        return;
+      case "email-receipt-now":
+        completeSaleAndThen("email-receipt");
+        return;
+      case "email-invoice-now":
+        completeSaleAndThen("email-invoice");
+        return;
+      case "download-receipt-now":
+        completeSaleAndThen("download-receipt");
+        return;
+      case "share-receipt-now":
+        completeSaleAndThen("share-receipt");
         return;
       case "recall-held":
         recallHeldSale(button.dataset.index);
@@ -596,6 +666,9 @@
   async function routeTo(route, options) {
     const nextRoute = ROUTE_META[route] ? route : DEFAULT_ROUTE;
     if (!state.user) return;
+    if (state.activeRoute !== nextRoute) {
+      document.body.classList.remove("pos-basket-open");
+    }
     state.activeRoute = nextRoute;
     renderSidebar();
     const meta = ROUTE_META[nextRoute] || ROUTE_META[DEFAULT_ROUTE];
@@ -901,15 +974,67 @@
     const customerOptions = '<option value="">Walk-in Customer</option>' + state.pos.customers.map(function (customer) {
       return '<option value="' + escapeAttr(String(customer.id)) + '"' + (String(state.pos.customer_id) === String(customer.id) ? ' selected' : '') + '>' + escapeHtml(firstText(customer.name, customer.company, "Customer")) + '</option>';
     }).join("");
+    const itemCount = state.pos.basket.reduce(function (sum, line) { return sum + firstNumber(line.quantity, 0); }, 0);
 
     els.viewRoot.innerHTML = [
       '<div class="module-toolbar"><div class="inline-group"><button class="btn btn-primary" data-action="quick-add-customer"><i class="fa-solid fa-user-plus"></i>Add Customer</button><button class="btn btn-outline" data-action="open-quotation-modal"><i class="fa-solid fa-file-signature"></i>New Quotation</button></div><div class="stats-inline"><span class="document-chip">Held Sales: ' + escapeHtml(String(state.pos.held.length)) + '</span><span class="document-chip">Basket Items: ' + escapeHtml(String(state.pos.basket.length)) + '</span></div></div>',
+      '<div class="pos-basket-overlay" id="posBasketOverlay" data-action="toggle-basket"></div>',
+      '<button class="pos-fab" id="posFloatingBasket" data-action="toggle-basket"><i class="fa-solid fa-basket-shopping"></i><span class="pos-fab__badge">' + escapeHtml(String(itemCount)) + ' · ' + money(totals.total) + '</span></button>',
       '<div class="pos-layout">',
-      '<section class="card section-card pos-column pos-column--catalog"><div class="section-head"><div><h3>New Sale</h3><p>Search, scan barcode or browse by category</p></div><span class="badge warning">Counter Mode</span></div><label class="search-field search-field--compact"><i class="fa-solid fa-magnifying-glass"></i><input id="posProductSearch" type="search" placeholder="Scan barcode or search product..." value="' + escapeAttr(state.pos.search) + '" /></label><div class="pos-catalog-shell"><div class="pos-categories-panel">' + renderPosCategoryChips() + '</div><div class="pos-products-panel">' + renderProductGrid(products) + '</div></div></section>',
-      '<section class="card section-card pos-column"><div class="section-head"><div><h3>Basket</h3><p>Build the sale and apply price adjustments</p></div><span class="document-chip">Items ' + escapeHtml(String(state.pos.basket.length)) + '</span></div>' + renderBasketTable() + '<div class="pos-summary"><div class="pos-summary-row"><span>Subtotal</span><strong>' + money(totals.subtotal) + '</strong></div><div class="pos-summary-row"><span>Discount</span><strong><input id="posDiscountInput" type="number" step="0.01" min="0" value="' + escapeAttr(String(state.pos.discount_amount)) + '" /></strong></div><div class="pos-summary-row"><span>VAT (16%)</span><strong>' + money(totals.vat) + '</strong></div><div class="pos-summary-row"><span>Shipping</span><strong><input id="posShippingInput" type="number" step="0.01" min="0" value="' + escapeAttr(String(state.pos.shipping_amount)) + '" /></strong></div><div class="pos-summary-row total"><span>Grand Total</span><strong>' + money(totals.total) + '</strong></div></div></section>',
-      '<section class="card section-card pos-column pos-column--payment"><div class="section-head"><div><h3>Customer & Payment</h3><p>Assign buyer, payment method and notes</p></div></div><div class="inline-group"><select id="posCustomerSelect">' + customerOptions + '</select><button class="btn btn-outline" data-action="quick-add-customer"><i class="fa-solid fa-plus"></i></button></div><div class="payment-options">' + PAYMENT_METHODS.map(function (method) {
+      '<section class="card section-card pos-column pos-column--catalog"><div class="section-head"><div><h3>New Sale</h3><p>Search, scan barcode or browse by category</p></div><span class="badge warning">Counter Mode</span></div><label class="search-field search-field--compact"><i class="fa-solid fa-magnifying-glass"></i><input id="posProductSearch" type="search" placeholder="Scan barcode or search product… (F2)" value="' + escapeAttr(state.pos.search) + '" /></label><div class="pos-catalog-shell"><div class="pos-categories-panel">' + renderPosCategoryChips() + '</div><div class="pos-products-panel">' + renderProductGrid(products) + '</div></div></section>',
+      '<div class="pos-column pos-column--basket" id="posBasketColumn">',
+      '<section class="card section-card" style="margin-bottom:16px">',
+      '<div class="basket-section-head"><h4><i class="fa-solid fa-basket-shopping" style="color:var(--orange);margin-right:8px"></i>Basket <span class="document-chip" style="font-size:0.8rem;padding:4px 10px">' + escapeHtml(String(state.pos.basket.length)) + ' items</span></h4>' +
+        (state.pos.basket.length ? '<button class="btn btn-danger" style="padding:8px 12px;font-size:0.84rem" data-action="basket-clear"><i class="fa-solid fa-trash"></i>Clear</button>' : '') +
+      '</div>',
+      renderBasketTable(),
+      '<div class="pos-summary">' +
+        '<div class="pos-summary-row"><span>Subtotal</span><strong>' + money(totals.subtotal) + '</strong></div>' +
+        '<div class="pos-summary-row"><span>Discount</span><strong><input id="posDiscountInput" type="number" step="0.01" min="0" value="' + escapeAttr(String(state.pos.discount_amount)) + '" /></strong></div>' +
+        '<div class="pos-summary-row"><span>VAT (16%)</span><strong>' + money(totals.vat) + '</strong></div>' +
+        '<div class="pos-summary-row"><span>Shipping</span><strong><input id="posShippingInput" type="number" step="0.01" min="0" value="' + escapeAttr(String(state.pos.shipping_amount)) + '" /></strong></div>' +
+        '<div class="pos-summary-row total"><span>Grand Total</span><strong>' + money(totals.total) + '</strong></div>' +
+      '</div>',
+      '</section>',
+      '<section class="card section-card">',
+      '<div class="section-head"><div><h3>Customer &amp; Payment</h3></div></div>',
+      '<div class="inline-group"><select id="posCustomerSelect">' + customerOptions + '</select><button class="btn btn-outline" data-action="quick-add-customer"><i class="fa-solid fa-plus"></i></button></div>',
+      '<div class="payment-options">' + PAYMENT_METHODS.map(function (method) {
         return '<button class="payment-chip' + (state.pos.payment_method === method ? ' active' : '') + '" data-action="pos-payment" data-value="' + escapeAttr(method) + '">' + escapeHtml(titleize(method.replace("bank_transfer", "bank"))) + '</button>';
-      }).join("") + '</div><div class="form-grid"><label><span>Cash Received</span><input id="posAmountPaidInput" type="number" step="0.01" min="0" value="' + escapeAttr(String(state.pos.amount_paid)) + '" /></label><div class="document-chip document-chip--balance"><strong>Balance / Change</strong><div>' + money(state.pos.amount_paid - totals.total) + '</div></div><label class="form-span-2"><span>Notes</span><textarea id="posNotesInput" placeholder="Sale notes, delivery note, installation details...">' + escapeHtml(state.pos.notes || "") + '</textarea></label></div><div class="pos-action-grid"><button class="btn btn-outline" data-action="hold-sale">Hold Sale</button><button class="btn btn-secondary" data-action="suspend-sale">Suspend</button><button class="btn btn-danger" data-action="cancel-sale">Cancel</button><button class="btn btn-primary" data-action="complete-sale">Complete Sale</button></div>' + renderHeldSales() + '</section>',
+      }).join("") + '</div>',
+      '<div class="form-grid" style="margin-top:14px">' +
+        '<label><span>Cash Received</span><input id="posAmountPaidInput" type="number" step="0.01" min="0" value="' + escapeAttr(String(state.pos.amount_paid)) + '" /></label>' +
+        '<div class="document-chip document-chip--balance"><strong>Balance / Change</strong><div>' + money(state.pos.amount_paid - totals.total) + '</div></div>' +
+        '<label class="form-span-2"><span>Notes</span><textarea id="posNotesInput" placeholder="Sale notes, delivery note, installation details...">' + escapeHtml(state.pos.notes || "") + '</textarea></label>' +
+      '</div>',
+      '<div class="pos-checkout-grid">' +
+        '<button class="btn btn-primary" data-action="complete-sale"><i class="fa-solid fa-check-circle"></i>Save Sale <kbd style="opacity:0.7;font-size:0.75rem;padding:2px 5px;border-radius:5px;border:1px solid rgba(255,255,255,0.4);background:rgba(255,255,255,0.15)">F9</kbd></button>' +
+        '<button class="btn btn-secondary" data-action="print-receipt-now"><i class="fa-solid fa-receipt"></i>Print Receipt</button>' +
+        '<button class="btn btn-secondary" data-action="print-invoice-now"><i class="fa-solid fa-print"></i>Print Invoice</button>' +
+        '<button class="btn btn-outline" data-action="preview-receipt-before-sale"><i class="fa-solid fa-eye"></i>Preview Receipt</button>' +
+        '<button class="btn btn-outline" data-action="preview-invoice-before-sale"><i class="fa-solid fa-file-lines"></i>Preview Invoice</button>' +
+        '<button class="btn btn-outline" data-action="email-receipt-now"><i class="fa-solid fa-envelope"></i>Email Receipt</button>' +
+        '<button class="btn btn-outline" data-action="email-invoice-now"><i class="fa-solid fa-envelope"></i>Email Invoice</button>' +
+        '<button class="btn btn-outline" data-action="download-receipt-now"><i class="fa-solid fa-file-pdf"></i>Download PDF</button>' +
+        '<button class="btn btn-outline" data-action="share-receipt-now"><i class="fa-solid fa-share-nodes"></i>Share PDF</button>' +
+      '</div>',
+      '<div class="pos-action-grid" style="margin-top:10px;grid-template-columns:repeat(3,minmax(0,1fr))">' +
+        '<button class="btn btn-outline" data-action="hold-sale"><i class="fa-solid fa-pause"></i>Hold</button>' +
+        '<button class="btn btn-outline" data-action="suspend-sale"><i class="fa-solid fa-file-signature"></i>Quotation</button>' +
+        '<button class="btn btn-danger" data-action="cancel-sale"><i class="fa-solid fa-xmark"></i>Cancel</button>' +
+      '</div>',
+      renderHeldSales(),
+      '<div class="pos-shortcuts-hint">' +
+        '<span class="pos-shortcut"><kbd>F2</kbd> Search</span>' +
+        '<span class="pos-shortcut"><kbd>F4</kbd> Basket</span>' +
+        '<span class="pos-shortcut"><kbd>F6</kbd> Preview Receipt</span>' +
+        '<span class="pos-shortcut"><kbd>F7</kbd> Preview Invoice</span>' +
+        '<span class="pos-shortcut"><kbd>F8</kbd> Print Receipt</span>' +
+        '<span class="pos-shortcut"><kbd>F9</kbd> Save Sale</span>' +
+        '<span class="pos-shortcut"><kbd>Esc</kbd> Cancel</span>' +
+      '</div>',
+      '</section>',
+      '</div>',
       '</div>',
       '<section class="card section-card" style="margin-top:20px"><div class="section-head"><div><h3>Recent POS Sales</h3><p>Latest completed transactions</p></div><button class="btn btn-outline" data-route="dashboard">Back to dashboard</button></div>' + renderTable(["Receipt", "Customer", "Amount", "Method", "Status", "Actions"], recentSales.slice(0, 8).map(function (sale) {
         return [
@@ -1774,8 +1899,19 @@
 
   function renderBasketTable() {
     if (!state.pos.basket.length) return '<div class="empty-state"><i class="fa-solid fa-basket-shopping"></i>Basket is empty. Add products to begin.</div>';
-    return '<div class="data-table-wrap"><table class="basket-table"><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th><th></th></tr></thead><tbody>' + state.pos.basket.map(function (line) {
-      return '<tr><td><strong>' + escapeHtml(line.product_name) + '</strong><div class="table-caption">' + escapeHtml(firstText(line.product_code, '')) + '</div></td><td><div class="qty-control"><button data-action="basket-dec" data-id="' + escapeAttr(String(line.product_id)) + '">-</button><strong>' + escapeHtml(String(line.quantity)) + '</strong><button data-action="basket-inc" data-id="' + escapeAttr(String(line.product_id)) + '">+</button></div></td><td>' + money(line.unit_price) + '</td><td>' + money(lineTotal(line)) + '</td><td><button class="btn btn-danger" data-action="basket-remove" data-id="' + escapeAttr(String(line.product_id)) + '"><i class="fa-solid fa-trash"></i></button></td></tr>';
+    return '<div class="data-table-wrap"><table class="basket-table"><thead><tr><th colspan="2">Item</th><th>Qty</th><th>Total</th><th></th></tr></thead><tbody>' + state.pos.basket.map(function (line) {
+      const image = sanitizeUrl(line.image_url);
+      const imgHtml = image
+        ? '<div class="basket-table-img"><img src="' + escapeAttr(image) + '" alt="" /></div>'
+        : '<div class="basket-table-img"><i class="fa-solid fa-solar-panel"></i></div>';
+      return '<tr>' +
+        '<td style="width:46px;padding-right:0">' + imgHtml + '</td>' +
+        '<td><strong style="display:block;font-size:0.9rem">' + escapeHtml(line.product_name) + '</strong>' +
+        '<div class="table-caption" style="font-size:0.78rem">' + escapeHtml(firstText(line.product_code, '')) + ' · ' + money(line.unit_price) + '</div></td>' +
+        '<td><div class="qty-control"><button data-action="basket-dec" data-id="' + escapeAttr(String(line.product_id)) + '">-</button><strong>' + escapeHtml(String(line.quantity)) + '</strong><button data-action="basket-inc" data-id="' + escapeAttr(String(line.product_id)) + '">+</button></div></td>' +
+        '<td><strong>' + money(lineTotal(line)) + '</strong></td>' +
+        '<td><button class="btn btn-danger" style="padding:8px" data-action="basket-remove" data-id="' + escapeAttr(String(line.product_id)) + '"><i class="fa-solid fa-trash"></i></button></td>' +
+        '</tr>';
     }).join("") + '</tbody></table></div>';
   }
 
@@ -2000,6 +2136,7 @@
         quantity: 1,
         vat_rate: firstNumber(product.vat_rate, 16),
         discount: 0,
+        image_url: firstText(product.image_url, ""),
         current_stock: firstNumber(product.current_stock, 0)
       });
     }
@@ -2118,6 +2255,220 @@
     }
   }
 
+  async function completeSaleAndThen(action) {
+    if (!state.pos.basket.length) {
+      showToast("Add products before completing the sale.", "error");
+      return;
+    }
+    const totals = calculatePosTotals();
+    if (state.pos.payment_method !== "credit" && firstNumber(state.pos.amount_paid, 0) < totals.total) {
+      showToast("Amount paid is less than the grand total.", "error");
+      return;
+    }
+    const payload = {
+      customer_id: state.pos.customer_id || undefined,
+      discount_amount: state.pos.discount_amount || 0,
+      shipping_amount: state.pos.shipping_amount || 0,
+      amount_paid: state.pos.payment_method === "credit" ? 0 : firstNumber(state.pos.amount_paid, 0),
+      payment_method: state.pos.payment_method,
+      items: state.pos.basket.map(function (line) {
+        return {
+          product_id: line.product_id,
+          quantity: line.quantity,
+          unit_price: line.unit_price,
+          discount: firstNumber(line.discount, 0),
+          vat_rate: firstNumber(line.vat_rate, 16)
+        };
+      })
+    };
+    try {
+      const sale = await apiJson("/api/pos/sale", { method: "POST", body: JSON.stringify(payload) });
+      showToast("Sale completed successfully.", "success");
+      clearBasket(false);
+      await Promise.all([loadDashboardData(), loadSalesData(), loadInvoicesData()]);
+      renderCurrentRoute();
+      const receiptId = sale.id;
+      const invoiceId = sale.invoice_id;
+      if (action === "print-receipt") {
+        printDocument("receipt", receiptId, "80mm");
+      } else if (action === "print-invoice") {
+        if (invoiceId) {
+          printDocument("invoice", invoiceId, "a4");
+        } else {
+          showToast("No invoice was generated for this sale.", "warning");
+        }
+      } else if (action === "email-receipt") {
+        emailDocument("receipt", receiptId);
+      } else if (action === "email-invoice") {
+        if (invoiceId) {
+          emailDocument("invoice", invoiceId);
+        } else {
+          showToast("No invoice was generated for this sale.", "warning");
+        }
+      } else if (action === "download-receipt") {
+        downloadDocumentPdf("receipt", receiptId, "80mm");
+      } else if (action === "share-receipt") {
+        shareDocumentWhatsapp("receipt", receiptId, "80mm");
+      }
+    } catch (error) {
+      showToast(error.message || "Sale failed.", "error");
+    }
+  }
+
+  function previewSaleDraft(type) {
+    if (!state.pos.basket.length) {
+      showToast("Add products to preview a " + type + ".", "error");
+      return;
+    }
+    const totals = calculatePosTotals();
+    const customer = state.pos.customers.find(function (c) { return String(c.id) === String(state.pos.customer_id); });
+    const meta = {
+      receiptNumber: "PREVIEW-" + Date.now().toString().slice(-6),
+      invoiceNumber: "INV-PREVIEW-" + Date.now().toString().slice(-6),
+      date: new Date(),
+      cashier: firstText(state.user && state.user.name, "Cashier"),
+      customer: customer ? firstText(customer.name, customer.company, "Walk-in Customer") : "Walk-in Customer",
+      customerEmail: customer ? firstText(customer.email, "") : "",
+      paymentMethod: state.pos.payment_method,
+      amountPaid: state.pos.amount_paid,
+      notes: state.pos.notes
+    };
+    const html = type === "receipt"
+      ? renderReceiptPreviewHtml(state.pos.basket, totals, meta)
+      : renderInvoicePreviewHtml(state.pos.basket, totals, meta);
+    openModal({
+      title: type === "receipt" ? "Receipt Preview (Draft)" : "Invoice Preview (Draft)",
+      subtitle: "This is a draft preview. No sale has been recorded yet.",
+      wide: true,
+      body: html
+    });
+  }
+
+  function renderReceiptPreviewHtml(basket, totals, meta) {
+    const branding = state.branding || {};
+    const businessName = escapeHtml(firstText(branding.business_name, DEFAULT_BRANDING.business_name));
+    const address = escapeHtml(firstText(branding.business_address, DEFAULT_BRANDING.business_address));
+    const phone = escapeHtml(firstText(branding.business_phone, DEFAULT_BRANDING.business_phone));
+    const pin = escapeHtml(firstText(branding.pin_number, branding.pin, ""));
+    const vatNumber = escapeHtml(firstText(branding.vat_number, branding.vat, ""));
+    const branch = escapeHtml(firstText(branding.branch_name, branding.branch, "Main Branch"));
+    const logoUrl = sanitizeUrl(branding.logo_url) || "/assets/unique-solar-kenya-logo.svg";
+    const dateStr = meta.date ? meta.date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
+    const timeStr = meta.date ? meta.date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "";
+    const qrData = encodeURIComponent(meta.receiptNumber + "|" + businessName.replace(/&amp;/g, "&") + "|" + totals.total);
+    const qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=" + qrData;
+    return [
+      '<div class="pos-receipt-preview">',
+      '<img class="pos-receipt-preview__logo" src="' + escapeAttr(logoUrl) + '" alt="logo" />',
+      '<div class="pos-receipt-preview__header">',
+      '<p class="pos-receipt-preview__title">' + businessName + '</p>',
+      '<p class="pos-receipt-preview__sub">' + address + '</p>',
+      '<p class="pos-receipt-preview__sub">' + phone + '</p>',
+      pin ? '<p class="pos-receipt-preview__sub">PIN: ' + pin + '</p>' : '',
+      vatNumber ? '<p class="pos-receipt-preview__sub">VAT: ' + vatNumber + '</p>' : '',
+      '</div>',
+      '<div class="pos-receipt-preview__meta">',
+      '<div class="pos-receipt-preview__meta-row"><span>Receipt #</span><span>' + escapeHtml(meta.receiptNumber) + '</span></div>',
+      '<div class="pos-receipt-preview__meta-row"><span>Branch</span><span>' + branch + '</span></div>',
+      '<div class="pos-receipt-preview__meta-row"><span>Date</span><span>' + escapeHtml(dateStr + " " + timeStr) + '</span></div>',
+      '<div class="pos-receipt-preview__meta-row"><span>Cashier</span><span>' + escapeHtml(meta.cashier) + '</span></div>',
+      '<div class="pos-receipt-preview__meta-row"><span>Customer</span><span>' + escapeHtml(meta.customer) + '</span></div>',
+      '</div>',
+      '<table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead><tbody>',
+      basket.map(function (line) {
+        return '<tr><td>' + escapeHtml(line.product_name) + (line.product_code ? '<br><small style="color:#999">' + escapeHtml(line.product_code) + '</small>' : '') + '</td><td>' + escapeHtml(String(line.quantity)) + '</td><td>' + money(line.unit_price) + '</td><td>' + money(lineTotal(line)) + '</td></tr>';
+      }).join(""),
+      '</tbody></table>',
+      '<div class="pos-receipt-preview__totals">',
+      '<div class="pos-receipt-preview__total-row"><span>Subtotal</span><span>' + money(totals.subtotal) + '</span></div>',
+      totals.discount > 0 ? '<div class="pos-receipt-preview__total-row"><span>Discount</span><span>-' + money(totals.discount) + '</span></div>' : '',
+      '<div class="pos-receipt-preview__total-row"><span>VAT (16%)</span><span>' + money(totals.vat) + '</span></div>',
+      totals.shipping > 0 ? '<div class="pos-receipt-preview__total-row"><span>Shipping</span><span>' + money(totals.shipping) + '</span></div>' : '',
+      '<div class="pos-receipt-preview__total-row grand"><span>Grand Total</span><span>' + money(totals.total) + '</span></div>',
+      '<div class="pos-receipt-preview__total-row"><span>Payment</span><span>' + escapeHtml(titleize(meta.paymentMethod)) + '</span></div>',
+      meta.paymentMethod !== "credit" && meta.amountPaid > 0 ? '<div class="pos-receipt-preview__total-row"><span>Cash Received</span><span>' + money(meta.amountPaid) + '</span></div>' : '',
+      meta.paymentMethod !== "credit" && meta.amountPaid > 0 ? '<div class="pos-receipt-preview__total-row"><span>Balance / Change</span><span>' + money(meta.amountPaid - totals.total) + '</span></div>' : '',
+      '</div>',
+      '<div class="pos-receipt-preview__footer">',
+      '<p>Thank you for your business!</p>',
+      '<p>' + businessName + '</p>',
+      '<img class="pos-receipt-preview__qr" src="' + escapeAttr(qrUrl) + '" alt="QR" />',
+      '</div>',
+      '</div>'
+    ].join("");
+  }
+
+  function renderInvoicePreviewHtml(basket, totals, meta) {
+    const branding = state.branding || {};
+    const businessName = escapeHtml(firstText(branding.business_name, DEFAULT_BRANDING.business_name));
+    const address = escapeHtml(firstText(branding.business_address, DEFAULT_BRANDING.business_address));
+    const phone = escapeHtml(firstText(branding.business_phone, DEFAULT_BRANDING.business_phone));
+    const bizEmail = escapeHtml(firstText(branding.business_email, DEFAULT_BRANDING.business_email));
+    const pin = escapeHtml(firstText(branding.pin_number, branding.pin, ""));
+    const vatNumber = escapeHtml(firstText(branding.vat_number, branding.vat, ""));
+    const logoUrl = sanitizeUrl(branding.logo_url) || "/assets/unique-solar-kenya-logo.svg";
+    const dateStr = meta.date ? meta.date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
+    const dueDate = meta.date ? new Date(meta.date.getTime() + 14 * 86400000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
+    const qrData = encodeURIComponent(meta.invoiceNumber + "|" + businessName.replace(/&amp;/g, "&") + "|" + totals.total);
+    const qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=" + qrData;
+    return [
+      '<div class="pos-invoice-preview">',
+      '<div class="pos-invoice-preview__header">',
+      '<div class="pos-invoice-preview__company">',
+      '<img class="pos-invoice-preview__logo" src="' + escapeAttr(logoUrl) + '" alt="logo" />',
+      '<h2>' + businessName + '</h2>',
+      '<p>' + address + '</p>',
+      '<p>' + phone + ' · ' + bizEmail + '</p>',
+      pin ? '<p>PIN: ' + pin + '</p>' : '',
+      vatNumber ? '<p>VAT Reg: ' + vatNumber + '</p>' : '',
+      '</div>',
+      '<div class="pos-invoice-preview__number">',
+      '<h3>Invoice</h3>',
+      '<p><strong>' + escapeHtml(meta.invoiceNumber) + '</strong></p>',
+      '<p>Date: ' + escapeHtml(dateStr) + '</p>',
+      '<p>Due: ' + escapeHtml(dueDate) + '</p>',
+      '</div>',
+      '</div>',
+      '<div class="pos-invoice-preview__parties">',
+      '<div class="pos-invoice-preview__party"><h4>From</h4><p>' + businessName + '</p><p>' + address + '</p></div>',
+      '<div class="pos-invoice-preview__party"><h4>Bill To</h4><p>' + escapeHtml(meta.customer) + '</p>' + (meta.customerEmail ? '<p>' + escapeHtml(meta.customerEmail) + '</p>' : '') + '</div>',
+      '</div>',
+      '<table><thead><tr><th>#</th><th>Description</th><th>SKU</th><th>Qty</th><th>Unit Price</th><th>Discount</th><th>Total</th></tr></thead><tbody>',
+      basket.map(function (line, index) {
+        return '<tr>' +
+          '<td>' + (index + 1) + '</td>' +
+          '<td>' + escapeHtml(line.product_name) + '</td>' +
+          '<td>' + escapeHtml(firstText(line.product_code, "—")) + '</td>' +
+          '<td>' + escapeHtml(String(line.quantity)) + '</td>' +
+          '<td>' + money(line.unit_price) + '</td>' +
+          '<td>' + money(firstNumber(line.discount, 0)) + '</td>' +
+          '<td>' + money(lineTotal(line)) + '</td>' +
+          '</tr>';
+      }).join(""),
+      '</tbody></table>',
+      '<div class="pos-invoice-preview__totals">',
+      '<div class="pos-invoice-preview__total-row"><span>Subtotal</span><span>' + money(totals.subtotal) + '</span></div>',
+      totals.discount > 0 ? '<div class="pos-invoice-preview__total-row"><span>Discount</span><span>-' + money(totals.discount) + '</span></div>' : '',
+      '<div class="pos-invoice-preview__total-row"><span>VAT (16%)</span><span>' + money(totals.vat) + '</span></div>',
+      totals.shipping > 0 ? '<div class="pos-invoice-preview__total-row"><span>Shipping</span><span>' + money(totals.shipping) + '</span></div>' : '',
+      '<div class="pos-invoice-preview__total-row grand"><span>Grand Total</span><span>' + money(totals.total) + '</span></div>',
+      '</div>',
+      '<div class="pos-invoice-preview__footer">',
+      '<div>',
+      '<p><strong>Payment Terms</strong></p>',
+      '<p>Payment due within 14 days of invoice date.</p>',
+      '<p>Method: ' + escapeHtml(titleize(meta.paymentMethod)) + '</p>',
+      meta.notes ? '<p>Notes: ' + escapeHtml(meta.notes) + '</p>' : '',
+      '</div>',
+      '<div>',
+      '<img class="pos-invoice-preview__qr" src="' + escapeAttr(qrUrl) + '" alt="QR" />',
+      '<div class="pos-invoice-preview__sig-line">Authorised Signature</div>',
+      '</div>',
+      '</div>',
+      '</div>'
+    ].join("");
+  }
+
   async function createQuotationFromBasket() {
     if (!state.pos.basket.length) {
       showToast("Add products before creating a quotation.", "error");
@@ -2226,12 +2577,14 @@
 
   async function printDocument(type, id, paper) {
     const docType = documentType(type);
+    const paperClass = paper === "58mm" ? "print-58mm" : paper === "80mm" ? "print-80mm" : paper === "a4" ? "print-a4" : "";
     try {
       const pdfDocument = await ensureDocumentPdf(docType, id, paper);
       const frame = document.createElement("iframe");
       let printStarted = false;
       frame.className = "hidden";
       frame.src = pdfDocument.objectUrl;
+      if (paperClass) document.body.classList.add(paperClass);
       frame.onload = function () {
         printStarted = true;
         window.setTimeout(function () {
@@ -2243,14 +2596,19 @@
           } catch (printError) {
             showToast("Open the preview and use your browser print dialog if printing stays blocked.", "error");
           }
+          if (paperClass) {
+            window.setTimeout(function () { document.body.classList.remove(paperClass); }, 2000);
+          }
         }, 400);
       };
       frame.onerror = function () {
+        if (paperClass) document.body.classList.remove(paperClass);
         showToast("Unable to load the PDF for printing.", "error");
       };
       document.body.appendChild(frame);
       window.setTimeout(function () {
         if (!printStarted) {
+          if (paperClass) document.body.classList.remove(paperClass);
           showToast("Print preview is taking too long to load. Try the Download PDF button instead.", "error");
         }
       }, 5000);
@@ -2261,6 +2619,7 @@
         }
       }, 6e4);
     } catch (error) {
+      if (paperClass) document.body.classList.remove(paperClass);
       showToast(error.message || "Unable to print document.", "error");
     }
   }
