@@ -73888,9 +73888,10 @@ app.use(
   })
 );
 app.use((0, import_cors.default)());
+var _jsonParser = import_express26.default.json();
 app.use((req, _res, next) => {
   if (/^multipart\//i.test(req.headers["content-type"] || "")) return next();
-  return import_express26.default.json()(req, _res, next);
+  return _jsonParser(req, _res, next);
 });
 app.use(import_express26.default.urlencoded({ extended: true }));
 app.use((req, _res, next) => {
