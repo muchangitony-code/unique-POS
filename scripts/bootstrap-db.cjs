@@ -159,29 +159,8 @@ async function bootstrapDatabaseIfNeeded(options = {}) {
     preflightClient.release();
   }
 
-  if (missingBefore.length === 0) {
-    await pool.end();
-    return {
-      migrationsApplied: [],
-      adminBootstrapped: false,
-      branchEnsured: false,
-      settingsEnsured: false,
-      skipped: true
-    };
-  }
-
-  const bootstrapAdminEnabled = isEnabled(process.env.UNIQUEPOS_BOOTSTRAP_ADMIN, true);
-  const rotateExistingAdminPassword = isEnabled(process.env.UNIQUEPOS_BOOTSTRAP_ADMIN_ROTATE_PASSWORD, false);
-  const nodeEnv = process.env.NODE_ENV || "production";
-  const adminPassword = process.env.UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD || DEFAULT_ADMIN_PASSWORD;
-  if (bootstrapAdminEnabled && adminPassword === DEFAULT_ADMIN_PASSWORD) {
-    if (nodeEnv === "production") {
-      await pool.end();
-      throw new Error("UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD must be set in production.");
-    }
-    console.warn("[bootstrap-db] Using the default bootstrap admin password; override UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD before production deployment.");
-  }
-
+  // Always run migrations so that new migration files are applied even when all
+  // required tables already exist (e.g. adding wholesale_price to products).
   let client;
   try {
     // Migrations commit independently; the seeding below must stay idempotent so a
@@ -189,6 +168,32 @@ async function bootstrapDatabaseIfNeeded(options = {}) {
     const migrationResult = await applyMigrations({
       migrationsDir: options.migrationsDir
     });
+
+    // Only run first-time seeding (admin account, branch, settings) when tables
+    // were missing before migrations ran. For existing databases skip seeding so
+    // that the production admin-password guard does not block normal startup.
+    if (missingBefore.length === 0) {
+      await pool.end();
+      return {
+        migrationsApplied: migrationResult.applied,
+        adminBootstrapped: false,
+        branchEnsured: false,
+        settingsEnsured: false,
+        skipped: migrationResult.applied.length === 0
+      };
+    }
+
+    const bootstrapAdminEnabled = isEnabled(process.env.UNIQUEPOS_BOOTSTRAP_ADMIN, true);
+    const rotateExistingAdminPassword = isEnabled(process.env.UNIQUEPOS_BOOTSTRAP_ADMIN_ROTATE_PASSWORD, false);
+    const nodeEnv = process.env.NODE_ENV || "production";
+    const adminPassword = process.env.UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD || DEFAULT_ADMIN_PASSWORD;
+    if (bootstrapAdminEnabled && adminPassword === DEFAULT_ADMIN_PASSWORD) {
+      if (nodeEnv === "production") {
+        await pool.end();
+        throw new Error("UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD must be set in production.");
+      }
+      console.warn("[bootstrap-db] Using the default bootstrap admin password; override UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD before production deployment.");
+    }
 
     client = await pool.connect();
     const missingAfter = await fetchMissingTables(client, REQUIRED_TABLES);
