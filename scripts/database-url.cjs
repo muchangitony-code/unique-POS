@@ -52,8 +52,9 @@ function parseAndValidateDatabaseUrl(contextLabel) {
   return { databaseUrl, host, port, database };
 }
 
-function railwaySsl() {
-  return { rejectUnauthorized: false };
+function railwaySsl(databaseUrl) {
+  const isLocal = databaseUrl && /localhost|127\.0\.0\.1|::1/.test(databaseUrl);
+  return isLocal ? false : { rejectUnauthorized: false };
 }
 
 module.exports = {

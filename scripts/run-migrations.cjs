@@ -303,7 +303,7 @@ async function applyMigrations(options = {}) {
 
   const pool = new Pool({
     connectionString: databaseUrl,
-    ssl: railwaySsl()
+    ssl: railwaySsl(databaseUrl)
   });
 
   const client = await pool.connect();

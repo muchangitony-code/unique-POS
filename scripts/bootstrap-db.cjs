@@ -148,8 +148,7 @@ async function ensureMainBranch(client) {
 
 async function bootstrapDatabaseIfNeeded(options = {}) {
   const { databaseUrl } = parseAndValidateDatabaseUrl("bootstrap-db");
-  const isLocalDb = /localhost|127\.0\.0\.1|::1/.test(databaseUrl);
-  const pool = new Pool({ connectionString: databaseUrl, ssl: isLocalDb ? false : railwaySsl() });
+  const pool = new Pool({ connectionString: databaseUrl, ssl: railwaySsl(databaseUrl) });
   const preflightClient = await pool.connect();
 
   let missingBefore;
