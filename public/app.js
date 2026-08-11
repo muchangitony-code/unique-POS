@@ -208,6 +208,7 @@
       if (form.id === "modalForm") return handleModalFormSubmit(event);
       if (form.id === "settingsBusinessForm") return handleSettingsBusinessSubmit(event);
       if (form.id === "settingsBrandingForm") return handleSettingsBrandingSubmit(event);
+      if (form.id === "settingsPaymentForm") return handleSettingsPaymentSubmit(event);
     });
 
     document.addEventListener("click", function (event) {
@@ -1836,7 +1837,8 @@
     els.viewRoot.innerHTML = [
       '<div class="settings-panels">',
       '<section class="card section-card"><div class="section-head"><div><h3>Business Settings</h3><p>Primary business identity used across transactions.</p></div></div><form id="settingsBusinessForm" class="form-grid two"><label><span>Business Name</span><input name="business_name" value="' + escapeAttr(firstText(settings.business_name, branding.business_name, DEFAULT_BRANDING.business_name)) + '" /></label><label><span>Currency</span><input name="currency" value="' + escapeAttr(firstText(settings.currency, "KES")) + '" /></label><label><span>Currency Symbol</span><input name="currency_symbol" value="' + escapeAttr(firstText(settings.currency_symbol, "")) + '" /></label><label><span>Primary Phone</span><input name="business_phone" value="' + escapeAttr(firstText(settings.business_phone, branding.business_phone, DEFAULT_BRANDING.business_phone)) + '" /></label><label><span>Alternative Phone</span><input name="business_phone2" value="' + escapeAttr(firstText(settings.business_phone2, branding.business_phone2, "")) + '" /></label><label><span>Business Email</span><input name="business_email" type="email" value="' + escapeAttr(firstText(settings.business_email, branding.business_email, DEFAULT_BRANDING.business_email)) + '" /></label><label><span>KRA PIN / Tax PIN</span><input name="tax_number" value="' + escapeAttr(firstText(settings.tax_number, branding.tax_number, "")) + '" /></label><label><span>Country</span><input name="country" value="' + escapeAttr(firstText(settings.country, "")) + '" /></label><label><span>Timezone</span><input name="timezone" value="' + escapeAttr(firstText(settings.timezone, "")) + '" /></label><label><span>SMTP Host</span><input name="smtp_host" value="' + escapeAttr(firstText(settings.smtp_host, "")) + '" /></label><label><span>SMTP Port</span><input name="smtp_port" type="number" min="1" step="1" value="' + escapeAttr(firstText(settings.smtp_port, "587")) + '" /></label><label><span>SMTP User</span><input name="smtp_user" value="' + escapeAttr(firstText(settings.smtp_user, "")) + '" /></label><label><span>SMTP From</span><input name="smtp_from" type="email" value="' + escapeAttr(firstText(settings.smtp_from, "")) + '" /></label><label class="form-span-2"><span>Address</span><textarea name="business_address">' + escapeHtml(firstText(settings.business_address, branding.business_address, DEFAULT_BRANDING.business_address)) + '</textarea></label><label class="form-span-2"><span>Receipt Footer</span><textarea name="receipt_footer">' + escapeHtml(firstText(settings.receipt_footer, "")) + '</textarea></label><div class="form-span-2"><button class="btn btn-primary" type="submit">Save Business Settings</button></div></form></section>',
-      '<section class="card section-card"><div class="section-head"><div><h3>Branding</h3><p>Document header, logo, colours and customer-facing document text.</p></div></div><form id="settingsBrandingForm" class="form-grid two"><label><span>Display Name</span><input name="business_name" value="' + escapeAttr(firstText(branding.business_name, DEFAULT_BRANDING.business_name)) + '" /></label><label><span>Tagline</span><input name="tagline" value="' + escapeAttr(firstText(branding.tagline, branding.description, DEFAULT_BRANDING.tagline)) + '" /></label><label><span>Website</span><input name="website" value="' + escapeAttr(firstText(branding.website, "")) + '" /></label><label><span>VAT Number</span><input name="vat_number" value="' + escapeAttr(firstText(branding.vat_number, "")) + '" /></label><label><span>Primary Colour</span><input name="primary_color" value="' + escapeAttr(firstText(branding.primary_color, "#083d6d")) + '" /></label><label><span>Secondary Colour</span><input name="secondary_color" value="' + escapeAttr(firstText(branding.secondary_color, "#f7931e")) + '" /></label><label><span>Document Phone</span><input name="business_phone" value="' + escapeAttr(firstText(branding.business_phone, settings.business_phone, DEFAULT_BRANDING.business_phone)) + '" /></label><label><span>Document Email</span><input name="business_email" type="email" value="' + escapeAttr(firstText(branding.business_email, settings.business_email, DEFAULT_BRANDING.business_email)) + '" /></label><label class="form-span-2"><span>Document Address</span><textarea name="business_address">' + escapeHtml(firstText(branding.business_address, settings.business_address, DEFAULT_BRANDING.business_address)) + '</textarea></label><label class="form-span-2"><span>Company Logo</span><input type="hidden" name="logo_url" value="' + escapeAttr(firstText(branding.logo_url, branding.logoUrl, "")) + '" /><div class="branding-upload"><img id="brandingLogoPreview" class="branding-upload__preview" alt="Logo preview" /><div class="branding-upload__meta"><input id="brandingLogoFile" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" /><p class="branding-upload__hint">Upload PNG, JPG, WebP, or SVG up to 2 MB. Stored logos are reused in the UI, previews, PDFs, and emails.</p><div class="branding-upload__actions"><button class="btn btn-outline" id="brandingLogoUploadBtn" type="button">Upload selected logo</button><button class="btn btn-outline" id="brandingLogoClearBtn" type="button">Use placeholder</button></div><div class="branding-upload__status" id="brandingLogoStatus">Current logo stays active until you save branding.</div></div></div></label><label><span>Quotation Validity Days</span><input name="quotation_validity_days" type="number" min="1" step="1" value="' + escapeAttr(firstText(branding.quotation_validity_days, "30")) + '" /></label><label><span>Footer Text</span><input name="document_footer" value="' + escapeAttr(firstText(branding.document_footer, "")) + '" /></label><label class="form-span-2"><span>Invoice Terms &amp; Conditions</span><textarea name="invoice_payment_terms">' + escapeHtml(firstText(branding.invoice_payment_terms, "")) + '</textarea></label><label class="form-span-2"><span>Warranty Text</span><textarea name="warranty_text">' + escapeHtml(firstText(branding.warranty_text, "")) + '</textarea></label><label class="form-span-2"><span>Return Policy</span><textarea name="return_policy">' + escapeHtml(firstText(branding.return_policy, "")) + '</textarea></label><label class="form-span-2"><span>Payment Instructions</span><textarea name="payment_instructions">' + escapeHtml(firstText(branding.payment_instructions, "")) + '</textarea></label><div class="form-span-2"><button class="btn btn-primary" type="submit">Save Branding</button></div></form></section>',
+      '<section class="card section-card"><div class="section-head"><div><h3>Branding &amp; Documents</h3><p>Logo, colours, document headers and terms used on quotations, invoices and receipts.</p></div></div><form id="settingsBrandingForm" class="form-grid two"><label><span>Display Name</span><input name="business_name" value="' + escapeAttr(firstText(branding.business_name, DEFAULT_BRANDING.business_name)) + '" /></label><label><span>Tagline</span><input name="tagline" value="' + escapeAttr(firstText(branding.tagline, branding.description, DEFAULT_BRANDING.tagline)) + '" /></label><label><span>Website</span><input name="website" value="' + escapeAttr(firstText(branding.website, "")) + '" /></label><label><span>VAT Number</span><input name="vat_number" value="' + escapeAttr(firstText(branding.vat_number, "")) + '" /></label><label><span>Primary Colour</span><input name="primary_color" value="' + escapeAttr(firstText(branding.primary_color, "#083d6d")) + '" /></label><label><span>Secondary Colour</span><input name="secondary_color" value="' + escapeAttr(firstText(branding.secondary_color, "#f7931e")) + '" /></label><label><span>Document Phone</span><input name="business_phone" value="' + escapeAttr(firstText(branding.business_phone, settings.business_phone, DEFAULT_BRANDING.business_phone)) + '" /></label><label><span>Document Email</span><input name="business_email" type="email" value="' + escapeAttr(firstText(branding.business_email, settings.business_email, DEFAULT_BRANDING.business_email)) + '" /></label><label class="form-span-2"><span>Document Address</span><textarea name="business_address">' + escapeHtml(firstText(branding.business_address, settings.business_address, DEFAULT_BRANDING.business_address)) + '</textarea></label><label class="form-span-2"><span>Company Logo</span><input type="hidden" name="logo_url" value="' + escapeAttr(firstText(branding.logo_url, branding.logoUrl, "")) + '" /><div class="branding-upload"><img id="brandingLogoPreview" class="branding-upload__preview" alt="Logo preview" /><div class="branding-upload__meta"><input id="brandingLogoFile" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" /><p class="branding-upload__hint">Upload PNG, JPG, WebP, or SVG up to 2 MB. Stored logos are reused in the UI, previews, PDFs, and emails.</p><div class="branding-upload__actions"><button class="btn btn-outline" id="brandingLogoUploadBtn" type="button">Upload selected logo</button><button class="btn btn-outline" id="brandingLogoClearBtn" type="button">Use placeholder</button></div><div class="branding-upload__status" id="brandingLogoStatus">Current logo stays active until you save branding.</div></div></div></label><label><span>Quotation Validity Days</span><input name="quotation_validity_days" type="number" min="1" step="1" value="' + escapeAttr(firstText(settings.quotation_validity_days, branding.quotation_validity_days, "30")) + '" /></label><label><span>Document Footer Text</span><input name="document_footer" value="' + escapeAttr(firstText(branding.document_footer, "")) + '" /></label><label class="form-span-2"><span>Terms &amp; Conditions (one line per term — shown on quotations and invoices)</span><textarea name="invoice_payment_terms" rows="6">' + escapeHtml(firstText(settings.invoice_payment_terms, branding.invoice_payment_terms, "Quotation valid for 30 days.\nGoods remain the property of the seller until paid in full.\nWarranty applies where specified.\nReturns are subject to our return policy.\nErrors and Omissions Excepted (E&OE).")) + '</textarea></label><label class="form-span-2"><span>Warranty Text</span><textarea name="warranty_text">' + escapeHtml(firstText(branding.warranty_text, "")) + '</textarea></label><label class="form-span-2"><span>Return Policy</span><textarea name="return_policy">' + escapeHtml(firstText(branding.return_policy, "")) + '</textarea></label><div class="form-span-2"><button class="btn btn-primary" type="submit">Save Branding &amp; Documents</button></div></form></section>',
+      '<section class="card section-card"><div class="section-head"><div><h3>Payment &amp; Banking</h3><p>M-PESA and bank details printed on invoices and quotations. Editable by administrators only.</p></div></div><form id="settingsPaymentForm" class="form-grid two"><label><span>M-PESA Paybill No.</span><input name="mpesa_paybill" value="' + escapeAttr(firstText(settings.mpesa_paybill, "")) + '" placeholder="e.g. 400200" /></label><label><span>M-PESA Paybill Account</span><input name="mpesa_paybill_account" value="' + escapeAttr(firstText(settings.mpesa_paybill_account, "")) + '" placeholder="e.g. Use invoice number as account" /></label><label><span>M-PESA Till No. (Buy Goods)</span><input name="mpesa_till" value="' + escapeAttr(firstText(settings.mpesa_till, "")) + '" placeholder="e.g. 123456" /></label><label><span>Other Payment Methods</span><input name="other_payment_methods" value="' + escapeAttr(firstText(settings.other_payment_methods, "")) + '" placeholder="e.g. Cheque, Credit" /></label><label><span>Bank Name</span><input name="bank_name" value="' + escapeAttr(firstText(settings.bank_name, "")) + '" placeholder="e.g. Equity Bank" /></label><label><span>Bank Branch</span><input name="bank_branch" value="' + escapeAttr(firstText(settings.bank_branch, "")) + '" placeholder="e.g. Westlands" /></label><label><span>Bank Account Name</span><input name="bank_account_name" value="' + escapeAttr(firstText(settings.bank_account_name, "")) + '" placeholder="e.g. Unique Solar Kenya Ltd" /></label><label><span>Bank Account Number</span><input name="bank_account_number" value="' + escapeAttr(firstText(settings.bank_account_number, "")) + '" placeholder="e.g. 0123456789" /></label><label><span>Swift Code (optional)</span><input name="bank_swift_code" value="' + escapeAttr(firstText(settings.bank_swift_code, "")) + '" placeholder="e.g. EQBLKENA" /></label><label class="form-span-2"><span>Additional Payment Instructions (free text shown in notes)</span><textarea name="payment_instructions">' + escapeHtml(firstText(settings.payment_instructions, "")) + '</textarea></label><div class="form-span-2"><button class="btn btn-primary" type="submit">Save Payment Details</button></div></form></section>',
       '</div>'
     ].join("");
     bindBrandingUploadControls();
@@ -2350,6 +2352,9 @@
     const taxNumber = firstText(settings.tax_number, branding.tax_number, branding.pin_number, '');
     const vatNumber = firstText(branding.vat_number, settings.vat_number, '');
     const logoUrl = sanitizeUrl(firstText(branding.logo_url, branding.logoUrl, '')) || '/assets/unique-solar-kenya-logo.svg';
+    const branchName = firstText(state.pos.branchName, '');
+    const primaryColor = firstText(branding.primary_color, '#083d6d');
+    const secondaryColor = firstText(branding.secondary_color, '#f7931e');
     const numberSeed = String(Date.now()).slice(-6);
     const documentNumber = type === 'quotation'
       ? 'QT-PREVIEW-' + numberSeed
@@ -2357,13 +2362,38 @@
         ? 'INV-PREVIEW-' + numberSeed
         : 'RCPT-PREVIEW-' + numberSeed;
     const documentTitle = type === 'quotation' ? 'Quotation' : type === 'invoice' ? 'Tax Invoice' : 'Receipt';
-    const paymentTerms = firstText(branding.invoice_payment_terms, 'Due on receipt');
+    const paymentTerms = firstText(settings.invoice_payment_terms, branding.invoice_payment_terms, 'Due on receipt');
+    const warrantyText = firstText(branding.warranty_text, settings.warranty_text, '');
+    const returnPolicy = firstText(branding.return_policy, settings.return_policy, '');
+    const paymentInstructions = firstText(settings.payment_instructions, branding.payment_instructions, '');
+    const invoiceTerms = firstText(settings.invoice_payment_terms, branding.invoice_payment_terms, '');
+    const validityDays = firstNumber(settings.quotation_validity_days, branding.quotation_validity_days, 30);
     const notesSections = [
-      ['Warranty', firstText(branding.warranty_text, '')],
+      ['Warranty', warrantyText],
       ['Delivery Terms', firstText(state.pos.notes, '')],
-      ['Payment Instructions', firstText(branding.payment_instructions, '')],
+      ['Return Policy', returnPolicy],
       ['Additional Notes', firstText(branding.document_footer, settings.receipt_footer, '')]
     ].filter(function (section) { return section[1]; });
+    const termsLines = invoiceTerms
+      ? invoiceTerms.split(/\n/).filter(Boolean)
+      : [
+          'Quotation valid for ' + validityDays + ' days.',
+          'Goods remain the property of the seller until paid in full.',
+          'Warranty applies where specified.',
+          'Returns are subject to our return policy.',
+          'Errors and Omissions Excepted (E&OE).'
+        ];
+    const payment = {
+      mpesaPaybill: firstText(settings.mpesa_paybill, ''),
+      mpesaTill: firstText(settings.mpesa_till, ''),
+      mpesaAccount: firstText(settings.mpesa_paybill_account, documentNumber),
+      bankName: firstText(settings.bank_name, ''),
+      bankBranch: firstText(settings.bank_branch, ''),
+      bankAccountName: firstText(settings.bank_account_name, ''),
+      bankAccountNumber: firstText(settings.bank_account_number, ''),
+      bankSwiftCode: firstText(settings.bank_swift_code, ''),
+      paymentInstructions: paymentInstructions
+    };
     const rows = state.pos.basket.map(function (line) {
       return {
         itemCode: firstText(line.product_code, '—'),
@@ -2383,7 +2413,7 @@
       documentTitle: documentTitle,
       documentNumber: documentNumber,
       date: now,
-      dueDate: type === 'invoice' ? addDays(now, 14) : type === 'quotation' ? addDays(now, 14) : null,
+      dueDate: type === 'invoice' ? addDays(now, 14) : type === 'quotation' ? addDays(now, validityDays) : null,
       salesperson: firstText(state.user && state.user.name, state.user && state.user.email, 'Sales Team'),
       reference: 'Draft preview',
       paymentTerms: paymentTerms,
@@ -2398,7 +2428,10 @@
         vatNumber: vatNumber,
         logoUrl: logoUrl,
         slogan: firstText(branding.tagline, ''),
-        supportEmail: companyEmail
+        supportEmail: companyEmail,
+        branchName: branchName,
+        primaryColor: primaryColor,
+        secondaryColor: secondaryColor
       },
       customer: {
         name: firstText(customer && customer.name, customer && customer.company, 'Walk-in Customer'),
@@ -2421,6 +2454,8 @@
       },
       paymentMethod: firstText(state.pos.payment_method, 'cash'),
       notesSections: notesSections,
+      termsLines: termsLines,
+      payment: payment,
       qrUrl: qrUrl
     };
     return {
@@ -2454,128 +2489,308 @@
     const totals = doc.totals || {};
     const rows = Array.isArray(doc.rows) ? doc.rows : [];
     const notesSections = Array.isArray(doc.notesSections) ? doc.notesSections : [];
+    const termsLines = Array.isArray(doc.termsLines) ? doc.termsLines : [];
+    const payment = doc.payment || {};
     const title = escapeHtml(doc.documentTitle || 'Document');
-    const accent = '#f7931e';
-    const primary = '#083d6d';
-    const soft = '#eef5fb';
+    const primary = firstText(company.primaryColor, '#083d6d');
+    const accent = firstText(company.secondaryColor, '#f7931e');
     const logo = escapeAttr(firstText(company.logoUrl, '/assets/unique-solar-kenya-logo.svg'));
-    const notesMarkup = notesSections.length ? notesSections.map(function (section) {
-      return '<div class="notes-card"><h4>' + escapeHtml(section[0]) + '</h4><p>' + escapeHtml(section[1]).replace(/\n/g, '<br/>') + '</p></div>';
-    }).join('') : '<div class="notes-card notes-card--full"><h4>Additional Notes</h4><p>No additional notes supplied.</p></div>';
-    const footerMeta = [company.website, company.supportEmail, company.slogan].filter(Boolean).map(escapeHtml).join(' · ');
+    const isReceipt = doc.type === 'receipt' || doc.paper === '80mm' || doc.paper === '58mm';
+    const thermalWidth = doc.paper === '58mm' ? '58mm' : '80mm';
+
+    // Notes markup
+    const notesMarkup = notesSections.length
+      ? notesSections.map(function (s) {
+          return '<div class="nc"><h4>' + escapeHtml(s[0]) + '</h4><p>' + escapeHtml(s[1]).replace(/\n/g, '<br/>') + '</p></div>';
+        }).join('')
+      : '<div class="nc nc-full"><h4>Notes</h4><p>No additional notes.</p></div>';
+
+    // A4 item rows
     const a4Rows = rows.map(function (row) {
-      return '<tr>' +
-        '<td>' + escapeHtml(firstText(row.itemCode, '—')) + '</td>' +
-        '<td><strong>' + escapeHtml(firstText(row.description, 'Item')) + '</strong></td>' +
-        '<td class="num">' + escapeHtml(numberText(firstNumber(row.quantity, 0))) + '</td>' +
-        '<td>' + escapeHtml(firstText(row.unit, 'pcs')) + '</td>' +
+      return '<tr><td>' + escapeHtml(firstText(row.itemCode, '—')) + '</td><td><strong>' + escapeHtml(firstText(row.description, 'Item')) + '</strong></td>' +
+        '<td class="num">' + escapeHtml(numberText(firstNumber(row.quantity, 0))) + '</td><td>' + escapeHtml(firstText(row.unit, 'pcs')) + '</td>' +
         '<td class="num">' + money(firstNumber(row.unitPrice, 0), doc.currency) + '</td>' +
         '<td class="num">' + money(firstNumber(row.discount, 0), doc.currency) + '</td>' +
         '<td class="num">' + escapeHtml(numberText(firstNumber(row.vatRate, 0))) + '%</td>' +
-        '<td class="num"><strong>' + money(firstNumber(row.total, 0), doc.currency) + '</strong></td>' +
-      '</tr>';
+        '<td class="num"><strong>' + money(firstNumber(row.total, 0), doc.currency) + '</strong></td></tr>';
     }).join('') || '<tr><td colspan="8" class="empty">No line items</td></tr>';
-    const receiptRows = rows.map(function (row) {
-      return '<tr><td><strong>' + escapeHtml(firstText(row.description, 'Item')) + '</strong><div class="thermal-sub">' + escapeHtml(firstText(row.itemCode, '—')) + '</div></td><td class="num">' + escapeHtml(numberText(firstNumber(row.quantity, 0))) + '</td><td class="num">' + money(firstNumber(row.unitPrice, 0), doc.currency) + '</td><td class="num">' + money(firstNumber(row.total, 0), doc.currency) + '</td></tr>';
-    }).join('') || '<tr><td colspan="4" class="empty">No line items</td></tr>';
-    const commonStyle = '<style>' +
-      ':root{color-scheme:light only;font-family:Inter,Arial,sans-serif;}' +
-      '*{box-sizing:border-box;}' +
-      'body{margin:0;background:#eef2f7;color:#0f172a;font-family:Inter,Arial,sans-serif;}' +
-      '.page{padding:24px;}' +
-      '.sheet{margin:0 auto;background:#fff;box-shadow:0 24px 80px rgba(15,23,42,.16);overflow:hidden;}' +
-      '.sheet--a4{width:210mm;min-height:297mm;border-radius:20px;}' +
-      '.sheet--thermal{width:' + escapeHtml(doc.paper === '58mm' ? '58mm' : '80mm') + ';border-radius:18px;}' +
-      '.top-accent{height:10px;background:linear-gradient(90deg,' + primary + ',#0f4f8d,' + accent + ');}' +
-      '.doc-body{padding:28px;}' +
-      '.doc-header{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;}' +
-      '.brand{display:flex;gap:18px;align-items:flex-start;}' +
-      '.brand img{width:82px;height:82px;object-fit:contain;border-radius:20px;background:#fff;border:1px solid #dbe5f0;padding:10px;}' +
-      '.brand h1{margin:0;font-size:28px;color:' + primary + ';}' +
-      '.brand-meta,.panel p,.notes-card p,.signature-label,.footer-copy,.thermal-sub{margin:0;color:#475569;font-size:12px;line-height:1.6;}' +
-      '.doc-title-card{min-width:250px;text-align:right;background:' + soft + ';border:1px solid #d7e4f1;border-radius:22px;padding:20px 22px;position:relative;overflow:hidden;}' +
-      '.doc-title-card:after{content:"";position:absolute;inset:auto -40px -40px auto;width:110px;height:110px;border-radius:50%;background:rgba(247,147,30,.12);}' +
-      '.doc-title-card h2{margin:0 0 10px;font-size:32px;color:' + primary + ';letter-spacing:.08em;text-transform:uppercase;}' +
-      '.meta-grid{display:grid;grid-template-columns:1.35fr .95fr;gap:20px;margin-top:22px;}' +
-      '.panel{border:1px solid #d7e4f1;border-radius:20px;padding:18px;background:#fff;}' +
-      '.panel h3{margin:0 0 12px;font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:' + primary + ';}' +
-      '.panel strong{display:block;font-size:15px;color:#0f172a;margin-bottom:4px;}' +
-      '.info-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 18px;}' +
-      '.info-grid div span,.total-row span{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#64748b;margin-bottom:4px;}' +
-      '.info-grid div strong{font-size:13px;margin:0;word-break:break-word;}' +
-      '.items{margin-top:22px;border:1px solid #d7e4f1;border-radius:20px;overflow:hidden;}' +
+
+    // Thermal item rows
+    const thermalRows = rows.map(function (row) {
+      return '<tr><td><strong>' + escapeHtml(firstText(row.description, 'Item')) + '</strong>' +
+        '<div class="tsub">' + escapeHtml(firstText(row.itemCode, '—')) + '</div></td>' +
+        '<td class="num">' + escapeHtml(numberText(firstNumber(row.quantity, 0))) + '</td>' +
+        '<td class="num">' + money(firstNumber(row.unitPrice, 0), doc.currency) + '</td>' +
+        '<td class="num">' + money(firstNumber(row.total, 0), doc.currency) + '</td></tr>';
+    }).join('') || '<tr><td colspan="4" class="empty">No items</td></tr>';
+
+    // Payment details cards
+    const hasMpesa = payment.mpesaPaybill || payment.mpesaTill;
+    const hasBank = payment.bankName || payment.bankAccountNumber;
+    const mpesaCard = hasMpesa
+      ? '<div class="pc"><div class="pc-head"><span class="pc-icon">📱</span><h4>M-PESA Payment</h4></div>' +
+        (payment.mpesaPaybill ? '<div class="pr"><span>Paybill No.</span><strong>' + escapeHtml(payment.mpesaPaybill) + '</strong></div>' : '') +
+        (payment.mpesaAccount ? '<div class="pr"><span>Account No.</span><strong>' + escapeHtml(payment.mpesaAccount) + '</strong></div>' : '') +
+        (payment.mpesaTill ? '<div class="pr"><span>Till No. (Buy Goods)</span><strong>' + escapeHtml(payment.mpesaTill) + '</strong></div>' : '') +
+        '<div class="pr pr-total"><span>Amount</span><strong>' + money(firstNumber(totals.total, 0), doc.currency) + '</strong></div>' +
+        '</div>'
+      : '';
+    const bankCard = hasBank
+      ? '<div class="pc"><div class="pc-head"><span class="pc-icon">🏦</span><h4>Bank Transfer</h4></div>' +
+        (payment.bankName ? '<div class="pr"><span>Bank</span><strong>' + escapeHtml(payment.bankName) + '</strong></div>' : '') +
+        (payment.bankBranch ? '<div class="pr"><span>Branch</span><strong>' + escapeHtml(payment.bankBranch) + '</strong></div>' : '') +
+        (payment.bankAccountName ? '<div class="pr"><span>Account Name</span><strong>' + escapeHtml(payment.bankAccountName) + '</strong></div>' : '') +
+        (payment.bankAccountNumber ? '<div class="pr"><span>Account No.</span><strong>' + escapeHtml(payment.bankAccountNumber) + '</strong></div>' : '') +
+        (payment.bankSwiftCode ? '<div class="pr"><span>Swift Code</span><strong>' + escapeHtml(payment.bankSwiftCode) + '</strong></div>' : '') +
+        '</div>'
+      : '';
+    const extraInstructions = payment.paymentInstructions && !hasMpesa && !hasBank
+      ? '<div class="pc pc-full"><div class="pc-head"><span class="pc-icon">💳</span><h4>Payment Instructions</h4></div><p class="pc-note">' + escapeHtml(payment.paymentInstructions).replace(/\n/g, '<br/>') + '</p></div>'
+      : '';
+    const paymentSection = (hasMpesa || hasBank || extraInstructions)
+      ? '<div class="psec"><h3 class="slabel">How to Pay</h3><div class="pcards">' + mpesaCard + bankCard + extraInstructions + '</div></div>'
+      : '';
+
+    // Terms section
+    const termsSection = !isReceipt && termsLines.length
+      ? '<div class="tsec"><h3 class="slabel">Terms &amp; Conditions</h3><ol class="tlist">' +
+        termsLines.map(function (l) { return '<li>' + escapeHtml(l) + '</li>'; }).join('') +
+        '</ol></div>'
+      : '';
+
+    const footerLine = [company.website, company.email].filter(Boolean).map(escapeHtml).join(' · ');
+
+    const css = '<style>' +
+      ':root{color-scheme:light only;}' +
+      '*{box-sizing:border-box;margin:0;padding:0;}' +
+      'body{background:#f0f4f8;color:#0f172a;font-family:Inter,Arial,sans-serif;font-size:13px;line-height:1.5;}' +
+      '.page{padding:18px;}' +
+      '.sheet{margin:0 auto;background:#fff;box-shadow:0 4px 24px rgba(15,23,42,.12);overflow:hidden;}' +
+      '.sheet--a4{width:210mm;min-height:297mm;border-radius:14px;}' +
+      '.sheet--th{width:' + escapeHtml(thermalWidth) + ';border-radius:10px;}' +
+      '.accent{height:7px;background:linear-gradient(90deg,' + primary + ' 0%,#1565c0 55%,' + accent + ' 100%);}' +
+      '.body{padding:22px 26px;}' +
+      /* ---- Header ---- */
+      '.hdr{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;margin-bottom:18px;}' +
+      '.brand{display:flex;gap:12px;align-items:flex-start;flex:1;min-width:0;}' +
+      '.brand img{width:68px;height:68px;object-fit:contain;border-radius:10px;border:1px solid #e2e8f0;padding:7px;background:#fff;flex-shrink:0;}' +
+      '.brand h1{font-size:18px;font-weight:800;color:' + primary + ';margin-bottom:4px;line-height:1.2;}' +
+      '.brand-meta{color:#475569;font-size:11px;line-height:1.7;}' +
+      /* ---- Title card ---- */
+      '.tc{min-width:210px;max-width:260px;background:' + primary + ';border-radius:12px;padding:16px 18px;flex-shrink:0;}' +
+      '.tc h2{font-size:20px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#fff;margin-bottom:5px;}' +
+      '.tc .dn{font-size:12px;color:rgba(255,255,255,.75);padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,.2);margin-bottom:12px;}' +
+      '.tc .ig{display:grid;grid-template-columns:repeat(2,1fr);gap:7px 10px;}' +
+      '.tc .ig span{display:block;font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.6);margin-bottom:1px;}' +
+      '.tc .ig strong{font-size:11.5px;font-weight:600;color:#fff;}' +
+      /* ---- Meta grid ---- */
+      '.mg{display:grid;grid-template-columns:1.4fr 1fr;gap:12px;margin-bottom:18px;}' +
+      '.panel{border:1px solid #e2e8f0;border-radius:10px;padding:14px;}' +
+      '.panel h3{font-size:9.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:' + primary + ';margin-bottom:8px;}' +
+      '.panel .pn{font-size:14px;font-weight:600;color:#0f172a;margin-bottom:3px;}' +
+      '.panel p{color:#475569;font-size:11.5px;line-height:1.5;margin-top:2px;}' +
+      '.ig2{display:grid;grid-template-columns:repeat(2,1fr);gap:7px 12px;}' +
+      '.ig2 span{display:block;font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#64748b;margin-bottom:2px;}' +
+      '.ig2 strong{font-size:12px;font-weight:600;color:#0f172a;word-break:break-word;}' +
+      /* ---- Items table ---- */
+      '.items{border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:18px;}' +
       'table{width:100%;border-collapse:collapse;}' +
-      'thead th{background:' + primary + ';color:#fff;font-size:12px;letter-spacing:.08em;text-transform:uppercase;padding:14px 12px;text-align:left;}' +
-      'tbody td{padding:14px 12px;border-bottom:1px solid #e5edf5;font-size:13px;vertical-align:top;}' +
-      'tbody tr:nth-child(even){background:#f8fbff;}' +
+      'thead th{background:' + primary + ';color:#fff;font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:10px 9px;text-align:left;}' +
+      'tbody td{padding:10px 9px;border-bottom:1px solid #f1f5f9;font-size:12px;vertical-align:top;}' +
+      'tbody tr:nth-child(even){background:#f8faff;}' +
       'tbody tr:last-child td{border-bottom:none;}' +
       '.num{text-align:right;white-space:nowrap;}' +
-      '.summary-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:22px;margin-top:22px;align-items:start;}' +
-      '.notes-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;}' +
-      '.notes-card{border:1px solid #d7e4f1;border-radius:18px;padding:16px;background:#f8fbff;min-height:112px;}' +
-      '.notes-card h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:' + primary + ';}' +
-      '.notes-card--full{grid-column:1 / -1;}' +
-      '.totals-card{border-radius:24px;background:' + primary + ';color:#fff;padding:22px;box-shadow:0 18px 40px rgba(8,61,109,.18);}' +
-      '.total-row{display:flex;justify-content:space-between;gap:16px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.14);}' +
-      '.total-row span{color:rgba(255,255,255,.72);margin:0;}' +
-      '.total-row strong{font-size:14px;}' +
-      '.grand-total{margin-top:14px;padding:18px;border-radius:18px;background:#fff;color:' + primary + ';display:flex;justify-content:space-between;gap:16px;align-items:end;}' +
-      '.grand-total span{display:block;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#64748b;}' +
-      '.grand-total strong{font-size:28px;line-height:1.1;}' +
-      '.signatures{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:22px;}' +
-      '.signature-card{padding:24px 16px 10px;border:1px solid #d7e4f1;border-radius:18px;background:#fff;}' +
-      '.signature-line{height:1px;background:#94a3b8;margin-bottom:10px;}' +
-      '.footer{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center;margin-top:22px;padding:18px 20px;border-radius:20px;background:#f8fbff;border:1px solid #d7e4f1;}' +
-      '.footer img.qr{width:88px;height:88px;object-fit:contain;border-radius:14px;border:1px solid #d7e4f1;background:#fff;padding:6px;}' +
-      '.footer h4{margin:0 0 6px;font-size:16px;color:' + primary + ';}' +
-      '.thermal-wrap{padding:16px 12px 18px;}' +
-      '.thermal-wrap .brand{display:block;text-align:center;}' +
-      '.thermal-wrap .brand img{margin:0 auto 10px;width:' + escapeHtml(doc.paper === '58mm' ? '46px' : '58px') + ';height:' + escapeHtml(doc.paper === '58mm' ? '46px' : '58px') + ';border-radius:14px;}' +
-      '.thermal-wrap h1{font-size:' + escapeHtml(doc.paper === '58mm' ? '15px' : '18px') + ';margin-bottom:4px;}' +
-      '.thermal-head,.thermal-footer{border-bottom:1px dashed #cbd5e1;padding-bottom:10px;margin-bottom:10px;text-align:center;}' +
-      '.thermal-meta{display:grid;gap:6px;font-size:' + escapeHtml(doc.paper === '58mm' ? '10px' : '11px') + ';margin-bottom:10px;}' +
-      '.thermal-meta-row,.thermal-total-row{display:flex;justify-content:space-between;gap:8px;}' +
-      '.thermal-items thead th{padding:8px 6px;font-size:10px;}' +
-      '.thermal-items tbody td{padding:8px 6px;font-size:' + escapeHtml(doc.paper === '58mm' ? '10px' : '11px') + ';}' +
-      '.thermal-total-row{font-size:' + escapeHtml(doc.paper === '58mm' ? '10px' : '11px') + ';padding:4px 0;}' +
-      '.thermal-grand{margin-top:8px;padding-top:8px;border-top:1px solid #0f172a;font-weight:800;font-size:' + escapeHtml(doc.paper === '58mm' ? '13px' : '15px') + ';}' +
-      '.thermal-qr{width:' + escapeHtml(doc.paper === '58mm' ? '72px' : '88px') + ';height:' + escapeHtml(doc.paper === '58mm' ? '72px' : '88px') + ';margin:10px auto 0;display:block;border:1px solid #d7e4f1;border-radius:12px;padding:6px;background:#fff;}' +
-      '.empty{text-align:center;color:#64748b;}' +
-      '@media print{body{background:#fff;} .page{padding:0;} .sheet{box-shadow:none;border-radius:0;} @page{margin:0;size:' + escapeHtml(doc.paper === '58mm' ? '58mm auto' : doc.paper === '80mm' ? '80mm auto' : 'A4') + ';}}' +
-      '@media (max-width: 900px){.sheet--a4{width:100%;border-radius:0;min-height:auto;}.doc-header,.meta-grid,.summary-grid,.signatures,.footer{grid-template-columns:1fr;display:grid;}.doc-title-card{text-align:left;}.notes-grid{grid-template-columns:1fr;}}' +
+      /* ---- Summary grid ---- */
+      '.sg{display:grid;grid-template-columns:1.15fr .85fr;gap:14px;margin-bottom:18px;align-items:start;}' +
+      '.ng{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;}' +
+      '.nc{border:1px solid #e2e8f0;border-radius:10px;padding:12px;background:#f8faff;min-height:80px;}' +
+      '.nc h4{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:' + primary + ';margin-bottom:5px;}' +
+      '.nc p{color:#475569;font-size:11px;line-height:1.5;}' +
+      '.nc-full{grid-column:1/-1;}' +
+      /* ---- Totals panel ---- */
+      '.tp{border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;}' +
+      '.tr2{display:flex;justify-content:space-between;align-items:center;padding:9px 14px;border-bottom:1px solid #f1f5f9;font-size:12px;}' +
+      '.tr2 span{color:#64748b;}' +
+      '.tr2 strong{font-weight:600;}' +
+      '.gtb{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:' + primary + ';color:#fff;}' +
+      '.gtb .gl{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.8);}' +
+      '.gtb .ga{font-size:20px;font-weight:800;}' +
+      /* ---- Payment section ---- */
+      '.slabel{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:' + primary + ';margin-bottom:10px;}' +
+      '.psec{margin-bottom:16px;}' +
+      '.pcards{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}' +
+      '.pc{border:1px solid #e2e8f0;border-radius:10px;padding:12px;background:#f8faff;}' +
+      '.pc-full{grid-column:1/-1;}' +
+      '.pc-head{display:flex;align-items:center;gap:7px;margin-bottom:9px;padding-bottom:9px;border-bottom:1px solid #e2e8f0;}' +
+      '.pc-icon{font-size:17px;line-height:1;}' +
+      '.pc h4{font-size:12px;font-weight:700;color:' + primary + ';}' +
+      '.pr{display:flex;justify-content:space-between;align-items:baseline;padding:3px 0;font-size:11px;}' +
+      '.pr span{color:#64748b;}' +
+      '.pr strong{font-weight:600;color:#0f172a;text-align:right;max-width:55%;}' +
+      '.pr-total{margin-top:7px;padding-top:7px;border-top:1px solid #e2e8f0;}' +
+      '.pr-total strong{color:' + primary + ';font-size:12px;font-weight:700;}' +
+      '.pc-note{font-size:11px;color:#475569;line-height:1.55;}' +
+      /* ---- Terms section ---- */
+      '.tsec{margin-bottom:16px;padding:12px 14px;border:1px solid #e2e8f0;border-radius:10px;}' +
+      '.tlist{padding-left:16px;color:#475569;}' +
+      '.tlist li{font-size:11px;line-height:1.6;padding:2px 0;}' +
+      /* ---- Signatures ---- */
+      '.sigs{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;}' +
+      '.sig{padding:26px 12px 9px;border:1px solid #e2e8f0;border-radius:10px;}' +
+      '.sig-line{height:1px;background:#94a3b8;margin-bottom:7px;}' +
+      '.sig-label{font-size:10.5px;color:#64748b;text-align:center;}' +
+      /* ---- Footer ---- */
+      '.ftr{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:10px;background:#f8faff;border:1px solid #e2e8f0;}' +
+      '.ftr img.qr{width:76px;height:76px;object-fit:contain;border-radius:8px;border:1px solid #e2e8f0;background:#fff;padding:4px;flex-shrink:0;}' +
+      '.ftr h4{font-size:13px;font-weight:700;color:' + primary + ';margin-bottom:4px;}' +
+      '.ftr p{color:#64748b;font-size:11px;margin-top:2px;}' +
+      /* ---- Thermal ---- */
+      '.th-wrap{padding:12px 10px 14px;}' +
+      '.th-head{text-align:center;border-bottom:1px dashed #cbd5e1;padding-bottom:9px;margin-bottom:9px;}' +
+      '.th-head img{display:block;margin:0 auto 7px;width:' + escapeHtml(doc.paper === '58mm' ? '42px' : '52px') + ';height:' + escapeHtml(doc.paper === '58mm' ? '42px' : '52px') + ';border-radius:8px;object-fit:contain;border:1px solid #e2e8f0;}' +
+      '.th-head h1{font-size:' + escapeHtml(doc.paper === '58mm' ? '13px' : '16px') + ';font-weight:800;color:#0f172a;margin-bottom:3px;}' +
+      '.th-sub{color:#475569;font-size:' + escapeHtml(doc.paper === '58mm' ? '9px' : '10px') + ';line-height:1.5;}' +
+      '.th-meta{font-size:' + escapeHtml(doc.paper === '58mm' ? '9.5px' : '10.5px') + ';margin-bottom:9px;}' +
+      '.th-mrow{display:flex;justify-content:space-between;gap:4px;padding:2px 0;}' +
+      '.th-items thead th{padding:6px 4px;font-size:9px;}' +
+      '.th-items tbody td{padding:6px 4px;font-size:' + escapeHtml(doc.paper === '58mm' ? '9.5px' : '10.5px') + ';}' +
+      '.tsub{color:#64748b;font-size:8.5px;margin-top:1px;}' +
+      '.th-totals{font-size:' + escapeHtml(doc.paper === '58mm' ? '9.5px' : '10.5px') + ';margin-top:7px;}' +
+      '.th-trow{display:flex;justify-content:space-between;padding:2px 0;}' +
+      '.th-grand{font-size:' + escapeHtml(doc.paper === '58mm' ? '12px' : '14px') + ';font-weight:800;border-top:1px solid #0f172a;padding-top:6px;margin-top:5px;}' +
+      '.th-ftr{text-align:center;border-top:1px dashed #cbd5e1;margin-top:9px;padding-top:9px;}' +
+      '.th-qr{width:' + escapeHtml(doc.paper === '58mm' ? '68px' : '80px') + ';height:' + escapeHtml(doc.paper === '58mm' ? '68px' : '80px') + ';margin:7px auto;display:block;border:1px solid #e2e8f0;border-radius:8px;padding:4px;background:#fff;}' +
+      '.empty{text-align:center;color:#94a3b8;padding:18px;}' +
+      '@media print{body{background:#fff;}.page{padding:0;}.sheet{box-shadow:none;border-radius:0;}@page{margin:0;size:' + escapeHtml(doc.paper === '58mm' ? '58mm auto' : doc.paper === '80mm' ? '80mm auto' : 'A4') + ';}}' +
+      '@media(max-width:780px){.page{padding:0;}.sheet--a4{width:100%;border-radius:0;min-height:auto;}.hdr{flex-direction:column;}.tc{max-width:100%;min-width:0;}.mg,.sg,.pcards,.sigs{grid-template-columns:1fr;}.ng{grid-template-columns:1fr;}}' +
     '</style>';
-    const body = doc.type === 'receipt'
-      ? '<div class="page"><div class="sheet sheet--thermal"><div class="top-accent"></div><div class="thermal-wrap">' +
-          '<div class="thermal-head"><div class="brand"><img src="' + logo + '" alt="Logo" /><h1>' + escapeHtml(firstText(company.name, 'Company')) + '</h1><p class="brand-meta">' + escapeHtml(firstText(company.address, '')) + '<br/>' + escapeHtml(firstText(company.phone, '')) + '<br/>' + escapeHtml(firstText(company.email, '')) + '</p></div></div>' +
-          '<div class="thermal-meta">' +
-            '<div class="thermal-meta-row"><span>Receipt No.</span><strong>' + escapeHtml(firstText(doc.documentNumber, '—')) + '</strong></div>' +
-            '<div class="thermal-meta-row"><span>Date</span><strong>' + escapeHtml(formatPreviewDateTime(doc.date)) + '</strong></div>' +
-            '<div class="thermal-meta-row"><span>Cashier</span><strong>' + escapeHtml(firstText(customer.cashier, 'Cashier')) + '</strong></div>' +
-            '<div class="thermal-meta-row"><span>Customer</span><strong>' + escapeHtml(firstText(customer.name, 'Walk-in Customer')) + '</strong></div>' +
+
+    const a4Body = '<div class="page"><div class="sheet sheet--a4">' +
+      '<div class="accent"></div><div class="body">' +
+      // Header
+      '<div class="hdr">' +
+        '<div class="brand">' +
+          '<img src="' + logo + '" alt="Logo" />' +
+          '<div>' +
+            '<h1>' + escapeHtml(firstText(company.name, 'Company')) + '</h1>' +
+            '<p class="brand-meta">' + escapeHtml(firstText(company.address, '')).replace(/\n/g, '<br/>') +
+            '<br/>Tel: ' + escapeHtml(firstText(company.phone, '—')) +
+            '<br/>Email: ' + escapeHtml(firstText(company.email, '—')) +
+            (company.website ? '<br/>Web: ' + escapeHtml(company.website) : '') +
+            (company.taxNumber ? '<br/>KRA PIN: ' + escapeHtml(company.taxNumber) : '') +
+            (company.vatNumber ? ' | VAT: ' + escapeHtml(company.vatNumber) : '') +
+            (company.branchName ? '<br/>' + escapeHtml(company.branchName) : '') +
+            '</p>' +
           '</div>' +
-          '<table class="thermal-items"><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Total</th></tr></thead><tbody>' + receiptRows + '</tbody></table>' +
-          '<div style="margin-top:10px">' +
-            '<div class="thermal-total-row"><span>Subtotal</span><strong>' + money(firstNumber(totals.subtotal, 0), doc.currency) + '</strong></div>' +
-            (firstNumber(totals.discount, 0) > 0 ? '<div class="thermal-total-row"><span>Discount</span><strong>-' + money(firstNumber(totals.discount, 0), doc.currency) + '</strong></div>' : '') +
-            '<div class="thermal-total-row"><span>VAT</span><strong>' + money(firstNumber(totals.tax, 0), doc.currency) + '</strong></div>' +
-            '<div class="thermal-total-row"><span>Payment</span><strong>' + escapeHtml(titleize(firstText(doc.paymentMethod, 'cash'))) + '</strong></div>' +
-            '<div class="thermal-total-row"><span>Cash</span><strong>' + money(firstNumber(totals.paid, 0), doc.currency) + '</strong></div>' +
-            '<div class="thermal-total-row"><span>Change</span><strong>' + money(firstNumber(totals.balance, 0), doc.currency) + '</strong></div>' +
-            '<div class="thermal-total-row thermal-grand"><span>Total</span><strong>' + money(firstNumber(totals.total, 0), doc.currency) + '</strong></div>' +
+        '</div>' +
+        '<div class="tc">' +
+          '<h2>' + title + '</h2>' +
+          '<div class="dn">' + escapeHtml(firstText(doc.documentNumber, '—')) + '</div>' +
+          '<div class="ig">' +
+            '<div><span>Date</span><strong>' + escapeHtml(formatPreviewDate(doc.date)) + '</strong></div>' +
+            '<div><span>' + escapeHtml(doc.type === 'quotation' ? 'Valid Until' : 'Due Date') + '</span><strong>' + escapeHtml(doc.dueDate ? formatPreviewDate(doc.dueDate) : '—') + '</strong></div>' +
+            '<div><span>Salesperson</span><strong>' + escapeHtml(firstText(doc.salesperson, 'Sales Team')) + '</strong></div>' +
+            '<div><span>Currency</span><strong>' + escapeHtml(firstText(doc.currency, 'KES')) + '</strong></div>' +
           '</div>' +
-          '<div class="thermal-footer"><img class="thermal-qr" src="' + escapeAttr(firstText(doc.qrUrl, '')) + '" alt="QR code" /><p class="brand-meta">Thank you for your business</p><p class="brand-meta">' + escapeHtml(footerMeta || firstText(company.website, company.email, '')) + '</p></div>' +
-        '</div></div></div>'
-      : '<div class="page"><div class="sheet sheet--a4"><div class="top-accent"></div><div class="doc-body">' +
-          '<div class="doc-header"><div class="brand"><img src="' + logo + '" alt="Logo" /><div><h1>' + escapeHtml(firstText(company.name, 'Company')) + '</h1><p class="brand-meta">' + escapeHtml(firstText(company.address, '')) + '<br/>Telephone: ' + escapeHtml(firstText(company.phone, '—')) + '<br/>Email: ' + escapeHtml(firstText(company.email, '—')) + '<br/>Website: ' + escapeHtml(firstText(company.website, '—')) + '<br/>KRA PIN: ' + escapeHtml(firstText(company.taxNumber, '—')) + '<br/>VAT No.: ' + escapeHtml(firstText(company.vatNumber, '—')) + '</p></div></div>' +
-          '<div class="doc-title-card"><h2>' + title + '</h2><div class="info-grid"><div><span>Document No.</span><strong>' + escapeHtml(firstText(doc.documentNumber, '—')) + '</strong></div><div><span>Date</span><strong>' + escapeHtml(formatPreviewDate(doc.date)) + '</strong></div><div><span>' + escapeHtml(doc.type === 'quotation' ? 'Valid Until' : 'Due Date') + '</span><strong>' + escapeHtml(doc.dueDate ? formatPreviewDate(doc.dueDate) : '—') + '</strong></div><div><span>Salesperson</span><strong>' + escapeHtml(firstText(doc.salesperson, 'Sales Team')) + '</strong></div></div></div></div>' +
-          '<div class="meta-grid"><section class="panel"><h3>Bill To</h3><strong>' + escapeHtml(firstText(customer.name, 'Walk-in Customer')) + '</strong><p>' + escapeHtml(firstText(customer.company, '')) + '</p><p>' + escapeHtml(firstText(customer.address, '')) + '</p><p>' + escapeHtml(firstText(customer.phone, '')) + '</p><p>' + escapeHtml(firstText(customer.email, '')) + '</p><p>' + (customer.taxNumber ? 'KRA PIN: ' + escapeHtml(customer.taxNumber) : '') + '</p></section>' +
-          '<section class="panel"><h3>Document Information</h3><div class="info-grid"><div><span>' + escapeHtml(doc.type === 'quotation' ? 'Quote No.' : 'Invoice No.') + '</span><strong>' + escapeHtml(firstText(doc.documentNumber, '—')) + '</strong></div><div><span>Reference</span><strong>' + escapeHtml(firstText(doc.reference, '—')) + '</strong></div><div><span>Payment Terms</span><strong>' + escapeHtml(firstText(doc.paymentTerms, '—')) + '</strong></div><div><span>Currency</span><strong>' + escapeHtml(firstText(doc.currency, 'KES')) + '</strong></div></div></section></div>' +
-          '<section class="items"><table><thead><tr><th>Item Code</th><th>Description</th><th class="num">Qty</th><th>Unit</th><th class="num">Unit Price</th><th class="num">Discount</th><th class="num">VAT</th><th class="num">Total</th></tr></thead><tbody>' + a4Rows + '</tbody></table></section>' +
-          '<div class="summary-grid"><div class="notes-grid">' + notesMarkup + '</div><div class="totals-card"><div class="total-row"><span>Subtotal</span><strong>' + money(firstNumber(totals.subtotal, 0), doc.currency) + '</strong></div><div class="total-row"><span>Discount</span><strong>' + money(firstNumber(totals.discount, 0), doc.currency) + '</strong></div><div class="total-row"><span>VAT</span><strong>' + money(firstNumber(totals.tax, 0), doc.currency) + '</strong></div><div class="total-row"><span>Shipping</span><strong>' + money(firstNumber(totals.shipping, 0), doc.currency) + '</strong></div><div class="grand-total"><div><span>Grand Total</span><strong>' + money(firstNumber(totals.total, 0), doc.currency) + '</strong></div><div style="text-align:right"><span>Currency</span><strong style="font-size:18px">' + escapeHtml(firstText(doc.currency, 'KES')) + '</strong></div></div></div></div>' +
-          '<div class="signatures"><div class="signature-card"><div class="signature-line"></div><div class="signature-label">Prepared By</div></div><div class="signature-card"><div class="signature-line"></div><div class="signature-label">Customer Acceptance</div></div><div class="signature-card"><div class="signature-line"></div><div class="signature-label">Approved By</div></div></div>' +
-          '<div class="footer"><img class="qr" src="' + escapeAttr(firstText(doc.qrUrl, '')) + '" alt="QR code" /><div><h4>Thank you for your business</h4><p class="footer-copy">' + escapeHtml(firstText(company.website, '')) + (company.website && company.supportEmail ? ' · ' : '') + escapeHtml(firstText(company.supportEmail, '')) + '</p><p class="footer-copy">' + escapeHtml(firstText(company.slogan, '')) + '</p></div></div>' +
-        '</div></div></div>';
-    return '<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />' + commonStyle + '</head><body>' + body + '</body></html>';
+        '</div>' +
+      '</div>' +
+      // Meta grid
+      '<div class="mg">' +
+        '<section class="panel">' +
+          '<h3>Bill To</h3>' +
+          '<div class="pn">' + escapeHtml(firstText(customer.name, 'Walk-in Customer')) + '</div>' +
+          (customer.company ? '<p>' + escapeHtml(customer.company) + '</p>' : '') +
+          (customer.address ? '<p>' + escapeHtml(customer.address) + '</p>' : '') +
+          (customer.phone ? '<p>Tel: ' + escapeHtml(customer.phone) + '</p>' : '') +
+          (customer.email ? '<p>' + escapeHtml(customer.email) + '</p>' : '') +
+          (customer.taxNumber ? '<p>KRA PIN: ' + escapeHtml(customer.taxNumber) + '</p>' : '') +
+        '</section>' +
+        '<section class="panel">' +
+          '<h3>Document Details</h3>' +
+          '<div class="ig2">' +
+            '<div><span>' + escapeHtml(doc.type === 'quotation' ? 'Quote No.' : 'Invoice No.') + '</span><strong>' + escapeHtml(firstText(doc.documentNumber, '—')) + '</strong></div>' +
+            '<div><span>Reference</span><strong>' + escapeHtml(firstText(doc.reference, '—')) + '</strong></div>' +
+            '<div><span>Payment Terms</span><strong>' + escapeHtml(firstText(doc.paymentTerms, '—')) + '</strong></div>' +
+            '<div><span>Status</span><strong>Draft</strong></div>' +
+          '</div>' +
+        '</section>' +
+      '</div>' +
+      // Items
+      '<section class="items">' +
+        '<table><thead><tr>' +
+          '<th>Code</th><th>Description</th><th class="num">Qty</th><th>Unit</th>' +
+          '<th class="num">Unit Price</th><th class="num">Disc.</th><th class="num">VAT</th><th class="num">Amount</th>' +
+        '</tr></thead><tbody>' + a4Rows + '</tbody></table>' +
+      '</section>' +
+      // Summary
+      '<div class="sg">' +
+        '<div class="ng">' + notesMarkup + '</div>' +
+        '<div class="tp">' +
+          '<div class="tr2"><span>Subtotal</span><strong>' + money(firstNumber(totals.subtotal, 0), doc.currency) + '</strong></div>' +
+          (firstNumber(totals.discount, 0) > 0 ? '<div class="tr2"><span>Discount</span><strong>&minus; ' + money(firstNumber(totals.discount, 0), doc.currency) + '</strong></div>' : '') +
+          '<div class="tr2"><span>VAT</span><strong>' + money(firstNumber(totals.tax, 0), doc.currency) + '</strong></div>' +
+          (firstNumber(totals.shipping, 0) > 0 ? '<div class="tr2"><span>Shipping</span><strong>' + money(firstNumber(totals.shipping, 0), doc.currency) + '</strong></div>' : '') +
+          '<div class="gtb"><span class="gl">Grand Total</span><span class="ga">' + money(firstNumber(totals.total, 0), doc.currency) + '</span></div>' +
+        '</div>' +
+      '</div>' +
+      // Payment details
+      paymentSection +
+      // Terms & conditions
+      termsSection +
+      // Signatures
+      '<div class="sigs">' +
+        '<div class="sig"><div class="sig-line"></div><div class="sig-label">Prepared By</div></div>' +
+        '<div class="sig"><div class="sig-line"></div><div class="sig-label">Customer Acceptance</div></div>' +
+        '<div class="sig"><div class="sig-line"></div><div class="sig-label">Approved By</div></div>' +
+      '</div>' +
+      // Footer
+      '<div class="ftr">' +
+        '<img class="qr" src="' + escapeAttr(firstText(doc.qrUrl, '')) + '" alt="QR" />' +
+        '<div>' +
+          '<h4>Thank you for your business!</h4>' +
+          (footerLine ? '<p>' + footerLine + '</p>' : '') +
+          (company.phone ? '<p>Tel: ' + escapeHtml(company.phone) + '</p>' : '') +
+        '</div>' +
+      '</div>' +
+      '</div></div></div>';
+
+    const thermalBody = '<div class="page"><div class="sheet sheet--th">' +
+      '<div class="accent"></div><div class="th-wrap">' +
+        '<div class="th-head">' +
+          '<img src="' + logo + '" alt="Logo" />' +
+          '<h1>' + escapeHtml(firstText(company.name, 'Company')) + '</h1>' +
+          '<p class="th-sub">' + escapeHtml(firstText(company.address, '')).replace(/\n/g, ' ') + '</p>' +
+          '<p class="th-sub">' + escapeHtml(firstText(company.phone, '')) + '</p>' +
+        '</div>' +
+        '<div class="th-meta">' +
+          '<div class="th-mrow"><span>Receipt No.</span><strong>' + escapeHtml(firstText(doc.documentNumber, '—')) + '</strong></div>' +
+          '<div class="th-mrow"><span>Date</span><strong>' + escapeHtml(formatPreviewDateTime(doc.date)) + '</strong></div>' +
+          '<div class="th-mrow"><span>Cashier</span><strong>' + escapeHtml(firstText(customer.cashier, 'Cashier')) + '</strong></div>' +
+          '<div class="th-mrow"><span>Customer</span><strong>' + escapeHtml(firstText(customer.name, 'Walk-in')) + '</strong></div>' +
+          '<div class="th-mrow"><span>Payment</span><strong>' + escapeHtml(titleize(firstText(doc.paymentMethod, 'Cash'))) + '</strong></div>' +
+        '</div>' +
+        '<table class="th-items"><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Total</th></tr></thead>' +
+        '<tbody>' + thermalRows + '</tbody></table>' +
+        '<div class="th-totals">' +
+          '<div class="th-trow"><span>Subtotal</span><strong>' + money(firstNumber(totals.subtotal, 0), doc.currency) + '</strong></div>' +
+          (firstNumber(totals.discount, 0) > 0 ? '<div class="th-trow"><span>Discount</span><strong>&minus; ' + money(firstNumber(totals.discount, 0), doc.currency) + '</strong></div>' : '') +
+          '<div class="th-trow"><span>VAT</span><strong>' + money(firstNumber(totals.tax, 0), doc.currency) + '</strong></div>' +
+          '<div class="th-trow"><span>Cash Tendered</span><strong>' + money(firstNumber(totals.paid, 0), doc.currency) + '</strong></div>' +
+          '<div class="th-trow"><span>Change</span><strong>' + money(Math.max(0, firstNumber(totals.balance, 0)), doc.currency) + '</strong></div>' +
+          '<div class="th-trow th-grand"><span>TOTAL</span><strong>' + money(firstNumber(totals.total, 0), doc.currency) + '</strong></div>' +
+        '</div>' +
+        '<div class="th-ftr">' +
+          '<img class="th-qr" src="' + escapeAttr(firstText(doc.qrUrl, '')) + '" alt="QR" />' +
+          '<p class="th-sub">Thank you for your business!</p>' +
+          (footerLine ? '<p class="th-sub">' + footerLine + '</p>' : '') +
+        '</div>' +
+      '</div></div></div>';
+
+    const htmlBody = isReceipt ? thermalBody : a4Body;
+    return '<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" />' +
+      '<link rel="preconnect" href="https://fonts.googleapis.com" />' +
+      '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />' +
+      css + '</head><body>' + htmlBody + '</body></html>';
   }
 
   function formatPreviewDate(value) {
@@ -2941,6 +3156,18 @@
       renderCurrentRoute();
     } catch (error) {
       showToast(error.message || "Unable to save branding.", "error");
+    }
+  }
+
+  async function handleSettingsPaymentSubmit(event) {
+    event.preventDefault();
+    const payload = formToObject(event.target);
+    try {
+      await apiJson("/api/settings/payment", { method: "PATCH", body: JSON.stringify(payload) });
+      await loadSettingsData();
+      showToast("Payment details saved.", "success");
+    } catch (error) {
+      showToast(error.message || "Unable to save payment details.", "error");
     }
   }
 
