@@ -70361,7 +70361,7 @@ router7.get("/inventory/movements", async (req, res) => {
   const [{ count }] = await db.select({ count: sql`count(*)` }).from(stockMovementsTable).where(where);
   const movements = await db.select().from(stockMovementsTable).where(where).orderBy(sql`${stockMovementsTable.createdAt} desc`).limit(l).offset(offset);
   const productIds = [...new Set(movements.map((m) => m.productId))];
-  const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(sql`${productsTable.id} = ANY(${productIds})`) : [];
+  const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(inArray(productsTable.id, productIds)) : [];
   const productMap = Object.fromEntries(products.map((p2) => [p2.id, p2.name]));
   res.json({
     data: movements.map((m) => formatMovement(m, productMap[m.productId])),
@@ -70706,7 +70706,7 @@ var router8 = (0, import_express8.Router)();
 async function formatPurchase(purchase) {
   const items = await db.select().from(purchaseItemsTable).where(eq(purchaseItemsTable.purchaseId, purchase.id));
   const productIds = items.map((i) => i.productId);
-  const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(sql`${productsTable.id} = ANY(${productIds})`) : [];
+  const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(inArray(productsTable.id, productIds)) : [];
   const productMap = Object.fromEntries(products.map((p) => [p.id, p.name]));
   const [supplier] = await db.select({ name: suppliersTable.name }).from(suppliersTable).where(eq(suppliersTable.id, purchase.supplierId));
   return {
