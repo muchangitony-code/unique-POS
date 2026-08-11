@@ -853,7 +853,7 @@ function createProductBulkRouter(deps) {
                supplier_id = $8,
                cost_price = $9,
                selling_price = $10,
-               wholesale_price = NULLIF($11, '')::numeric,
+               wholesale_price = COALESCE(NULLIF($11, '')::numeric, 0),
                vat_rate = $12,
                image_url = NULLIF($13, ''),
                unit = NULLIF($14, '')
@@ -869,7 +869,7 @@ function createProductBulkRouter(deps) {
               supplierId,
               String(normalized.cost_price ?? 0),
               String(normalized.selling_price ?? 0),
-              normalized.wholesale_price != null ? String(normalized.wholesale_price) : null,
+              normalized.wholesale_price != null ? String(normalized.wholesale_price) : "0",
               String(normalized.vat_rate ?? 16),
               normalized.image_url,
               normalized.unit
@@ -892,7 +892,7 @@ function createProductBulkRouter(deps) {
             `INSERT INTO products
               (product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, wholesale_price, vat_rate, current_stock, min_stock, image_url, unit, created_at)
              VALUES
-              ($1, NULLIF($2, ''), $3, NULLIF($4, ''), $5, $6, $7, $8, $9, NULLIF($10, '')::numeric, $11, $12, $13, NULLIF($14, ''), NULLIF($15, ''), NOW())
+              ($1, NULLIF($2, ''), $3, NULLIF($4, ''), $5, $6, $7, $8, $9, COALESCE(NULLIF($10, '')::numeric, 0), $11, $12, $13, NULLIF($14, ''), NULLIF($15, ''), NOW())
              RETURNING id`,
             [
               productCode,
@@ -904,7 +904,7 @@ function createProductBulkRouter(deps) {
               supplierId,
               String(normalized.cost_price ?? 0),
               String(normalized.selling_price ?? 0),
-              normalized.wholesale_price != null ? String(normalized.wholesale_price) : null,
+              normalized.wholesale_price != null ? String(normalized.wholesale_price) : "0",
               String(normalized.vat_rate ?? 16),
               Number(normalized.current_stock ?? 0),
               Number(normalized.min_stock ?? 0),
