@@ -866,7 +866,6 @@ CREATE TABLE public.products (
     supplier_id integer,
     cost_price numeric(15,2) DEFAULT '0'::numeric NOT NULL,
     selling_price numeric(15,2) DEFAULT '0'::numeric NOT NULL,
-    wholesale_price numeric(15,4) DEFAULT '0'::numeric NOT NULL,
     vat_rate numeric(5,2) DEFAULT '16'::numeric NOT NULL,
     current_stock integer DEFAULT 0 NOT NULL,
     min_stock integer DEFAULT 0 NOT NULL,
@@ -2790,4 +2789,3 @@ CREATE INDEX users_branch_id_idx ON public.users USING btree (branch_id);
 --
 
 \unrestrict M8GHadX7TW3LqwIXOTH1a0TiuIcijtSPWoKU1196cva01Fe7cHAL9jEgsf4Mc1F
-
