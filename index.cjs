@@ -70054,16 +70054,17 @@ function formatProduct(p, catName, brandName, supplierName, stock) {
     created_at: p.createdAt
   };
 }
-function stockFor(map2, p) {
+function stockFor(map2, p, options = {}) {
   const v = map2.get(p.id);
-  return { current: v?.cur ?? 0, min: v && v.min != null ? v.min : p.minStock };
+  const fallbackCurrent = options.fallbackToProductCurrent ? p.currentStock : 0;
+  return { current: v?.cur ?? fallbackCurrent, min: v && v.min != null ? v.min : p.minStock };
 }
 router6.get("/products", async (req, res) => {
-  const { search, category_id, brand_id, low_stock, page = "1", limit = "50" } = req.query;
+  const { search, category_id, brand_id, low_stock, in_stock_only, fallback_product_stock, page = "1", limit = "50" } = req.query;
   const p = Math.max(1, parseInt(page, 10));
   const l = Math.min(200, parseInt(limit, 10));
   const conditions = [];
-  if (search) conditions.push(ilike(productsTable.productName, `%${search}%`));
+  if (search) conditions.push(or(ilike(productsTable.productName, `%${search}%`), ilike(productsTable.productCode, `%${search}%`), ilike(productsTable.barcode, `%${search}%`)));
   const catId = category_id ? parseInt(category_id, 10) : NaN;
   if (!Number.isNaN(catId)) conditions.push(eq(productsTable.categoryId, catId));
   const brandId = brand_id ? parseInt(brand_id, 10) : NaN;
@@ -70071,7 +70072,9 @@ router6.get("/products", async (req, res) => {
   const where = conditions.length ? and(...conditions) : void 0;
   const allProducts = await db.select().from(productsTable).where(where).orderBy(productsTable.productName);
   const scope = getBranchScope(req);
-  const stockMap = await loadStockMap({ branchId: scope.branchId, all: scope.mode === "all" });
+  const hasExplicitBranch = scope.mode === "single" && scope.branchId != null;
+  const useAllBranches = scope.mode === "all" || !hasExplicitBranch;
+  const stockMap = await loadStockMap({ branchId: useAllBranches ? null : scope.branchId, all: useAllBranches });
   const [categories, brands, suppliers] = await Promise.all([
     db.select().from(categoriesTable),
     db.select().from(brandsTable),
@@ -70080,10 +70083,12 @@ router6.get("/products", async (req, res) => {
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c.name]));
   const brandMap = Object.fromEntries(brands.map((b) => [b.id, b.name]));
   const supplierMap = Object.fromEntries(suppliers.map((s) => [s.id, s.name]));
+  const useProductFallbackStock = fallback_product_stock === "true" || !hasExplicitBranch;
   let formatted = allProducts.map(
-    (prod) => formatProduct(prod, prod.categoryId ? catMap[prod.categoryId] : null, prod.brandId ? brandMap[prod.brandId] : null, prod.supplierId ? supplierMap[prod.supplierId] : null, stockFor(stockMap, prod))
+    (prod) => formatProduct(prod, prod.categoryId ? catMap[prod.categoryId] : null, prod.brandId ? brandMap[prod.brandId] : null, prod.supplierId ? supplierMap[prod.supplierId] : null, stockFor(stockMap, prod, { fallbackToProductCurrent: useProductFallbackStock }))
   );
   if (low_stock === "true") formatted = formatted.filter((r) => r.current_stock <= r.min_stock);
+  if (in_stock_only === "true") formatted = formatted.filter((r) => Number(r.current_stock) > 0);
   const total = formatted.length;
   const offset = (p - 1) * l;
   res.json({ data: formatted.slice(offset, offset + l), total, page: p, limit: l });
