@@ -707,11 +707,29 @@ function createProductBulkRouter(deps) {
     );
   }
 
-  async function getReferenceId(client, table, name, actor, type) {
+  async function getReferenceId(client, table, name, actor, type, options = {}) {
     const normalized = trimText(name);
     if (!normalized) return null;
     const existing = await client.query(`SELECT id FROM ${table} WHERE lower(name) = lower($1) LIMIT 1`, [normalized]);
     if (existing.rows[0]) return existing.rows[0].id;
+    if (table === "suppliers") {
+      let branchId = Number(options.branchId || actor?.branchId || 0);
+      if (!Number.isInteger(branchId) || branchId <= 0) {
+        const fallbackBranch = await client.query(`SELECT id FROM branches ORDER BY id LIMIT 1`);
+        branchId = Number(fallbackBranch.rows[0]?.id || 0);
+      }
+      if (!Number.isInteger(branchId) || branchId <= 0) {
+        throw importValidationError("A branch is required before creating suppliers during bulk import.");
+      }
+      const created = await client.query(`INSERT INTO suppliers (name, branch_id, created_at) VALUES ($1, $2, NOW()) RETURNING id`, [normalized, branchId]);
+      await logAudit({ user: actor, headers: {}, socket: {} }, {
+        action: `${type}.created_by_import`,
+        entityType: type,
+        entityId: created.rows[0].id,
+        description: `Created ${type} "${normalized}" during bulk import`
+      });
+      return created.rows[0].id;
+    }
     const created = await client.query(`INSERT INTO ${table} (name, created_at) VALUES ($1, NOW()) RETURNING id`, [normalized]);
     await logAudit({ user: actor, headers: {}, socket: {} }, {
       action: `${type}.created_by_import`,
@@ -823,7 +841,7 @@ function createProductBulkRouter(deps) {
         const branchId = await resolveBranchId(client, normalized.location, options.default_branch_id || actor.branchId || null);
         const categoryId = options.auto_create_references ? await getReferenceId(client, "categories", normalized.category, actor, "category") : null;
         const brandId = options.auto_create_references ? await getReferenceId(client, "brands", normalized.brand, actor, "brand") : null;
-        const supplierId = options.auto_create_references ? await getReferenceId(client, "suppliers", normalized.supplier, actor, "supplier") : null;
+        const supplierId = options.auto_create_references ? await getReferenceId(client, "suppliers", normalized.supplier, actor, "supplier", { branchId }) : null;
         const existing = await fetchExistingProduct(client, normalized);
         let action = row.action || (existing ? "update" : "create");
         if (existing && options.on_duplicate === "skip") action = "skip";
@@ -1395,7 +1413,8 @@ function createProductBulkRouter(deps) {
         { value: "https://example.com/product.jpg", type: String }
       ]
     ];
-    const buffer = Buffer.from(await writeXlsxFile(sheet, { buffer: true }));
+    const workbook = await writeXlsxFile(sheet, { buffer: true });
+    const buffer = await workbook.toBuffer();
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", 'attachment; filename="product-import-template.xlsx"');
     res.send(buffer);
@@ -1540,7 +1559,8 @@ function createProductBulkRouter(deps) {
       { value: product.description || "", type: String },
       { value: product.image_url || "", type: String }
     ]));
-    const buffer = Buffer.from(await writeXlsxFile(sheet, { buffer: true }));
+    const workbook = await writeXlsxFile(sheet, { buffer: true });
+    const buffer = await workbook.toBuffer();
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", 'attachment; filename="products-export.xlsx"');
     res.send(buffer);
