@@ -107,6 +107,7 @@
     chart: null,
     toastTimer: null,
     modalDocument: null,
+    currentBranchId: "",
     importer: {
       history: [],
       loading: false,
@@ -232,7 +233,9 @@
         renderCurrentRoute();
       }
       if (target.id === "branchSelect") {
-        showToast("Branch selector updated locally.", "success");
+        state.currentBranchId = target.value || "";
+        routeTo(state.activeRoute, { force: true });
+        showToast("Branch updated.", "success");
       }
       if (target.id === "userSelect") {
         showToast("User profile switched visually only.", "success");
@@ -573,6 +576,15 @@
       : '<option value="main">Main Branch</option>';
     const user = state.user || {};
     els.branchSelect.innerHTML = branchOptions;
+    if (!state.currentBranchId) {
+      state.currentBranchId = firstText(
+        state.user && state.user.branch_id,
+        state.user && state.user.branchId,
+        state.branches[0] && state.branches[0].id,
+        ""
+      );
+    }
+    if (state.currentBranchId) els.branchSelect.value = state.currentBranchId;
     els.userSelect.innerHTML = '<option value="' + escapeAttr(String(user.id || "me")) + '">' + escapeHtml(firstText(user.name, user.email, "Admin")) + '</option>';
   }
 
@@ -665,7 +677,7 @@
 
   async function loadSalesData() {
     const [products, categories, customers, sales] = await Promise.all([
-      apiJson("/api/products?limit=200").catch(function () { return { data: [] }; }),
+      apiJson("/api/products?limit=200&in_stock_only=true&fallback_product_stock=true").catch(function () { return { data: [] }; }),
       apiJson("/api/categories").catch(function () { return []; }),
       apiJson("/api/customers?limit=200").catch(function () { return { data: [] }; }),
       apiJson("/api/pos/sales?limit=12").catch(function () { return { data: [] }; })
@@ -1756,7 +1768,7 @@
     if (!products.length) return renderEmptyInline("No products match the current search or category.");
     return '<div class="product-grid">' + products.map(function (product) {
       const image = sanitizeUrl(product.image_url);
-      return '<article class="product-card"><div class="product-card__image">' + (image ? '<img src="' + escapeAttr(image) + '" alt="' + escapeAttr(firstText(product.product_name, 'Product')) + '" />' : '<i class="fa-solid fa-solar-panel"></i>') + '</div><div class="product-card__body"><div class="product-card__title">' + escapeHtml(firstText(product.product_name, 'Product')) + '</div><div class="product-card__meta"><span>' + money(firstNumber(product.selling_price, 0)) + '</span>' + renderStockPill(product) + '</div><button class="btn btn-primary" data-action="add-to-basket" data-id="' + escapeAttr(String(product.id)) + '"><i class="fa-solid fa-plus"></i>Add</button></div></article>';
+      return '<article class="product-card" data-action="add-to-basket" data-id="' + escapeAttr(String(product.id)) + '"><div class="product-card__image">' + (image ? '<img src="' + escapeAttr(image) + '" alt="' + escapeAttr(firstText(product.product_name, 'Product')) + '" />' : '<i class="fa-solid fa-solar-panel"></i>') + '</div><div class="product-card__body"><div class="product-card__title">' + escapeHtml(firstText(product.product_name, 'Product')) + '</div><div class="product-card__meta"><span>' + money(firstNumber(product.selling_price, 0)) + '</span>' + renderStockPill(product) + '</div><button type="button" class="btn btn-primary"><i class="fa-solid fa-plus"></i>Add</button></div></article>';
     }).join("") + '</div>';
   }
 
@@ -1951,7 +1963,7 @@
 
   function filterPosProducts() {
     let products = state.pos.products.slice();
-    const query = firstText(state.pos.search, state.search).toLowerCase();
+    const query = firstText(state.pos.search, "").toLowerCase();
     if (query) {
       products = products.filter(function (item) {
         return [item.product_name, item.product_code, item.barcode, item.category_name].some(function (value) {
@@ -1959,6 +1971,9 @@
         });
       });
     }
+    products = products.filter(function (item) {
+      return firstNumber(item.current_stock, item.stock, 0) > 0;
+    });
     const filter = state.pos.categoryFilter;
     if (filter && filter !== "All Products") {
       products = products.filter(function (item) {
@@ -2562,6 +2577,7 @@
   function fetchWithJson(url, options) {
     const next = options || {};
     const headers = new Headers(next.headers || {});
+    appendBranchScopeHeader(headers);
     if (shouldUseJsonContentType(next.body) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     return fetch(url, Object.assign({}, next, { headers: headers }));
   }
@@ -2570,8 +2586,17 @@
     const next = options || {};
     const headers = new Headers(next.headers || {});
     if (state.token) headers.set('Authorization', 'Bearer ' + state.token);
+    appendBranchScopeHeader(headers);
     if (shouldUseJsonContentType(next.body) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     return fetch(url, Object.assign({}, next, { headers: headers }));
+  }
+
+  function appendBranchScopeHeader(headers) {
+    if (headers.has("x-branch-id")) return;
+    const raw = firstText(state.currentBranchId, "");
+    if (!raw || raw === "all") return;
+    const branchId = parseInt(raw, 10);
+    if (Number.isInteger(branchId) && branchId > 0) headers.set("x-branch-id", String(branchId));
   }
 
   function shouldUseJsonContentType(body) {
