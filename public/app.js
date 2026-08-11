@@ -108,6 +108,20 @@
     toastTimer: null,
     modalDocument: null,
     currentBranchId: "",
+    productWorkspace: {
+      search: "",
+      categoryId: "all",
+      status: "all",
+      branchId: "all",
+      page: 1,
+      pageSize: 10,
+      selectedIds: [],
+      editor: {
+        productId: null,
+        photos: [],
+        uploading: false
+      }
+    },
     importer: {
       history: [],
       loading: false,
@@ -206,6 +220,9 @@
       const form = event.target;
       if (form.id === "loginForm") return handleLogin(event);
       if (form.id === "modalForm") return handleModalFormSubmit(event);
+      if (form.id === "productEditorForm") return handleProductEditorSubmit(event);
+      if (form.id === "categoryCreateForm") return handleCategoryCreateSubmit(event);
+      if (form.id === "productAdjustForm") return handleProductAdjustmentSubmit(event);
       if (form.id === "settingsBusinessForm") return handleSettingsBusinessSubmit(event);
       if (form.id === "settingsBrandingForm") return handleSettingsBrandingSubmit(event);
       if (form.id === "settingsPaymentForm") return handleSettingsPaymentSubmit(event);
@@ -241,12 +258,41 @@
       if (target.id === "userSelect") {
         showToast("User profile switched visually only.", "success");
       }
+      if (target.id === "productFilterCategory") {
+        state.productWorkspace.categoryId = target.value || "all";
+        state.productWorkspace.page = 1;
+        renderCurrentRoute();
+      }
+      if (target.id === "productFilterStatus") {
+        state.productWorkspace.status = target.value || "all";
+        state.productWorkspace.page = 1;
+        renderCurrentRoute();
+      }
+      if (target.id === "productFilterBranch") {
+        state.productWorkspace.branchId = target.value || "all";
+        state.productWorkspace.page = 1;
+        renderCurrentRoute();
+      }
+      if (target.id === "productSelectAll") {
+        toggleSelectAllVisibleProducts(!!target.checked);
+        renderCurrentRoute();
+      }
+      if (target.id === "productPhotoInput" && target.files && target.files.length) {
+        handleProductPhotoFiles(Array.from(target.files)).catch(function (error) {
+          showToast(error.message || "Unable to upload product photos.", "error");
+        });
+      }
     });
 
     document.addEventListener("input", function (event) {
       const target = event.target;
       if (target.id === "globalSearchInput") {
         state.search = target.value.trim();
+        renderCurrentRoute();
+      }
+      if (target.id === "productPageSearch") {
+        state.productWorkspace.search = target.value.trim();
+        state.productWorkspace.page = 1;
         renderCurrentRoute();
       }
       if (target.id === "posProductSearch") {
@@ -333,6 +379,52 @@
         return;
       case "quick-add-product":
         openProductModal();
+        return;
+      case "manage-categories":
+        openCategoryManagementModal();
+        return;
+      case "product-create-category":
+        await quickCreateCategoryFromEditor();
+        return;
+      case "product-edit":
+        await openProductModal(button.dataset.productId);
+        return;
+      case "product-duplicate":
+        await handleDuplicateProduct(button.dataset.productId);
+        return;
+      case "product-history":
+        await openProductHistoryModal(button.dataset.productId);
+        return;
+      case "product-stock-adjust":
+        await openStockAdjustmentModal(button.dataset.productId);
+        return;
+      case "product-page-prev":
+        changeProductPage(-1);
+        return;
+      case "product-page-next":
+        changeProductPage(1);
+        return;
+      case "product-row-select":
+        toggleProductSelection(button.dataset.productId);
+        renderCurrentRoute();
+        return;
+      case "product-bulk-apply":
+        await handleProductBulkAction();
+        return;
+      case "product-photo-pick":
+        openProductPhotoPicker();
+        return;
+      case "product-photo-remove":
+        removeProductPhoto(button.dataset.photoPath);
+        return;
+      case "category-rename":
+        await handleRenameCategory(button.dataset.categoryId, button.dataset.categoryName);
+        return;
+      case "category-merge":
+        await handleMergeCategory(button.dataset.categoryId, button.dataset.categoryName);
+        return;
+      case "category-delete":
+        await handleDeleteCategory(button.dataset.categoryId, button.dataset.categoryName);
         return;
       case "bulk-import-products":
       openBulkImportModal();
@@ -790,10 +882,13 @@
 
   async function loadProductsData(keepArchivedFlag) {
     const includeArchived = keepArchivedFlag && isSuperAdmin() && (state.cache.products || {}).includeArchived;
-    const productUrl = "/api/products?limit=200" + (includeArchived ? "&include_archived=true" : "");
+    const productUrl = "/api/products?limit=500" + (includeArchived ? "&include_archived=true" : "");
     const requests = [
       apiJson(productUrl).catch(function () { return { data: [] }; }),
-      apiJson("/api/categories").catch(function () { return []; })
+      apiJson("/api/categories").catch(function () { return []; }),
+      apiJson("/api/brands").catch(function () { return []; }),
+      apiJson("/api/suppliers?limit=200").catch(function () { return { data: [] }; }),
+      apiJson("/api/branches/options").catch(function () { return []; })
     ];
     if (canBulkImportProducts()) {
       requests.push(apiJson("/api/products/imports").catch(function () { return { data: [] }; }));
@@ -801,8 +896,18 @@
     const responses = await Promise.all(requests);
     const products = responses[0];
     const categories = responses[1];
-    state.cache.products = { products: normalizeList(products), categories: normalizeList(categories), includeArchived: !!includeArchived };
-    state.importer.history = canBulkImportProducts() ? normalizeList(responses[2]) : [];
+    const brands = responses[2];
+    const suppliers = responses[3];
+    const branches = responses[4];
+    state.cache.products = {
+      products: normalizeList(products),
+      categories: normalizeList(categories),
+      brands: normalizeList(brands),
+      suppliers: normalizeList(suppliers),
+      branches: normalizeList(branches),
+      includeArchived: !!includeArchived
+    };
+    state.importer.history = canBulkImportProducts() ? normalizeList(responses[5]) : [];
   }
 
   async function loadCustomersData() {
@@ -1077,48 +1182,172 @@
     ].join("");
   }
 
+  function canEditProducts() {
+    const role = firstText(state.user && state.user.role);
+    return ["super_admin", "business_owner", "branch_manager", "storekeeper"].includes(role);
+  }
+
+  function getProductCollections() {
+    const cache = state.cache.products || {};
+    return {
+      allProducts: cache.products || [],
+      categories: cache.categories || [],
+      brands: cache.brands || [],
+      suppliers: cache.suppliers || [],
+      branches: cache.branches || state.branches || [],
+      includeArchived: !!cache.includeArchived
+    };
+  }
+
+  function getFilteredProductRows() {
+    const collections = getProductCollections();
+    const searchValue = firstText(state.productWorkspace.search).toLowerCase();
+    const categoryId = firstText(state.productWorkspace.categoryId, "all");
+    const status = firstText(state.productWorkspace.status, "all");
+    const branchId = firstText(state.productWorkspace.branchId, "all");
+    return collections.allProducts.filter(function (item) {
+      const matchesSearch = !searchValue || [
+        firstText(item.product_name),
+        firstText(item.sku, item.product_code),
+        firstText(item.barcode),
+        firstText(item.category_name),
+        firstText(item.brand_name),
+        firstText(item.supplier_name),
+        firstText(item.branch_name)
+      ].join(" ").toLowerCase().indexOf(searchValue) >= 0;
+      const matchesCategory = categoryId === "all" || String(item.category_id || "") === String(categoryId);
+      const matchesStatus = status === "all" || firstText(item.status, "active") === status;
+      const matchesBranch = branchId === "all" || String(item.branch_id || item.primary_branch_id || "") === String(branchId);
+      return matchesSearch && matchesCategory && matchesStatus && matchesBranch;
+    });
+  }
+
+  function getVisibleProductPageRows(rows) {
+    const pageSize = firstNumber(state.productWorkspace.pageSize, 10);
+    const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+    if (state.productWorkspace.page > totalPages) state.productWorkspace.page = totalPages;
+    const currentPage = Math.max(1, state.productWorkspace.page);
+    const start = (currentPage - 1) * pageSize;
+    return {
+      rows: rows.slice(start, start + pageSize),
+      start: rows.length ? start + 1 : 0,
+      end: Math.min(start + pageSize, rows.length),
+      currentPage: currentPage,
+      totalPages: totalPages
+    };
+  }
+
+  function changeProductPage(direction) {
+    const rows = getFilteredProductRows().filter(function (item) { return !item.is_archived; });
+    const totalPages = Math.max(1, Math.ceil(rows.length / firstNumber(state.productWorkspace.pageSize, 10)));
+    state.productWorkspace.page = Math.min(totalPages, Math.max(1, state.productWorkspace.page + direction));
+    renderCurrentRoute();
+  }
+
+  function toggleProductSelection(productId) {
+    const id = String(productId || "");
+    const selected = new Set((state.productWorkspace.selectedIds || []).map(String));
+    if (selected.has(id)) selected.delete(id);
+    else selected.add(id);
+    state.productWorkspace.selectedIds = Array.from(selected);
+  }
+
+  function toggleSelectAllVisibleProducts(checked) {
+    const visible = getVisibleProductPageRows(getFilteredProductRows().filter(function (item) { return !item.is_archived; })).rows.map(function (item) { return String(item.id); });
+    const selected = new Set((state.productWorkspace.selectedIds || []).map(String));
+    visible.forEach(function (id) {
+      if (checked) selected.add(id);
+      else selected.delete(id);
+    });
+    state.productWorkspace.selectedIds = Array.from(selected);
+  }
+
+  function renderProductPhoto(value, alt, compact) {
+    const url = resolveInventoryAssetUrl(value);
+    const klass = compact ? 'inventory-photo inventory-photo--small' : 'inventory-photo';
+    return url ? '<div class="' + klass + '"><img src="' + escapeAttr(url) + '" alt="' + escapeAttr(alt || 'Product photo') + '" /></div>' : '<div class="' + klass + ' inventory-photo--placeholder"><i class="fa-solid fa-box-open"></i></div>';
+  }
+
+  function renderInventoryStatus(product) {
+    return '<div class="inventory-status-stack">' + renderBadge(firstText(product.status, 'active')) + renderStockPill(product) + '</div>';
+  }
+
+  function renderProductSelectionSummary(pageRows, totalRows) {
+    if (!canEditProducts()) return '';
+    const selected = new Set((state.productWorkspace.selectedIds || []).map(String));
+    const allVisibleSelected = pageRows.length && pageRows.every(function (item) { return selected.has(String(item.id)); });
+    return '<div class="inventory-bulkbar">' +
+      '<label class="inventory-check"><input id="productSelectAll" type="checkbox"' + (allVisibleSelected ? ' checked' : '') + ' /><span>Select page</span></label>' +
+      '<div class="inventory-bulkbar__meta"><strong>' + escapeHtml(String(selected.size)) + '</strong><span>selected of ' + escapeHtml(String(totalRows)) + '</span></div>' +
+      '<div class="inventory-bulkbar__actions"><select id="productBulkAction"><option value="">Bulk actions</option><option value="generate-barcodes">Generate barcodes</option>' + (isSuperAdmin() ? '<option value="archive">Archive selected</option><option value="restore">Restore selected</option><option value="delete">Delete selected</option>' : '') + '</select><button class="btn btn-outline" type="button" data-action="product-bulk-apply">Apply</button></div>' +
+      '</div>';
+  }
+
+  function renderProductPagination(pageInfo, totalRows) {
+    return '<div class="inventory-pagination"><div class="inventory-pagination__meta">Showing ' + escapeHtml(String(pageInfo.start)) + '–' + escapeHtml(String(pageInfo.end)) + ' of ' + escapeHtml(String(totalRows)) + ' products</div><div class="inventory-pagination__actions"><button class="btn btn-outline" type="button" data-action="product-page-prev"' + (pageInfo.currentPage <= 1 ? ' disabled' : '') + '><i class="fa-solid fa-chevron-left"></i>Prev</button><span class="document-chip">Page ' + escapeHtml(String(pageInfo.currentPage)) + ' / ' + escapeHtml(String(pageInfo.totalPages)) + '</span><button class="btn btn-outline" type="button" data-action="product-page-next"' + (pageInfo.currentPage >= pageInfo.totalPages ? ' disabled' : '') + '>Next<i class="fa-solid fa-chevron-right"></i></button></div></div>';
+  }
+
+  function renderProductDesktopTable(rows) {
+    if (!rows.length) return renderEmptyInline("No products match the current filters.");
+    const selected = new Set((state.productWorkspace.selectedIds || []).map(String));
+    const editable = canEditProducts();
+    return '<div class="data-table-wrap inventory-table-wrap"><table class="data-table inventory-table"><thead><tr><th style="width:44px"></th><th>Photo</th><th>SKU</th><th>Barcode</th><th>Product Name</th><th>Category</th><th>Buying Price</th><th>Selling Price</th><th>Current Stock</th><th>Branch</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + rows.map(function (item) {
+      return '<tr>' +
+        '<td><button class="icon-btn inventory-row-check' + (selected.has(String(item.id)) ? ' is-selected' : '') + '" type="button"' + (editable ? ' data-action="product-row-select" data-product-id="' + escapeAttr(String(item.id)) + '"' : ' disabled') + ' aria-label="Select product"><i class="fa-solid ' + (editable ? (selected.has(String(item.id)) ? 'fa-check' : 'fa-plus') : 'fa-lock') + '"></i></button></td>' +
+        '<td>' + renderProductPhoto(firstText(item.image_url, (item.product_photos || [])[0], ""), firstText(item.product_name, 'Product'), true) + '</td>' +
+        '<td><strong>' + escapeHtml(firstText(item.sku, item.product_code, '—')) + '</strong></td>' +
+        '<td>' + escapeHtml(firstText(item.barcode, '—')) + '</td>' +
+        '<td><div class="inventory-name-cell"><strong>' + escapeHtml(firstText(item.product_name, '—')) + '</strong><div class="table-caption">' + escapeHtml(firstText(item.brand_name, item.supplier_name, 'No brand')) + '</div></div></td>' +
+        '<td>' + escapeHtml(firstText(item.category_name, 'Uncategorised')) + '</td>' +
+        '<td>' + money(firstNumber(item.buying_price, item.cost_price, 0)) + '</td>' +
+        '<td>' + money(firstNumber(item.selling_price, 0)) + '</td>' +
+        '<td><div class="inventory-stock-cell"><strong>' + escapeHtml(numberText(firstNumber(item.current_stock, 0))) + '</strong><div class="table-caption">Min ' + escapeHtml(numberText(firstNumber(item.min_stock, 0))) + ' ' + escapeHtml(firstText(item.unit_of_measure, item.unit, 'units')) + '</div></div></td>' +
+        '<td>' + escapeHtml(firstText(item.branch_name, 'Not assigned')) + '</td>' +
+        '<td>' + renderInventoryStatus(item) + '</td>' +
+        '<td>' + renderProductActionButtons(item) + '</td>' +
+      '</tr>';
+    }).join('') + '</tbody></table></div>';
+  }
+
   function renderProducts() {
-    const allProducts = (state.cache.products || {}).products || [];
-    const showArchived = isSuperAdmin() && (state.cache.products || {}).includeArchived;
-    const products = applySearch(allProducts, state.search, ["product_name", "product_code", "barcode", "category_name"]);
-    const activeProducts = products.filter(function (p) { return !p.is_archived; });
-    const archivedProducts = products.filter(function (p) { return p.is_archived; });
+    const collections = getProductCollections();
+    const rows = getFilteredProductRows();
+    const activeProducts = rows.filter(function (item) { return !item.is_archived; });
+    const archivedProducts = rows.filter(function (item) { return item.is_archived; });
     const summary = productSummary(activeProducts);
+    const pageInfo = getVisibleProductPageRows(activeProducts);
     const canImport = canBulkImportProducts();
-    const history = (state.importer.history || []).slice(0, 5);
-    const productHeaders = isSuperAdmin()
-      ? ["Product", "SKU", "Category", "Price", "Stock", "Actions"]
-      : ["Product", "SKU", "Category", "Price", "Stock"];
+    const showArchived = isSuperAdmin() && collections.includeArchived;
+    const editable = canEditProducts();
     els.viewRoot.innerHTML = [
-      '<div class="module-toolbar"><div class="inline-group"><button class="btn btn-primary" data-action="quick-add-product"><i class="fa-solid fa-plus"></i>Add Product</button>' + (canImport ? '<button class="btn btn-secondary" data-action="bulk-import-products"><i class="fa-solid fa-file-import"></i>Bulk Import Products</button>' : '') + '<button class="btn btn-outline" data-route="inventory"><i class="fa-solid fa-warehouse"></i>Inventory</button>' + (isSuperAdmin() ? '<button class="btn btn-outline" data-action="toggle-archived-products" title="' + (showArchived ? "Hide archived" : "Show archived products") + '"><i class="fa-solid fa-box-archive"></i>' + (showArchived ? 'Hide Archived' : 'Show Archived') + '</button>' : '') + '</div><div class="stats-inline"><span class="document-chip">Categories: ' + escapeHtml(String(summary.categories)) + '</span><span class="document-chip">Low Stock: ' + escapeHtml(String(summary.lowStock)) + '</span></div></div>',
-      renderOverviewTiles([
-        ["Products", numberText(summary.total)],
-        ["Low Stock", numberText(summary.lowStock)],
-        ["Out of Stock", numberText(summary.outOfStock)],
-        ["Average Price", money(summary.avgPrice)]
-      ]),
-      canImport ? renderBulkImportSummaryCard(history) : '',
-      '<section class="card section-card">' + renderTable(productHeaders, activeProducts.map(function (item) {
-        var row = [
-          escapeHtml(firstText(item.product_name, "—")),
-          escapeHtml(firstText(item.product_code, item.barcode, "—")),
-          escapeHtml(firstText(item.category_name, item.category, "Uncategorised")),
-          money(firstNumber(item.selling_price, 0)),
-          renderStockPill(item)
-        ];
-        if (isSuperAdmin()) row.push(renderProductActionButtons(item));
-        return row;
-      }), "No products found.") + '</section>',
-      (showArchived && archivedProducts.length > 0) ? '<section class="card section-card"><div class="section-head"><div><h3><i class="fa-solid fa-box-archive" style="color:var(--muted)"></i> Archived Products</h3><p>Hidden from normal lists. Restore to make available again.</p></div></div>' + renderTable(["Product", "SKU", "Category", "Archived", "Actions"], archivedProducts.map(function (item) {
-        return [
-          escapeHtml(firstText(item.product_name, "—")),
-          escapeHtml(firstText(item.product_code, item.barcode, "—")),
-          escapeHtml(firstText(item.category_name, item.category, "Uncategorised")),
-          escapeHtml(item.archived_at ? formatDate(item.archived_at) : "—"),
-          renderProductActionButtons(item)
-        ];
-      }), "No archived products.") + '</section>' : ''
-    ].join("");
+      '<section class="card section-card inventory-shell">' +
+        '<div class="inventory-header">' +
+          '<div><span class="workspace-hero__eyebrow">Inventory Management</span><h2>Products</h2><p>Manage catalog data, pricing, stock and photo-rich inventory records across branches.</p></div>' +
+          '<div class="inventory-header__actions">' + (editable ? '<button class="btn btn-primary" data-action="quick-add-product"><i class="fa-solid fa-plus"></i>Add Product</button><button class="btn btn-outline" data-action="manage-categories"><i class="fa-solid fa-tags"></i>Manage Categories</button>' : '') + '<button class="btn btn-outline" data-route="inventory"><i class="fa-solid fa-warehouse"></i>Inventory</button>' + (canImport ? '<button class="btn btn-secondary" data-action="bulk-import-products"><i class="fa-solid fa-file-import"></i>Bulk Import</button>' : '') + (isSuperAdmin() ? '<button class="btn btn-outline" data-action="toggle-archived-products"><i class="fa-solid fa-box-archive"></i>' + (showArchived ? 'Hide Archived' : 'Show Archived') + '</button>' : '') + '</div>' +
+        '</div>' +
+        renderOverviewTiles([
+          ['Products', numberText(summary.total)],
+          ['Low Stock', numberText(summary.lowStock)],
+          ['Out of Stock', numberText(summary.outOfStock)],
+          ['Categories', numberText(summary.categories)]
+        ]) +
+        '<div class="inventory-filterbar">' +
+          '<label class="search-field search-field--compact inventory-search"><i class="fa-solid fa-magnifying-glass"></i><input id="productPageSearch" type="search" placeholder="Search SKU, barcode, product or supplier" value="' + escapeAttr(firstText(state.productWorkspace.search, '')) + '" /></label>' +
+          '<label><span>Category</span><select id="productFilterCategory"><option value="all">All categories</option>' + collections.categories.map(function (item) {
+            return '<option value="' + escapeAttr(String(item.id)) + '"' + (String(state.productWorkspace.categoryId) === String(item.id) ? ' selected' : '') + '>' + escapeHtml(firstText(item.name, 'Category')) + '</option>';
+          }).join('') + '</select></label>' +
+          '<label><span>Status</span><select id="productFilterStatus"><option value="all">All statuses</option><option value="active"' + (state.productWorkspace.status === 'active' ? ' selected' : '') + '>Active</option><option value="inactive"' + (state.productWorkspace.status === 'inactive' ? ' selected' : '') + '>Inactive</option></select></label>' +
+          '<label><span>Branch</span><select id="productFilterBranch"><option value="all">All branches</option>' + collections.branches.map(function (item) {
+            return '<option value="' + escapeAttr(String(item.id)) + '"' + (String(state.productWorkspace.branchId) === String(item.id) ? ' selected' : '') + '>' + escapeHtml(firstText(item.name, item.branch_name, 'Branch')) + '</option>';
+          }).join('') + '</select></label>' +
+        '</div>' +
+        renderProductSelectionSummary(pageInfo.rows, activeProducts.length) +
+        renderProductDesktopTable(pageInfo.rows) +
+        renderProductPagination(pageInfo, activeProducts.length) +
+      '</section>',
+      (showArchived && archivedProducts.length ? '<section class="card section-card inventory-archived"><div class="section-head"><div><h3>Archived Products</h3><p>Products hidden from active catalog views but kept for history.</p></div></div>' + renderProductDesktopTable(archivedProducts.slice(0, 20)) + '</section>' : ''),
+      canImport ? renderBulkImportSummaryCard((state.importer.history || []).slice(0, 5)) : ''
+    ].join('');
   }
 
   function canBulkImportProducts() {
@@ -1145,15 +1374,22 @@
   }
 
   function renderProductActionButtons(product) {
-    if (!isSuperAdmin()) return '';
-    var buttons = [];
-    if (product.is_archived) {
-      buttons.push('<button class="btn btn-outline" style="padding:5px 10px;font-size:0.8rem" data-action="restore-product" data-product-id="' + escapeAttr(String(product.id)) + '" data-product-name="' + escapeAttr(firstText(product.product_name)) + '" title="Restore this archived product"><i class="fa-solid fa-rotate-right"></i> Restore</button>');
-    } else {
-      buttons.push('<button class="btn btn-outline" style="padding:5px 10px;font-size:0.8rem" data-action="archive-product" data-product-id="' + escapeAttr(String(product.id)) + '" data-product-name="' + escapeAttr(firstText(product.product_name)) + '" title="Archive: hide from lists, preserve history"><i class="fa-solid fa-box-archive"></i> Archive</button>');
-      buttons.push('<button class="btn btn-danger" style="padding:5px 10px;font-size:0.8rem" data-action="delete-product" data-product-id="' + escapeAttr(String(product.id)) + '" data-product-name="' + escapeAttr(firstText(product.product_name)) + '" title="Permanently delete (blocked if sales history exists)"><i class="fa-solid fa-trash"></i> Delete</button>');
+    if (!canEditProducts()) return '<span class="muted">View only</span>';
+    var buttons = [
+      '<button class="btn btn-outline" type="button" data-action="product-edit" data-product-id="' + escapeAttr(String(product.id)) + '"><i class="fa-solid fa-pen"></i>Edit</button>',
+      '<button class="btn btn-outline" type="button" data-action="product-duplicate" data-product-id="' + escapeAttr(String(product.id)) + '"><i class="fa-regular fa-clone"></i>Duplicate</button>',
+      '<button class="btn btn-outline" type="button" data-action="product-history" data-product-id="' + escapeAttr(String(product.id)) + '"><i class="fa-solid fa-clock-rotate-left"></i>View History</button>',
+      '<button class="btn btn-outline" type="button" data-action="product-stock-adjust" data-product-id="' + escapeAttr(String(product.id)) + '"><i class="fa-solid fa-sliders"></i>Stock Adjustment</button>'
+    ];
+    if (product.is_archived && isSuperAdmin()) {
+      buttons.unshift('<button class="btn btn-outline" type="button" data-action="restore-product" data-product-id="' + escapeAttr(String(product.id)) + '" data-product-name="' + escapeAttr(firstText(product.product_name)) + '"><i class="fa-solid fa-rotate-right"></i>Restore</button>');
+    } else if (!product.is_archived && isSuperAdmin()) {
+      buttons.push('<button class="btn btn-outline" type="button" data-action="archive-product" data-product-id="' + escapeAttr(String(product.id)) + '" data-product-name="' + escapeAttr(firstText(product.product_name)) + '"><i class="fa-solid fa-box-archive"></i>Archive</button>');
     }
-    return '<div class="table-actions">' + buttons.join("") + '</div>';
+    if (isSuperAdmin()) {
+      buttons.push('<button class="btn btn-danger" type="button" data-action="delete-product" data-product-id="' + escapeAttr(String(product.id)) + '" data-product-name="' + escapeAttr(firstText(product.product_name)) + '"><i class="fa-solid fa-trash"></i>Delete</button>');
+    }
+    return '<div class="table-actions inventory-actions">' + buttons.join("") + '</div>';
   }
 
   function renderBulkImportSummaryCard(history) {
@@ -1969,7 +2205,7 @@
   function renderProductGrid(products) {
     if (!products.length) return renderEmptyInline("No products match the current search or category.");
     return '<div class="product-grid">' + products.map(function (product) {
-      const image = sanitizeUrl(product.image_url);
+      const image = resolveInventoryAssetUrl(product.image_url);
       return '<article class="product-card" data-action="add-to-basket" data-id="' + escapeAttr(String(product.id)) + '"><div class="product-card__image">' + (image ? '<img src="' + escapeAttr(image) + '" alt="' + escapeAttr(firstText(product.product_name, 'Product')) + '" />' : '<i class="fa-solid fa-solar-panel"></i>') + '</div><div class="product-card__body"><div class="product-card__title">' + escapeHtml(firstText(product.product_name, 'Product')) + '</div><div class="product-card__meta"><span>' + money(firstNumber(product.selling_price, 0)) + '</span>' + renderStockPill(product) + '</div><button type="button" class="btn btn-primary"><i class="fa-solid fa-plus"></i>Add</button></div></article>';
     }).join("") + '</div>';
   }
@@ -1977,7 +2213,7 @@
   function renderBasketTable() {
     if (!state.pos.basket.length) return '<div class="empty-state"><i class="fa-solid fa-basket-shopping"></i>Basket is empty. Add products to begin.</div>';
     return '<div class="data-table-wrap"><table class="basket-table"><thead><tr><th colspan="2">Item</th><th>Qty</th><th>Total</th><th></th></tr></thead><tbody>' + state.pos.basket.map(function (line) {
-      const image = sanitizeUrl(line.image_url);
+      const image = resolveInventoryAssetUrl(line.image_url);
       const imgHtml = image
         ? '<div class="basket-table-img"><img src="' + escapeAttr(image) + '" alt="" /></div>'
         : '<div class="basket-table-img"><i class="fa-solid fa-solar-panel"></i></div>';
@@ -3109,6 +3345,7 @@
     els.modalActions.innerHTML = "";
     els.modalBody.innerHTML = "";
     stopBulkImportPolling();
+    state.productWorkspace.editor = { productId: null, photos: [], uploading: false };
     resetModalDocument();
   }
 
@@ -3120,12 +3357,378 @@
     });
   }
 
-  function openProductModal() {
-    openModal({
-      title: "Add Product",
-      subtitle: "Create a product for POS and stock control.",
-      body: '<form id="modalForm" data-kind="product" class="form-grid two"><label><span>Product Code / SKU</span><input name="product_code" required /></label><label><span>Product Name</span><input name="product_name" required /></label><label><span>Selling Price</span><input type="number" min="0" step="0.01" name="selling_price" required /></label><label><span>Cost Price</span><input type="number" min="0" step="0.01" name="cost_price" required /></label><label><span>Category</span><input name="category" placeholder="Solar Panels, Batteries..." /></label><label><span>Opening Stock</span><input type="number" min="0" step="1" name="current_stock" /></label><div class="form-span-2 inline-group"><button class="btn btn-primary" type="submit">Save Product</button><button class="btn btn-outline" type="button" data-action="close-modal">Cancel</button></div></form>'
+  async function openProductModal(productId) {
+    try {
+      const refs = state.cache.products || {};
+      const product = productId ? await apiJson('/api/products/' + encodeURIComponent(productId)) : null;
+      state.productWorkspace.editor.productId = product ? product.id : null;
+      state.productWorkspace.editor.photos = (product && product.product_photos ? product.product_photos.slice() : []);
+      state.productWorkspace.editor.uploading = false;
+      openModal({
+        title: product ? 'Edit Product' : 'Add Product',
+        subtitle: product ? 'Update catalog details, pricing, branch assignment and stock controls.' : 'Create a stock-tracked product with pricing, photos and branch assignment.',
+        wide: true,
+        body: renderProductEditorForm(product, refs)
+      });
+      bindProductPhotoDropzone();
+    } catch (error) {
+      showToast(error.message || 'Unable to load the product editor.', 'error');
+    }
+  }
+
+  function renderProductEditorForm(product, refs) {
+    const categories = normalizeList(refs && refs.categories);
+    const brands = normalizeList(refs && refs.brands);
+    const suppliers = normalizeList(refs && refs.suppliers);
+    const branches = normalizeList(refs && refs.branches);
+    const photos = state.productWorkspace.editor.photos || [];
+    return '<form id="productEditorForm" class="form-grid two inventory-editor-form">' +
+      (product ? '<input type="hidden" name="product_id" value="' + escapeAttr(String(product.id)) + '" />' : '') +
+      '<div class="form-span-2 inventory-photo-panel"><div class="section-head"><div><h4>Product Photos</h4><p>Drag and drop multiple product images, reorder later by removing and re-uploading.</p></div><button class="btn btn-outline" type="button" data-action="product-photo-pick"><i class="fa-solid fa-image"></i>Upload Photos</button></div>' +
+      '<input id="productPhotoInput" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" multiple class="hidden" />' +
+      '<div id="productPhotoDropzone" class="inventory-upload-dropzone"><i class="fa-solid fa-cloud-arrow-up"></i><strong>' + escapeHtml(state.productWorkspace.editor.uploading ? 'Uploading product photos…' : 'Drop product images here') + '</strong><p>PNG, JPG, WebP or SVG. Uploaded files are stored securely for the catalog.</p></div>' +
+      '<div id="productPhotoPreviewGrid" class="inventory-photo-grid">' + renderProductEditorPhotoGrid(photos) + '</div></div>' +
+      '<label><span>Product Name</span><input name="product_name" required value="' + escapeAttr(firstText(product && product.product_name, '')) + '" /></label>' +
+      '<label><span>SKU</span><input name="product_code" required value="' + escapeAttr(firstText(product && (product.sku || product.product_code), '')) + '" /></label>' +
+      '<label><span>Barcode</span><input name="barcode" value="' + escapeAttr(firstText(product && product.barcode, '')) + '" /></label>' +
+      '<label><span>Brand</span><select name="brand_id"><option value="">Select brand</option>' + brands.map(function (item) { return '<option value="' + escapeAttr(String(item.id)) + '"' + (String(firstText(product && product.brand_id, '')) === String(item.id) ? ' selected' : '') + '>' + escapeHtml(firstText(item.name, 'Brand')) + '</option>'; }).join('') + '</select></label>' +
+      '<label><span>Category</span><select id="productCategorySelect" name="category_id"><option value="">Select category</option>' + categories.map(function (item) { return '<option value="' + escapeAttr(String(item.id)) + '"' + (String(firstText(product && product.category_id, '')) === String(item.id) ? ' selected' : '') + '>' + escapeHtml(firstText(item.name, 'Category')) + '</option>'; }).join('') + '</select></label>' +
+      '<div class="inventory-inline-label"><span>Category Management</span><button class="btn btn-outline" type="button" data-action="product-create-category"><i class="fa-solid fa-plus"></i>Create New Category</button></div>' +
+      '<label><span>Buying Price</span><input type="number" min="0" step="0.01" name="cost_price" required value="' + escapeAttr(String(firstNumber(product && product.buying_price, product && product.cost_price, 0))) + '" /></label>' +
+      '<label><span>Selling Price</span><input type="number" min="0" step="0.01" name="selling_price" required value="' + escapeAttr(String(firstNumber(product && product.selling_price, 0))) + '" /></label>' +
+      '<label><span>Tax Rate (%)</span><input type="number" min="0" step="0.01" name="vat_rate" value="' + escapeAttr(String(firstNumber(product && product.vat_rate, 16))) + '" /></label>' +
+      '<div class="inventory-checkbox"><span>Tax Settings</span><label class="inventory-check inventory-check--box"><input type="checkbox" name="tax_inclusive"' + ((product && product.tax_inclusive) ? ' checked' : '') + ' /><span>Prices are tax inclusive</span></label></div>' +
+      '<label><span>Unit of Measure</span><input name="unit_of_measure" placeholder="pcs, box, meter" value="' + escapeAttr(firstText(product && (product.unit_of_measure || product.unit), '')) + '" /></label>' +
+      '<label><span>Minimum Stock Level</span><input type="number" min="0" step="1" name="min_stock" value="' + escapeAttr(String(firstNumber(product && product.min_stock, 0))) + '" /></label>' +
+      '<label><span>Supplier</span><select name="supplier_id"><option value="">Select supplier</option>' + suppliers.map(function (item) { return '<option value="' + escapeAttr(String(item.id)) + '"' + (String(firstText(product && product.supplier_id, '')) === String(item.id) ? ' selected' : '') + '>' + escapeHtml(firstText(item.supplier_name, item.name, 'Supplier')) + '</option>'; }).join('') + '</select></label>' +
+      '<label><span>Branch Assignment</span><select name="branch_id"><option value="">Select branch</option>' + branches.map(function (item) { return '<option value="' + escapeAttr(String(item.id)) + '"' + (String(firstText(product && (product.branch_id || product.primary_branch_id), state.currentBranchId, '')) === String(item.id) ? ' selected' : '') + '>' + escapeHtml(firstText(item.name, item.branch_name, 'Branch')) + '</option>'; }).join('') + '</select></label>' +
+      (product
+        ? '<label><span>Current Stock</span><input type="number" min="0" step="1" name="current_stock" value="' + escapeAttr(String(firstNumber(product.current_stock, 0))) + '" /></label><label><span>Current Stock Adjustment</span><input type="number" step="1" name="stock_adjustment" value="0" /><small class="muted">Use positive or negative numbers to adjust the current count.</small></label>'
+        : '<label><span>Opening Stock</span><input type="number" min="0" step="1" name="current_stock" value="' + escapeAttr(String(firstNumber(product && product.current_stock, 0))) + '" /></label><label><span>Current Stock Adjustment</span><input type="number" step="1" name="stock_adjustment" value="0" /><small class="muted">Optional extra adjustment applied after the opening stock.</small></label>') +
+      '<label><span>Product Status</span><select name="status"><option value="active"' + (firstText(product && product.status, 'active') === 'active' ? ' selected' : '') + '>Active</option><option value="inactive"' + (firstText(product && product.status, 'active') === 'inactive' ? ' selected' : '') + '>Inactive</option></select></label>' +
+      '<label><span>Primary Photo URL</span><input name="image_url" placeholder="Optional custom hero image URL" value="' + escapeAttr(firstText(product && product.image_url, (photos[0] || ''), '')) + '" /></label>' +
+      '<label class="form-span-2"><span>Description</span><textarea name="description" rows="5">' + escapeHtml(firstText(product && product.description, '')) + '</textarea></label>' +
+      '<label class="form-span-2"><span>Adjustment Reason</span><input name="adjustment_reason" placeholder="Required when changing stock materially" /></label>' +
+      '<div class="form-span-2 inline-group"><button class="btn btn-primary" type="submit">' + escapeHtml(product ? 'Save Changes' : 'Create Product') + '</button><button class="btn btn-outline" type="button" data-action="close-modal">Cancel</button></div>' +
+    '</form>';
+  }
+
+  function renderProductEditorPhotoGrid(photos) {
+    if (!photos.length) return '<div class="empty-state inventory-empty-inline"><i class="fa-regular fa-image"></i>No product photos uploaded yet.</div>';
+    return photos.map(function (photo) {
+      return '<div class="inventory-photo-card">' + renderProductPhoto(photo, 'Product photo') + '<button class="btn btn-danger inventory-photo-remove" type="button" data-action="product-photo-remove" data-photo-path="' + escapeAttr(photo) + '"><i class="fa-solid fa-trash"></i>Remove</button></div>';
+    }).join('');
+  }
+
+  function bindProductPhotoDropzone() {
+    const zone = document.getElementById('productPhotoDropzone');
+    const input = document.getElementById('productPhotoInput');
+    if (!zone || !input || zone.dataset.bound) return;
+    zone.dataset.bound = 'true';
+    ['dragenter', 'dragover'].forEach(function (eventName) {
+      zone.addEventListener(eventName, function (event) {
+        event.preventDefault();
+        zone.classList.add('is-dragover');
+      });
     });
+    ['dragleave', 'drop'].forEach(function (eventName) {
+      zone.addEventListener(eventName, function (event) {
+        event.preventDefault();
+        zone.classList.remove('is-dragover');
+      });
+    });
+    zone.addEventListener('drop', function (event) {
+      const files = Array.from((event.dataTransfer && event.dataTransfer.files) || []);
+      if (files.length) {
+        handleProductPhotoFiles(files).catch(function (error) {
+          showToast(error.message || 'Unable to upload product photos.', 'error');
+        });
+      }
+    });
+  }
+
+  function openProductPhotoPicker() {
+    const input = document.getElementById('productPhotoInput');
+    if (input) input.click();
+  }
+
+  function removeProductPhoto(photoPath) {
+    state.productWorkspace.editor.photos = (state.productWorkspace.editor.photos || []).filter(function (item) { return item !== photoPath; });
+    const grid = document.getElementById('productPhotoPreviewGrid');
+    if (grid) grid.innerHTML = renderProductEditorPhotoGrid(state.productWorkspace.editor.photos || []);
+  }
+
+  async function handleProductPhotoFiles(files) {
+    if (!files || !files.length) return;
+    state.productWorkspace.editor.uploading = true;
+    const zone = document.getElementById('productPhotoDropzone');
+    if (zone) zone.querySelector('strong').textContent = 'Uploading product photos…';
+    for (const file of files) {
+      const objectPath = await uploadInventoryFile(file);
+      state.productWorkspace.editor.photos.push(objectPath);
+    }
+    state.productWorkspace.editor.uploading = false;
+    if (zone) zone.querySelector('strong').textContent = 'Drop product images here';
+    const grid = document.getElementById('productPhotoPreviewGrid');
+    if (grid) grid.innerHTML = renderProductEditorPhotoGrid(state.productWorkspace.editor.photos || []);
+    const input = document.getElementById('productPhotoInput');
+    if (input) input.value = '';
+  }
+
+  async function uploadInventoryFile(file) {
+    const upload = await apiJson('/api/storage/uploads/request-url', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: file.name,
+        size: file.size,
+        content_type: file.type || 'application/octet-stream'
+      })
+    });
+    const response = await fetch(upload.upload_url, {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file
+    });
+    if (!response.ok) {
+      let message = 'Upload failed.';
+      try {
+        const body = await response.json();
+        message = firstText(body.error, body.message, message);
+      } catch (_error) {}
+      throw new Error(message);
+    }
+    return upload.object_path;
+  }
+
+  async function handleProductEditorSubmit(event) {
+    event.preventDefault();
+    const form = event.target;
+    const productId = form.elements.product_id ? form.elements.product_id.value : '';
+    const payload = formToObject(form);
+    payload.product_photos = (state.productWorkspace.editor.photos || []).slice();
+    payload.tax_inclusive = !!(form.elements.tax_inclusive && form.elements.tax_inclusive.checked);
+    payload.cost_price = Number(payload.cost_price || 0);
+    payload.selling_price = Number(payload.selling_price || 0);
+    payload.vat_rate = Number(payload.vat_rate || 0);
+    payload.min_stock = payload.min_stock === undefined ? undefined : Number(payload.min_stock || 0);
+    payload.current_stock = payload.current_stock === undefined ? undefined : Number(payload.current_stock || 0);
+    payload.stock_adjustment = payload.stock_adjustment === undefined ? 0 : Number(payload.stock_adjustment || 0);
+    try {
+      await apiJson(productId ? '/api/products/' + encodeURIComponent(productId) : '/api/products', {
+        method: productId ? 'PATCH' : 'POST',
+        body: JSON.stringify(payload)
+      });
+      await Promise.all([loadProductsData(true), loadInventoryData(), loadSalesData()]);
+      closeModal();
+      renderCurrentRoute();
+      showToast(productId ? 'Product updated.' : 'Product created.', 'success');
+    } catch (error) {
+      showToast(error.message || 'Unable to save product.', 'error');
+    }
+  }
+
+  async function quickCreateCategoryFromEditor() {
+    const name = window.prompt('Enter the new category name:');
+    if (name === null) return;
+    if (!String(name).trim()) {
+      showToast('Category name is required.', 'error');
+      return;
+    }
+    try {
+      const category = await apiJson('/api/categories', { method: 'POST', body: JSON.stringify({ name: String(name).trim() }) });
+      const latestCategories = await apiJson('/api/categories').catch(function () { return []; });
+      if (!state.cache.products) state.cache.products = {};
+      state.cache.products.categories = normalizeList(latestCategories);
+      const select = document.getElementById('productCategorySelect');
+      if (select) select.value = String(category.id);
+      showToast('Category created.', 'success');
+    } catch (error) {
+      showToast(error.message || 'Unable to create category.', 'error');
+    }
+  }
+
+  function renderCategoryManagementBody() {
+    const categories = normalizeList((state.cache.products || {}).categories);
+    return '<div class="inventory-category-manager">' +
+      '<form id="categoryCreateForm" class="inventory-category-create"><input name="name" placeholder="Create a new category" required /><button class="btn btn-primary" type="submit"><i class="fa-solid fa-plus"></i>Create</button></form>' +
+      (categories.length ? '<div class="data-table-wrap"><table class="data-table inventory-table"><thead><tr><th>Category</th><th>Products</th><th>Actions</th></tr></thead><tbody>' + categories.map(function (item) {
+        return '<tr><td><strong>' + escapeHtml(firstText(item.name, 'Category')) + '</strong><div class="table-caption">Created ' + escapeHtml(formatDate(item.created_at)) + '</div></td><td>' + escapeHtml(numberText(firstNumber(item.product_count, 0))) + '</td><td><div class="table-actions"><button class="btn btn-outline" type="button" data-action="category-rename" data-category-id="' + escapeAttr(String(item.id)) + '" data-category-name="' + escapeAttr(firstText(item.name, '')) + '"><i class="fa-solid fa-pen"></i>Rename</button><button class="btn btn-outline" type="button" data-action="category-merge" data-category-id="' + escapeAttr(String(item.id)) + '" data-category-name="' + escapeAttr(firstText(item.name, '')) + '"><i class="fa-solid fa-code-merge"></i>Merge</button><button class="btn btn-danger" type="button" data-action="category-delete" data-category-id="' + escapeAttr(String(item.id)) + '" data-category-name="' + escapeAttr(firstText(item.name, '')) + '"><i class="fa-solid fa-trash"></i>Delete</button></div></td></tr>';
+      }).join('') + '</tbody></table></div>' : renderEmptyInline('No categories yet.')) +
+      '</div>';
+  }
+
+  function openCategoryManagementModal() {
+    openModal({
+      title: 'Category Management',
+      subtitle: 'Create, rename, merge or delete catalog categories.',
+      wide: true,
+      body: renderCategoryManagementBody()
+    });
+  }
+
+  async function handleCategoryCreateSubmit(event) {
+    event.preventDefault();
+    const payload = formToObject(event.target);
+    try {
+      await apiJson('/api/categories', { method: 'POST', body: JSON.stringify(payload) });
+      const categories = await apiJson('/api/categories').catch(function () { return []; });
+      if (!state.cache.products) state.cache.products = {};
+      state.cache.products.categories = normalizeList(categories);
+      openCategoryManagementModal();
+      showToast('Category created.', 'success');
+    } catch (error) {
+      showToast(error.message || 'Unable to create category.', 'error');
+    }
+  }
+
+  async function handleRenameCategory(categoryId, categoryName) {
+    const name = window.prompt('Rename category:', categoryName || '');
+    if (name === null) return;
+    try {
+      await apiJson('/api/categories/' + encodeURIComponent(categoryId), { method: 'PATCH', body: JSON.stringify({ name: String(name).trim() }) });
+      const categories = await apiJson('/api/categories').catch(function () { return []; });
+      state.cache.products.categories = normalizeList(categories);
+      openCategoryManagementModal();
+      showToast('Category renamed.', 'success');
+    } catch (error) {
+      showToast(error.message || 'Unable to rename category.', 'error');
+    }
+  }
+
+  async function handleMergeCategory(categoryId, categoryName) {
+    const target = window.prompt('Merge "' + (categoryName || 'category') + '" into which category? Enter the target name or category ID:');
+    if (target === null) return;
+    const trimmed = String(target).trim();
+    if (!trimmed) {
+      showToast('Target category is required.', 'error');
+      return;
+    }
+    const payload = /^\d+$/.test(trimmed) ? { target_category_id: Number(trimmed) } : { target_name: trimmed };
+    try {
+      await apiJson('/api/categories/' + encodeURIComponent(categoryId) + '/merge', { method: 'POST', body: JSON.stringify(payload) });
+      const categories = await apiJson('/api/categories').catch(function () { return []; });
+      state.cache.products.categories = normalizeList(categories);
+      await loadProductsData(true);
+      openCategoryManagementModal();
+      renderCurrentRoute();
+      showToast('Category merged.', 'success');
+    } catch (error) {
+      showToast(error.message || 'Unable to merge category.', 'error');
+    }
+  }
+
+  async function handleDeleteCategory(categoryId, categoryName) {
+    if (!window.confirm('Delete category "' + (categoryName || categoryId) + '"? Products in this category will become uncategorised.')) return;
+    try {
+      await apiJson('/api/categories/' + encodeURIComponent(categoryId), { method: 'DELETE' });
+      const categories = await apiJson('/api/categories').catch(function () { return []; });
+      state.cache.products.categories = normalizeList(categories);
+      await loadProductsData(true);
+      openCategoryManagementModal();
+      renderCurrentRoute();
+      showToast('Category deleted.', 'success');
+    } catch (error) {
+      showToast(error.message || 'Unable to delete category.', 'error');
+    }
+  }
+
+  async function openProductHistoryModal(productId) {
+    try {
+      const history = await apiJson('/api/products/' + encodeURIComponent(productId) + '/history');
+      const product = ((state.cache.products || {}).products || []).find(function (item) { return String(item.id) === String(productId); }) || { product_name: 'Product #' + productId };
+      openModal({
+        title: 'Product History',
+        subtitle: 'Audit trail and inventory movements for ' + firstText(product.product_name, 'this product') + '.',
+        wide: true,
+        body: '<div class="inventory-history-layout"><section class="card section-card"><div class="section-head"><div><h4>Audit Log</h4><p>Who changed this product and when.</p></div></div>' +
+          ((history.audit || []).length ? '<div class="inventory-history-list">' + history.audit.map(function (entry) {
+            return '<article class="inventory-history-item"><div class="inventory-history-item__head"><strong>' + escapeHtml(firstText(entry.action, 'product.updated').replace(/[_\.]+/g, ' ')) + '</strong><span>' + escapeHtml(formatDateTime(entry.created_at)) + '</span></div><p>' + escapeHtml(firstText(entry.description, 'Updated product')) + '</p><div class="table-caption">' + escapeHtml(firstText(entry.actor_name, 'System')) + ' · ' + escapeHtml(titleize(firstText(entry.actor_role, 'system'))) + '</div></article>';
+          }).join('') + '</div>' : renderEmptyInline('No audit entries recorded yet.')) + '</section>' +
+          '<section class="card section-card"><div class="section-head"><div><h4>Stock Movements</h4><p>Recent receiving and adjustment activity.</p></div></div>' + ((history.movements || []).length ? '<div class="data-table-wrap"><table class="data-table inventory-table"><thead><tr><th>Date</th><th>Type</th><th>Qty</th><th>Before</th><th>After</th><th>Branch</th><th>Reference</th></tr></thead><tbody>' + history.movements.map(function (entry) {
+            return '<tr><td>' + escapeHtml(formatDateTime(entry.created_at)) + '</td><td>' + renderBadge(firstText(entry.type, 'adjustment')) + '</td><td>' + escapeHtml(numberText(firstNumber(entry.quantity, 0))) + '</td><td>' + escapeHtml(numberText(firstNumber(entry.quantity_before, 0))) + '</td><td>' + escapeHtml(numberText(firstNumber(entry.quantity_after, 0))) + '</td><td>' + escapeHtml(firstText(entry.branch_name, '—')) + '</td><td>' + escapeHtml(firstText(entry.reference, '—')) + '</td></tr>';
+          }).join('') + '</tbody></table></div>' : renderEmptyInline('No stock movements recorded yet.')) + '</section></div>'
+      });
+    } catch (error) {
+      showToast(error.message || 'Unable to load product history.', 'error');
+    }
+  }
+
+  async function openStockAdjustmentModal(productId) {
+    try {
+      const product = await apiJson('/api/products/' + encodeURIComponent(productId));
+      openModal({
+        title: 'Stock Adjustment',
+        subtitle: 'Adjust current stock for ' + firstText(product.product_name, 'this product') + '.',
+        body: '<form id="productAdjustForm" class="form-grid two"><input type="hidden" name="product_id" value="' + escapeAttr(String(product.id)) + '" /><label><span>Product</span><input value="' + escapeAttr(firstText(product.product_name, 'Product')) + '" disabled /></label><label><span>Current Stock</span><input value="' + escapeAttr(String(firstNumber(product.current_stock, 0))) + '" disabled /></label><label><span>Adjustment Quantity</span><input type="number" step="1" name="quantity" required placeholder="Use positive or negative numbers" /></label><label><span>Reason</span><input name="reason" required placeholder="Cycle count, damage, transfer correction..." /></label><label class="form-span-2"><span>Notes</span><textarea name="notes" rows="4"></textarea></label><div class="form-span-2 inline-group"><button class="btn btn-primary" type="submit">Save Adjustment</button><button class="btn btn-outline" type="button" data-action="close-modal">Cancel</button></div></form>'
+      });
+    } catch (error) {
+      showToast(error.message || 'Unable to load stock adjustment form.', 'error');
+    }
+  }
+
+  async function handleProductAdjustmentSubmit(event) {
+    event.preventDefault();
+    const payload = formToObject(event.target);
+    payload.product_id = Number(payload.product_id || 0);
+    payload.quantity = Number(payload.quantity || 0);
+    try {
+      await apiJson('/api/inventory/adjust', { method: 'POST', body: JSON.stringify(payload) });
+      await Promise.all([loadProductsData(true), loadInventoryData()]);
+      closeModal();
+      renderCurrentRoute();
+      showToast('Stock adjusted.', 'success');
+    } catch (error) {
+      showToast(error.message || 'Unable to adjust stock.', 'error');
+    }
+  }
+
+  async function handleDuplicateProduct(productId) {
+    try {
+      await apiJson('/api/products/' + encodeURIComponent(productId) + '/duplicate', { method: 'POST', body: JSON.stringify({}) });
+      await loadProductsData(true);
+      renderCurrentRoute();
+      showToast('Product duplicated.', 'success');
+    } catch (error) {
+      showToast(error.message || 'Unable to duplicate product.', 'error');
+    }
+  }
+
+  async function handleProductBulkAction() {
+    const select = document.getElementById('productBulkAction');
+    const action = select ? select.value : '';
+    const ids = (state.productWorkspace.selectedIds || []).map(function (item) { return Number(item); }).filter(Boolean);
+    if (!action) {
+      showToast('Choose a bulk action first.', 'error');
+      return;
+    }
+    if (!ids.length) {
+      showToast('Select at least one product.', 'error');
+      return;
+    }
+    try {
+      if (action === 'generate-barcodes') {
+        await apiJson('/api/products/generate-barcodes', { method: 'PATCH', body: JSON.stringify({ product_ids: ids }) });
+      }
+      if (action === 'archive') {
+        const reason = window.prompt('Reason for archiving the selected products:');
+        if (reason === null) return;
+        for (const id of ids) await apiJson('/api/products/' + encodeURIComponent(id) + '/archive', { method: 'PATCH', body: JSON.stringify({ reason: reason }) });
+      }
+      if (action === 'restore') {
+        for (const id of ids) await apiJson('/api/products/' + encodeURIComponent(id) + '/restore', { method: 'PATCH' });
+      }
+      if (action === 'delete') {
+        const reason = window.prompt('Reason for permanently deleting the selected products:');
+        if (reason === null) return;
+        for (const id of ids) await apiJson('/api/products/' + encodeURIComponent(id), { method: 'DELETE', body: JSON.stringify({ reason: reason }) });
+      }
+      state.productWorkspace.selectedIds = [];
+      await loadProductsData(true);
+      renderCurrentRoute();
+      showToast('Bulk action completed.', 'success');
+    } catch (error) {
+      showToast(error.message || 'Unable to complete the bulk action.', 'error');
+    }
   }
 
   function openReceiveStockModal() {
@@ -3611,6 +4214,10 @@
     if (raw.indexOf("/objects/") === 0) return "/api/storage/objects/" + encodeURIComponent(raw.slice("/objects/".length)).replace(/%2F/g, "/");
     if (raw.indexOf("/api/storage/objects/") === 0) return raw;
     return "";
+  }
+
+  function resolveInventoryAssetUrl(value) {
+    return resolveBrandAssetUrl(value) || sanitizeUrl(value);
   }
 
   function brandingInitials(name) {
