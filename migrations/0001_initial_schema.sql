@@ -380,6 +380,7 @@ CREATE SEQUENCE public.business_settings_id_seq
 -- Name: business_settings_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
 --
 
+ALTER SEQUENCE public.business_settings_id_seq OWNED BY public.business_settings.id;
 
 
 --
@@ -1170,6 +1171,7 @@ CREATE SEQUENCE public.users_id_seq
 -- Name: business_settings id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.business_settings ALTER COLUMN id SET DEFAULT nextval('public.business_settings_id_seq'::regclass);
 
 
 --
