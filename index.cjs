@@ -66743,6 +66743,9 @@ var productsTable = pgTable("products", {
   minStock: integer("min_stock").notNull().default(0),
   imageUrl: text("image_url"),
   unit: text("unit"),
+  isArchived: boolean("is_archived").notNull().default(false),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  archivedBy: integer("archived_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
 });
 var insertProductSchema = createInsertSchema(productsTable).omit({ id: true, createdAt: true });
@@ -66955,7 +66958,7 @@ var expensesTable = pgTable("expenses", {
 var insertExpenseSchema = createInsertSchema(expensesTable).omit({ id: true, createdAt: true });
 
 // lib/db/src/schema/sales.ts
-var saleStatusEnum = pgEnum("sale_status", ["completed", "refunded", "void"]);
+var saleStatusEnum = pgEnum("sale_status", ["completed", "refunded", "void", "draft", "returned"]);
 var salesTable = pgTable("sales", {
   id: serial("id").primaryKey(),
   receiptNumber: text("receipt_number").notNull().unique(),
@@ -66970,6 +66973,10 @@ var salesTable = pgTable("sales", {
   paymentMethod: text("payment_method").notNull().default("cash"),
   cashierName: text("cashier_name"),
   status: saleStatusEnum("status").notNull().default("completed"),
+  notes: text("notes"),
+  originalSaleId: integer("original_sale_id"),
+  voidedAt: timestamp("voided_at", { withTimezone: true }),
+  voidedBy: integer("voided_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
 });
 var saleItemsTable = pgTable("sale_items", {
@@ -67070,6 +67077,7 @@ var auditLogTable = pgTable("audit_log", {
   actorName: text("actor_name"),
   actorRole: text("actor_role"),
   ipAddress: text("ip_address"),
+  deviceInfo: text("device_info"),
   action: text("action").notNull(),
   // e.g. "sale.created", "product.updated"
   entityType: text("entity_type"),
@@ -69289,12 +69297,14 @@ async function logAudit(req, event) {
   try {
     const user = req.user;
     const ipAddress = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ?? req.socket?.remoteAddress ?? null;
+    const deviceInfo = req.headers["user-agent"] ?? null;
     const [row] = await db.insert(auditLogTable).values({
       branchId: user?.branchId ?? null,
       actorId: user?.userId ?? null,
       actorName: user?.name ?? null,
       actorRole: user?.role ?? null,
       ipAddress,
+      deviceInfo,
       action: event.action,
       entityType: event.entityType ?? null,
       entityId: event.entityId != null ? String(event.entityId) : null,
@@ -70051,6 +70061,8 @@ function formatProduct(p, catName, brandName, supplierName, stock) {
     min_stock: stock ? stock.min : p.minStock,
     image_url: p.imageUrl,
     unit: p.unit,
+    is_archived: p.isArchived ?? false,
+    archived_at: p.archivedAt ?? null,
     created_at: p.createdAt
   };
 }
@@ -70060,7 +70072,7 @@ function stockFor(map2, p, options = {}) {
   return { current: v?.cur ?? fallbackCurrent, min: v && v.min != null ? v.min : p.minStock };
 }
 router6.get("/products", async (req, res) => {
-  const { search, category_id, brand_id, low_stock, in_stock_only, fallback_product_stock, page = "1", limit = "50" } = req.query;
+  const { search, category_id, brand_id, low_stock, in_stock_only, fallback_product_stock, include_archived, page = "1", limit = "50" } = req.query;
   const p = Math.max(1, parseInt(page, 10));
   const l = Math.min(200, parseInt(limit, 10));
   const conditions = [];
@@ -70069,6 +70081,8 @@ router6.get("/products", async (req, res) => {
   if (!Number.isNaN(catId)) conditions.push(eq(productsTable.categoryId, catId));
   const brandId = brand_id ? parseInt(brand_id, 10) : NaN;
   if (!Number.isNaN(brandId)) conditions.push(eq(productsTable.brandId, brandId));
+  // Exclude archived products from normal listings unless explicitly requested
+  if (include_archived !== "true") conditions.push(eq(productsTable.isArchived, false));
   const where = conditions.length ? and(...conditions) : void 0;
   const allProducts = await db.select().from(productsTable).where(where).orderBy(productsTable.productName);
   const scope = getBranchScope(req);
@@ -70277,12 +70291,56 @@ router6.patch("/products/:id", requireRole("administrator", "manager", "storekee
   await logAudit(req, { action: "product.updated", entityType: "product", entityId: p.id, description: `Updated product "${p.productName}" (${p.productCode})`, metadata: { before: beforeSnap, after: afterSnap } });
   res.json(afterSnap);
 });
-router6.delete("/products/:id", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
+router6.delete("/products/:id", requireAuth, requireSuperAdmin, async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
   const [p] = await db.select().from(productsTable).where(eq(productsTable.id, id));
+  if (!p) {
+    res.status(404).json({ error: "Product not found" });
+    return;
+  }
+  // Block permanent deletion of products with any sales history.
+  // Products used in transactions must be archived instead.
+  const [saleUsage] = await db.select({ count: sql`count(*)` }).from(saleItemsTable).where(eq(saleItemsTable.productId, id));
+  if (Number(saleUsage?.count ?? 0) > 0) {
+    res.status(422).json({ error: "This product has sales history and cannot be permanently deleted. Archive it instead to hide it from normal lists while preserving historical records.", code: "HAS_SALES_HISTORY" });
+    return;
+  }
+  const { reason } = req.body ?? {};
   await db.delete(productsTable).where(eq(productsTable.id, id));
-  await logAudit(req, { action: "product.deleted", entityType: "product", entityId: id, description: `Deleted product "${p?.productName ?? id}"` });
+  await logAudit(req, { action: "product.deleted", entityType: "product", entityId: id, description: `Permanently deleted product "${p?.productName ?? id}" (${p?.productCode ?? ""})${reason ? " — Reason: " + reason : ""}`, metadata: { reason: reason ?? null } });
   res.sendStatus(204);
+});
+router6.patch("/products/:id/archive", requireAuth, requireSuperAdmin, async (req, res) => {
+  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const [p] = await db.select().from(productsTable).where(eq(productsTable.id, id));
+  if (!p) {
+    res.status(404).json({ error: "Product not found" });
+    return;
+  }
+  if (p.isArchived) {
+    res.status(409).json({ error: "Product is already archived" });
+    return;
+  }
+  const { reason } = req.body ?? {};
+  const actorId = req.user?.userId ?? null;
+  const [updated] = await db.update(productsTable).set({ isArchived: true, archivedAt: new Date(), archivedBy: actorId }).where(eq(productsTable.id, id)).returning();
+  await logAudit(req, { action: "product.archived", entityType: "product", entityId: id, description: `Archived product "${p.productName}" (${p.productCode})${reason ? " — Reason: " + reason : ""}`, metadata: { reason: reason ?? null } });
+  res.json(formatProduct(updated));
+});
+router6.patch("/products/:id/restore", requireAuth, requireSuperAdmin, async (req, res) => {
+  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const [p] = await db.select().from(productsTable).where(eq(productsTable.id, id));
+  if (!p) {
+    res.status(404).json({ error: "Product not found" });
+    return;
+  }
+  if (!p.isArchived) {
+    res.status(409).json({ error: "Product is not archived" });
+    return;
+  }
+  const [updated] = await db.update(productsTable).set({ isArchived: false, archivedAt: null, archivedBy: null }).where(eq(productsTable.id, id)).returning();
+  await logAudit(req, { action: "product.restored", entityType: "product", entityId: id, description: `Restored archived product "${p.productName}" (${p.productCode})` });
+  res.json(formatProduct(updated));
 });
 var products_default = router6;
 
@@ -71375,24 +71433,30 @@ async function formatSale(sale) {
     payment_method: sale.paymentMethod,
     cashier_name: sale.cashierName,
     status: sale.status,
+    notes: sale.notes ?? null,
+    original_sale_id: sale.originalSaleId ?? null,
+    voided_at: sale.voidedAt ?? null,
     created_at: sale.createdAt
   };
 }
 router14.post("/pos/sale", async (req, res) => {
-  const { customer_id, items, discount_amount = 0, amount_paid, payment_method, shipping_amount = 0 } = req.body;
-  if (!items?.length || amount_paid === void 0 || !payment_method) {
-    res.status(400).json({ error: "items, amount_paid, and payment_method required" });
+  const { customer_id, items, discount_amount = 0, amount_paid, payment_method, shipping_amount = 0, status: requestedStatus, notes } = req.body;
+  const saleStatus = requestedStatus === "draft" ? "draft" : "completed";
+  if (!items?.length || (saleStatus === "completed" && amount_paid === void 0) || (saleStatus === "completed" && !payment_method)) {
+    res.status(400).json({ error: "items required; amount_paid and payment_method required for completed sales" });
     return;
   }
   const branchId = await resolveWriteBranchId(req);
-  // Validate stock availability before saving
-  for (const item of items) {
-    const stockRow = await getBranchStockRow(branchId, item.product_id);
-    const available = Number(stockRow?.currentStock ?? 0);
-    if (available < item.quantity) {
-      const [prod] = await db.select({ name: productsTable.productName }).from(productsTable).where(eq(productsTable.id, item.product_id));
-      res.status(422).json({ error: `Insufficient stock for "${prod?.name ?? "product " + item.product_id}": available ${available}, requested ${item.quantity}` });
-      return;
+  // Only validate stock for completed (not draft) sales
+  if (saleStatus === "completed") {
+    for (const item of items) {
+      const stockRow = await getBranchStockRow(branchId, item.product_id);
+      const available = Number(stockRow?.currentStock ?? 0);
+      if (available < item.quantity) {
+        const [prod] = await db.select({ name: productsTable.productName }).from(productsTable).where(eq(productsTable.id, item.product_id));
+        res.status(422).json({ error: `Insufficient stock for "${prod?.name ?? "product " + item.product_id}": available ${available}, requested ${item.quantity}` });
+        return;
+      }
     }
   }
   const cashierName = req.user?.name ?? null;
@@ -71405,9 +71469,9 @@ router14.post("/pos/sale", async (req, res) => {
   }
   const shippingAmt = Number(shipping_amount || 0);
   const total = Math.max(0, subtotal - Number(discount_amount) + taxAmount + shippingAmt);
-  const change = Math.max(0, Number(amount_paid) - total);
-  const invStatus = payment_method === "credit" ? "partial" : Number(amount_paid) >= total ? "paid" : "partial";
-  const balanceDue = Math.max(0, total - Number(amount_paid));
+  const change = Math.max(0, Number(amount_paid || 0) - total);
+  const invStatus = payment_method === "credit" ? "partial" : Number(amount_paid || 0) >= total ? "paid" : "partial";
+  const balanceDue = Math.max(0, total - Number(amount_paid || 0));
   const result = await db.transaction(async (tx) => {
     const receiptNumber = await nextDocumentNumber("receipt");
     const invoiceNumber = await nextDocumentNumber("invoice");
@@ -71419,63 +71483,73 @@ router14.post("/pos/sale", async (req, res) => {
       discountAmount: discount_amount.toString(),
       taxAmount: taxAmount.toString(),
       total: total.toString(),
-      amountPaid: amount_paid.toString(),
+      amountPaid: (amount_paid ?? 0).toString(),
       change: change.toString(),
-      paymentMethod: payment_method,
-      cashierName
+      paymentMethod: payment_method ?? "cash",
+      cashierName,
+      status: saleStatus,
+      notes: notes ?? null
     }).returning();
     for (const item of items) {
       const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
       const lineVat = lineBase * (Number(item.vat_rate ?? 0) / 100);
       const lineTotal = lineBase + lineVat;
       await tx.insert(saleItemsTable).values({ saleId: sale.id, productId: item.product_id, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: (item.discount ?? 0).toString(), vatRate: (item.vat_rate ?? 16).toString(), total: lineTotal.toString() });
-      const { before, after } = await adjustBranchStock(branchId, item.product_id, (b) => Math.max(0, b - item.quantity), tx);
-      await tx.insert(stockMovementsTable).values({ branchId, productId: item.product_id, type: "sale", quantity: -item.quantity, quantityBefore: before, quantityAfter: after, reference: receiptNumber });
+      // Only deduct stock for completed sales
+      if (saleStatus === "completed") {
+        const { before, after } = await adjustBranchStock(branchId, item.product_id, (b) => Math.max(0, b - item.quantity), tx);
+        await tx.insert(stockMovementsTable).values({ branchId, productId: item.product_id, type: "sale", quantity: -item.quantity, quantityBefore: before, quantityAfter: after, reference: receiptNumber });
+      }
     }
-    const [invoice] = await tx.insert(invoicesTable).values({
-      invoiceNumber,
-      branchId,
-      customerId: customer_id ?? null,
-      subtotal: subtotal.toString(),
-      discountAmount: discount_amount.toString(),
-      taxAmount: taxAmount.toString(),
-      total: total.toString(),
-      amountPaid: amount_paid.toString(),
-      balanceDue: balanceDue.toString(),
-      status: invStatus
-    }).returning();
-    for (const item of items) {
-      const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
-      const lineVat = lineBase * (Number(item.vat_rate ?? 0) / 100);
-      await tx.insert(invoiceItemsTable).values({
-        invoiceId: invoice.id,
-        productId: item.product_id,
-        quantity: item.quantity,
-        unitPrice: item.unit_price.toString(),
-        discount: (item.discount ?? 0).toString(),
-        vatRate: (item.vat_rate ?? 16).toString(),
-        total: (lineBase + lineVat).toString()
-      });
+    let invoiceId = null;
+    let invoiceNum = null;
+    if (saleStatus === "completed") {
+      const [invoice] = await tx.insert(invoicesTable).values({
+        invoiceNumber,
+        branchId,
+        customerId: customer_id ?? null,
+        subtotal: subtotal.toString(),
+        discountAmount: discount_amount.toString(),
+        taxAmount: taxAmount.toString(),
+        total: total.toString(),
+        amountPaid: (amount_paid ?? 0).toString(),
+        balanceDue: balanceDue.toString(),
+        status: invStatus
+      }).returning();
+      invoiceId = invoice.id;
+      invoiceNum = invoice.invoiceNumber;
+      for (const item of items) {
+        const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
+        const lineVat = lineBase * (Number(item.vat_rate ?? 0) / 100);
+        await tx.insert(invoiceItemsTable).values({
+          invoiceId: invoice.id,
+          productId: item.product_id,
+          quantity: item.quantity,
+          unitPrice: item.unit_price.toString(),
+          discount: (item.discount ?? 0).toString(),
+          vatRate: (item.vat_rate ?? 16).toString(),
+          total: (lineBase + lineVat).toString()
+        });
+      }
+      if (Number(amount_paid) > 0) {
+        const pmVal = ["cash", "mpesa", "bank_transfer", "card", "credit", "split"].includes(payment_method) ? payment_method : "cash";
+        await tx.insert(invoicePaymentsTable).values({
+          invoiceId: invoice.id,
+          amount: amount_paid.toString(),
+          method: pmVal
+        });
+      }
+      await tx.execute(sql`
+        INSERT INTO receipts (sale_id, invoice_id, receipt_number, issued_to, amount)
+        VALUES (${sale.id}, ${invoice.id}, ${receiptNumber}, ${cashierName || "Cash sale"}, ${total})
+        RETURNING id
+      `);
     }
-    if (Number(amount_paid) > 0) {
-      const pmVal = ["cash", "mpesa", "bank_transfer", "card", "credit", "split"].includes(payment_method) ? payment_method : "cash";
-      await tx.insert(invoicePaymentsTable).values({
-        invoiceId: invoice.id,
-        amount: amount_paid.toString(),
-        method: pmVal
-      });
-    }
-    const receiptInsert = await tx.execute(sql`
-      INSERT INTO receipts (sale_id, invoice_id, receipt_number, issued_to, amount)
-      VALUES (${sale.id}, ${invoice.id}, ${receiptNumber}, ${cashierName || "Cash sale"}, ${total})
-      RETURNING id
-    `);
-    const receiptRows = receiptInsert.rows ?? receiptInsert;
-    return { sale, invoice, receiptId: Number(receiptRows?.[0]?.id || 0), receiptNumber };
+    return { sale, invoiceId, invoiceNumber: invoiceNum, receiptNumber };
   });
-  await logAudit(req, { action: "sale.created", entityType: "sale", entityId: result.sale.id, description: `Sale ${result.receiptNumber} \u2014 KES ${total.toLocaleString()} (${items.length} item${items.length !== 1 ? "s" : ""}) via ${payment_method}`, metadata: { receipt: result.receiptNumber, invoice: result.invoice.invoiceNumber } });
+  await logAudit(req, { action: saleStatus === "draft" ? "sale.draft_saved" : "sale.created", entityType: "sale", entityId: result.sale.id, description: saleStatus === "draft" ? `Saved draft sale ${result.receiptNumber} — KES ${total.toLocaleString()} (${items.length} item${items.length !== 1 ? "s" : ""})` : `Sale ${result.receiptNumber} — KES ${total.toLocaleString()} (${items.length} item${items.length !== 1 ? "s" : ""}) via ${payment_method}`, metadata: result.invoiceNumber ? { receipt: result.receiptNumber, invoice: result.invoiceNumber } : { receipt: result.receiptNumber } });
   const saleData = await formatSale(result.sale);
-  res.status(201).json({ ...saleData, invoice_id: result.invoice.id, invoice_number: result.invoice.invoiceNumber, receipt_id: result.receiptId });
+  res.status(201).json({ ...saleData, invoice_id: result.invoiceId, invoice_number: result.invoiceNumber });
 });
 router14.get("/pos/sales", async (req, res) => {
   const { page = "1", limit = "50" } = req.query;
@@ -71496,6 +71570,136 @@ router14.get("/pos/sales/:id", async (req, res) => {
     return;
   }
   res.json(await formatSale(sale));
+});
+// Void a completed sale (Super Admin only).
+// Reverses stock movements and marks the sale as void. The original record is preserved.
+router14.patch("/pos/sales/:id/void", requireAuth, requireSuperAdmin, async (req, res) => {
+  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const [sale] = await db.select().from(salesTable).where(eq(salesTable.id, id));
+  if (!sale || !isBranchInScope(req, sale.branchId)) {
+    res.status(404).json({ error: "Sale not found" });
+    return;
+  }
+  if (sale.status !== "completed") {
+    res.status(422).json({ error: `Only completed sales can be voided. This sale has status: ${sale.status}` });
+    return;
+  }
+  const { reason } = req.body ?? {};
+  if (!reason?.trim()) {
+    res.status(400).json({ error: "A reason is required when voiding a sale" });
+    return;
+  }
+  const branchId = sale.branchId;
+  const actorId = req.user?.userId ?? null;
+  await db.transaction(async (tx) => {
+    // Reverse stock movements for each sold item
+    const items = await tx.select().from(saleItemsTable).where(eq(saleItemsTable.saleId, sale.id));
+    for (const item of items) {
+      const { before, after } = await adjustBranchStock(branchId, item.productId, (b) => b + item.quantity, tx);
+      await tx.insert(stockMovementsTable).values({ branchId, productId: item.productId, type: "adjustment", quantity: item.quantity, quantityBefore: before, quantityAfter: after, reference: sale.receiptNumber, notes: `Void of sale ${sale.receiptNumber}` });
+    }
+    await tx.update(salesTable).set({ status: "void", notes: reason, voidedAt: new Date(), voidedBy: actorId }).where(eq(salesTable.id, id));
+  });
+  await logAudit(req, { action: "sale.voided", entityType: "sale", entityId: id, description: `Voided sale ${sale.receiptNumber} — KES ${Number(sale.total).toLocaleString()}. Reason: ${reason}`, metadata: { receipt: sale.receiptNumber, reason } });
+  const [updated] = await db.select().from(salesTable).where(eq(salesTable.id, id));
+  res.json(await formatSale(updated));
+});
+// Permanently delete a DRAFT sale (Super Admin only).
+// Completed sales must never be deleted — use void instead.
+router14.delete("/pos/sales/:id", requireAuth, requireSuperAdmin, async (req, res) => {
+  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const [sale] = await db.select().from(salesTable).where(eq(salesTable.id, id));
+  if (!sale || !isBranchInScope(req, sale.branchId)) {
+    res.status(404).json({ error: "Sale not found" });
+    return;
+  }
+  if (sale.status !== "draft") {
+    res.status(422).json({ error: "Only draft transactions may be permanently deleted. Completed sales must be voided instead." });
+    return;
+  }
+  const { reason } = req.body ?? {};
+  await db.delete(saleItemsTable).where(eq(saleItemsTable.saleId, id));
+  await db.delete(salesTable).where(eq(salesTable.id, id));
+  await logAudit(req, { action: "sale.deleted", entityType: "sale", entityId: id, description: `Permanently deleted draft sale ${sale.receiptNumber}${reason ? " — Reason: " + reason : ""}`, metadata: { receipt: sale.receiptNumber, reason: reason ?? null } });
+  res.sendStatus(204);
+});
+// Create a return/refund transaction linked to the original sale (Super Admin only).
+// This creates a new sale record with status 'returned' and reverses stock.
+router14.post("/pos/sales/:id/return", requireAuth, requireSuperAdmin, async (req, res) => {
+  const originalId = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const [originalSale] = await db.select().from(salesTable).where(eq(salesTable.id, originalId));
+  if (!originalSale || !isBranchInScope(req, originalSale.branchId)) {
+    res.status(404).json({ error: "Original sale not found" });
+    return;
+  }
+  if (originalSale.status !== "completed") {
+    res.status(422).json({ error: "Returns can only be processed against completed sales" });
+    return;
+  }
+  const { reason, items: returnItems } = req.body ?? {};
+  if (!reason?.trim()) {
+    res.status(400).json({ error: "A reason is required when processing a return" });
+    return;
+  }
+  if (!returnItems?.length) {
+    res.status(400).json({ error: "At least one item must be specified for the return" });
+    return;
+  }
+  const branchId = originalSale.branchId;
+  const cashierName = req.user?.name ?? null;
+  // Validate returned items against original sale items
+  const originalItems = await db.select().from(saleItemsTable).where(eq(saleItemsTable.saleId, originalId));
+  const originalItemMap = Object.fromEntries(originalItems.map((i) => [i.productId, i]));
+  for (const ri of returnItems) {
+    const orig = originalItemMap[ri.product_id];
+    if (!orig) {
+      res.status(422).json({ error: `Product ${ri.product_id} was not in the original sale` });
+      return;
+    }
+    if (ri.quantity > orig.quantity) {
+      res.status(422).json({ error: `Cannot return more than original quantity for product ${ri.product_id}` });
+      return;
+    }
+  }
+  let subtotal = 0;
+  let taxAmount = 0;
+  for (const ri of returnItems) {
+    const orig = originalItemMap[ri.product_id];
+    const lineBase = Number(orig.unitPrice) * ri.quantity;
+    subtotal += lineBase;
+    taxAmount += lineBase * (Number(orig.vatRate ?? 0) / 100);
+  }
+  const total = subtotal + taxAmount;
+  const receiptNumber = await nextDocumentNumber("receipt");
+  const result = await db.transaction(async (tx) => {
+    const [returnSale] = await tx.insert(salesTable).values({
+      receiptNumber,
+      branchId,
+      customerId: originalSale.customerId,
+      subtotal: subtotal.toString(),
+      discountAmount: "0",
+      taxAmount: taxAmount.toString(),
+      total: total.toString(),
+      amountPaid: total.toString(),
+      change: "0",
+      paymentMethod: originalSale.paymentMethod,
+      cashierName,
+      status: "returned",
+      notes: reason,
+      originalSaleId: originalId
+    }).returning();
+    for (const ri of returnItems) {
+      const orig = originalItemMap[ri.product_id];
+      const lineBase = Number(orig.unitPrice) * ri.quantity;
+      const lineVat = lineBase * (Number(orig.vatRate ?? 0) / 100);
+      await tx.insert(saleItemsTable).values({ saleId: returnSale.id, productId: ri.product_id, quantity: ri.quantity, unitPrice: orig.unitPrice.toString(), discount: "0", vatRate: orig.vatRate.toString(), total: (lineBase + lineVat).toString() });
+      const { before, after } = await adjustBranchStock(branchId, ri.product_id, (b) => b + ri.quantity, tx);
+      await tx.insert(stockMovementsTable).values({ branchId, productId: ri.product_id, type: "purchase_return", quantity: ri.quantity, quantityBefore: before, quantityAfter: after, reference: receiptNumber, notes: `Return of sale ${originalSale.receiptNumber}` });
+    }
+    return { returnSale };
+  });
+  await logAudit(req, { action: "sale.returned", entityType: "sale", entityId: result.returnSale.id, description: `Return ${receiptNumber} for original sale ${originalSale.receiptNumber} — KES ${total.toLocaleString()} (${returnItems.length} item${returnItems.length !== 1 ? "s" : ""}). Reason: ${reason}`, metadata: { original_receipt: originalSale.receiptNumber, return_receipt: receiptNumber, reason } });
+  res.status(201).json(await formatSale(result.returnSale));
 });
 var pos_default = router14;
 

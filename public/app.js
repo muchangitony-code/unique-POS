@@ -471,6 +471,29 @@
       case "refresh-route":
         await routeTo(state.activeRoute, { force: true });
         return;
+      case "toggle-archived-products":
+        if (state.cache.products) state.cache.products.includeArchived = !(state.cache.products.includeArchived);
+        await loadProductsData(true);
+        renderCurrentRoute();
+        return;
+      case "archive-product":
+        await handleArchiveProduct(button.dataset.productId, button.dataset.productName);
+        return;
+      case "restore-product":
+        await handleRestoreProduct(button.dataset.productId, button.dataset.productName);
+        return;
+      case "delete-product":
+        await handleDeleteProduct(button.dataset.productId, button.dataset.productName);
+        return;
+      case "void-sale":
+        await handleVoidSale(button.dataset.saleId, button.dataset.receipt);
+        return;
+      case "delete-sale-draft":
+        await handleDeleteDraftSale(button.dataset.saleId, button.dataset.receipt);
+        return;
+      case "return-sale":
+        await handleReturnSale(button.dataset.saleId, button.dataset.receipt);
+        return;
       default:
         return;
     }
@@ -765,9 +788,11 @@
     state.cache.sales = { recentSales: normalizeList(sales) };
   }
 
-  async function loadProductsData() {
+  async function loadProductsData(keepArchivedFlag) {
+    const includeArchived = keepArchivedFlag && isSuperAdmin() && (state.cache.products || {}).includeArchived;
+    const productUrl = "/api/products?limit=200" + (includeArchived ? "&include_archived=true" : "");
     const requests = [
-      apiJson("/api/products?limit=200").catch(function () { return { data: [] }; }),
+      apiJson(productUrl).catch(function () { return { data: [] }; }),
       apiJson("/api/categories").catch(function () { return []; })
     ];
     if (canBulkImportProducts()) {
@@ -776,7 +801,7 @@
     const responses = await Promise.all(requests);
     const products = responses[0];
     const categories = responses[1];
-    state.cache.products = { products: normalizeList(products), categories: normalizeList(categories) };
+    state.cache.products = { products: normalizeList(products), categories: normalizeList(categories), includeArchived: !!includeArchived };
     state.importer.history = canBulkImportProducts() ? normalizeList(responses[2]) : [];
   }
 
@@ -1046,19 +1071,26 @@
           money(firstNumber(sale.total, sale.amount, 0)),
           escapeHtml(titleize(firstText(sale.payment_method, "cash"))),
           renderBadge(firstText(sale.status, "paid")),
-          renderDocumentButtons("receipt", sale.id, "80mm", "Receipt")
+          renderDocumentButtons("receipt", sale.id, "80mm", "Receipt") + renderSaleActionButtons(sale)
         ];
       }), "No recent sales available.") + '</section>'
     ].join("");
   }
 
   function renderProducts() {
-    const products = applySearch((state.cache.products || {}).products || [], state.search, ["product_name", "product_code", "barcode", "category_name"]);
-    const summary = productSummary(products);
+    const allProducts = (state.cache.products || {}).products || [];
+    const showArchived = isSuperAdmin() && (state.cache.products || {}).includeArchived;
+    const products = applySearch(allProducts, state.search, ["product_name", "product_code", "barcode", "category_name"]);
+    const activeProducts = products.filter(function (p) { return !p.is_archived; });
+    const archivedProducts = products.filter(function (p) { return p.is_archived; });
+    const summary = productSummary(activeProducts);
     const canImport = canBulkImportProducts();
     const history = (state.importer.history || []).slice(0, 5);
+    const productHeaders = isSuperAdmin()
+      ? ["Product", "SKU", "Category", "Price", "Stock", "Actions"]
+      : ["Product", "SKU", "Category", "Price", "Stock"];
     els.viewRoot.innerHTML = [
-      '<div class="module-toolbar"><div class="inline-group"><button class="btn btn-primary" data-action="quick-add-product"><i class="fa-solid fa-plus"></i>Add Product</button>' + (canImport ? '<button class="btn btn-secondary" data-action="bulk-import-products"><i class="fa-solid fa-file-import"></i>Bulk Import Products</button>' : '') + '<button class="btn btn-outline" data-route="inventory"><i class="fa-solid fa-warehouse"></i>Inventory</button></div><div class="stats-inline"><span class="document-chip">Categories: ' + escapeHtml(String(summary.categories)) + '</span><span class="document-chip">Low Stock: ' + escapeHtml(String(summary.lowStock)) + '</span></div></div>',
+      '<div class="module-toolbar"><div class="inline-group"><button class="btn btn-primary" data-action="quick-add-product"><i class="fa-solid fa-plus"></i>Add Product</button>' + (canImport ? '<button class="btn btn-secondary" data-action="bulk-import-products"><i class="fa-solid fa-file-import"></i>Bulk Import Products</button>' : '') + '<button class="btn btn-outline" data-route="inventory"><i class="fa-solid fa-warehouse"></i>Inventory</button>' + (isSuperAdmin() ? '<button class="btn btn-outline" data-action="toggle-archived-products" title="' + (showArchived ? "Hide archived" : "Show archived products") + '"><i class="fa-solid fa-box-archive"></i>' + (showArchived ? 'Hide Archived' : 'Show Archived') + '</button>' : '') + '</div><div class="stats-inline"><span class="document-chip">Categories: ' + escapeHtml(String(summary.categories)) + '</span><span class="document-chip">Low Stock: ' + escapeHtml(String(summary.lowStock)) + '</span></div></div>',
       renderOverviewTiles([
         ["Products", numberText(summary.total)],
         ["Low Stock", numberText(summary.lowStock)],
@@ -1066,21 +1098,62 @@
         ["Average Price", money(summary.avgPrice)]
       ]),
       canImport ? renderBulkImportSummaryCard(history) : '',
-      '<section class="card section-card">' + renderTable(["Product", "SKU", "Category", "Price", "Stock"], products.map(function (item) {
-        return [
+      '<section class="card section-card">' + renderTable(productHeaders, activeProducts.map(function (item) {
+        var row = [
           escapeHtml(firstText(item.product_name, "—")),
           escapeHtml(firstText(item.product_code, item.barcode, "—")),
           escapeHtml(firstText(item.category_name, item.category, "Uncategorised")),
           money(firstNumber(item.selling_price, 0)),
           renderStockPill(item)
         ];
-      }), "No products found.") + '</section>'
+        if (isSuperAdmin()) row.push(renderProductActionButtons(item));
+        return row;
+      }), "No products found.") + '</section>',
+      (showArchived && archivedProducts.length > 0) ? '<section class="card section-card"><div class="section-head"><div><h3><i class="fa-solid fa-box-archive" style="color:var(--muted)"></i> Archived Products</h3><p>Hidden from normal lists. Restore to make available again.</p></div></div>' + renderTable(["Product", "SKU", "Category", "Archived", "Actions"], archivedProducts.map(function (item) {
+        return [
+          escapeHtml(firstText(item.product_name, "—")),
+          escapeHtml(firstText(item.product_code, item.barcode, "—")),
+          escapeHtml(firstText(item.category_name, item.category, "Uncategorised")),
+          escapeHtml(item.archived_at ? formatDate(item.archived_at) : "—"),
+          renderProductActionButtons(item)
+        ];
+      }), "No archived products.") + '</section>' : ''
     ].join("");
   }
 
   function canBulkImportProducts() {
     const role = firstText(state.user && state.user.role);
     return ["super_admin", "business_owner", "branch_manager", "inventory_manager"].includes(role);
+  }
+
+  function isSuperAdmin() {
+    const role = firstText(state.user && state.user.role);
+    return role === "super_admin" || role === "business_owner";
+  }
+
+  function renderSaleActionButtons(sale) {
+    if (!isSuperAdmin()) return '';
+    var buttons = [];
+    if (sale.status === "draft") {
+      buttons.push('<button class="btn btn-danger" style="padding:5px 10px;font-size:0.8rem" data-action="delete-sale-draft" data-sale-id="' + escapeAttr(String(sale.id)) + '" data-receipt="' + escapeAttr(firstText(sale.receipt_number, sale.id)) + '" title="Permanently delete this draft sale"><i class="fa-solid fa-trash"></i> Delete Draft</button>');
+    }
+    if (sale.status === "completed") {
+      buttons.push('<button class="btn btn-outline" style="padding:5px 10px;font-size:0.8rem" data-action="void-sale" data-sale-id="' + escapeAttr(String(sale.id)) + '" data-receipt="' + escapeAttr(firstText(sale.receipt_number, sale.id)) + '" title="Void this sale (reverses stock, preserves record)"><i class="fa-solid fa-ban"></i> Void</button>');
+      buttons.push('<button class="btn btn-secondary" style="padding:5px 10px;font-size:0.8rem" data-action="return-sale" data-sale-id="' + escapeAttr(String(sale.id)) + '" data-receipt="' + escapeAttr(firstText(sale.receipt_number, sale.id)) + '" title="Process return/refund linked to this sale"><i class="fa-solid fa-rotate-left"></i> Return</button>');
+    }
+    return buttons.length ? '<div class="table-actions">' + buttons.join("") + '</div>' : '';
+  }
+
+  function renderProductActionButtons(product) {
+    if (!isSuperAdmin()) return '';
+    var buttons = [];
+    if (product.is_archived) {
+      buttons.push('<button class="btn btn-outline" style="padding:5px 10px;font-size:0.8rem" data-action="restore-product" data-product-id="' + escapeAttr(String(product.id)) + '" data-product-name="' + escapeAttr(firstText(product.product_name)) + '" title="Restore this archived product"><i class="fa-solid fa-rotate-right"></i> Restore</button>');
+    } else {
+      buttons.push('<button class="btn btn-outline" style="padding:5px 10px;font-size:0.8rem" data-action="archive-product" data-product-id="' + escapeAttr(String(product.id)) + '" data-product-name="' + escapeAttr(firstText(product.product_name)) + '" title="Archive: hide from lists, preserve history"><i class="fa-solid fa-box-archive"></i> Archive</button>');
+      buttons.push('<button class="btn btn-danger" style="padding:5px 10px;font-size:0.8rem" data-action="delete-product" data-product-id="' + escapeAttr(String(product.id)) + '" data-product-name="' + escapeAttr(firstText(product.product_name)) + '" title="Permanently delete (blocked if sales history exists)"><i class="fa-solid fa-trash"></i> Delete</button>');
+    }
+    return '<div class="table-actions">' + buttons.join("") + '</div>';
   }
 
   function renderBulkImportSummaryCard(history) {
@@ -3677,4 +3750,141 @@
   function clone(value) {
     return JSON.parse(JSON.stringify(value));
   }
+
+  // ─── Super Admin: Product actions ────────────────────────────────────────────
+
+  async function handleArchiveProduct(productId, productName) {
+    if (!isSuperAdmin()) { showToast("Only Super Admin can archive products.", "error"); return; }
+    const reason = window.prompt(
+      'Archive "' + (productName || productId) + '"?\n\n' +
+      'Archived products are hidden from product lists but remain available for historical records.\n\n' +
+      'Enter a reason for archiving (required):'
+    );
+    if (reason === null) return; // cancelled
+    if (!reason.trim()) { showToast("A reason is required to archive a product.", "error"); return; }
+    try {
+      await apiJson("/api/products/" + productId + "/archive", { method: "PATCH", body: JSON.stringify({ reason }) });
+      showToast("Product archived successfully.", "success");
+      await loadProductsData(true);
+      renderCurrentRoute();
+    } catch (err) {
+      showToast(err.message || "Unable to archive product.", "error");
+    }
+  }
+
+  async function handleRestoreProduct(productId, productName) {
+    if (!isSuperAdmin()) { showToast("Only Super Admin can restore archived products.", "error"); return; }
+    if (!window.confirm('Restore "' + (productName || productId) + '"?\n\nThis will make the product visible in product lists again.')) return;
+    try {
+      await apiJson("/api/products/" + productId + "/restore", { method: "PATCH" });
+      showToast("Product restored successfully.", "success");
+      await loadProductsData(true);
+      renderCurrentRoute();
+    } catch (err) {
+      showToast(err.message || "Unable to restore product.", "error");
+    }
+  }
+
+  async function handleDeleteProduct(productId, productName) {
+    if (!isSuperAdmin()) { showToast("Only Super Admin can delete products.", "error"); return; }
+    const reason = window.prompt(
+      '⚠ PERMANENTLY DELETE "' + (productName || productId) + '"?\n\n' +
+      'This action cannot be undone. Products with any sales history cannot be deleted — use Archive instead.\n\n' +
+      'Type a reason to confirm permanent deletion:'
+    );
+    if (reason === null) return;
+    if (!reason.trim()) { showToast("A reason is required to delete a product.", "error"); return; }
+    if (!window.confirm('Final confirmation: permanently delete "' + (productName || productId) + '"? This cannot be undone.')) return;
+    try {
+      await apiJson("/api/products/" + productId, { method: "DELETE", body: JSON.stringify({ reason }) });
+      showToast("Product permanently deleted.", "success");
+      await loadProductsData(true);
+      renderCurrentRoute();
+    } catch (err) {
+      showToast(err.message || "Unable to delete product.", "error");
+    }
+  }
+
+  // ─── Super Admin: Sale actions ────────────────────────────────────────────────
+
+  async function handleVoidSale(saleId, receipt) {
+    if (!isSuperAdmin()) { showToast("Only Super Admin can void sales.", "error"); return; }
+    const reason = window.prompt(
+      '⚠ VOID Sale ' + (receipt || saleId) + '?\n\n' +
+      'Voiding reverses stock movements and financial totals but preserves the original record.\n' +
+      'This action cannot be undone.\n\n' +
+      'Enter the reason for voiding:'
+    );
+    if (reason === null) return;
+    if (!reason.trim()) { showToast("A reason is required to void a sale.", "error"); return; }
+    if (!window.confirm('Final confirmation: void sale ' + (receipt || saleId) + '?\n\nStock will be reversed. This cannot be undone.')) return;
+    try {
+      await apiJson("/api/pos/sales/" + saleId + "/void", { method: "PATCH", body: JSON.stringify({ reason }) });
+      showToast("Sale voided. Stock reversed.", "success");
+      await loadSalesData();
+      renderCurrentRoute();
+    } catch (err) {
+      showToast(err.message || "Unable to void sale.", "error");
+    }
+  }
+
+  async function handleDeleteDraftSale(saleId, receipt) {
+    if (!isSuperAdmin()) { showToast("Only Super Admin can delete draft sales.", "error"); return; }
+    const reason = window.prompt(
+      '⚠ DELETE Draft Sale ' + (receipt || saleId) + '?\n\n' +
+      'Only draft/suspended transactions may be permanently deleted.\n\n' +
+      'Enter a reason for deletion (required):'
+    );
+    if (reason === null) return;
+    if (!reason.trim()) { showToast("A reason is required to delete a sale.", "error"); return; }
+    if (!window.confirm('Final confirmation: permanently delete draft sale ' + (receipt || saleId) + '?')) return;
+    try {
+      await apiJson("/api/pos/sales/" + saleId, { method: "DELETE", body: JSON.stringify({ reason }) });
+      showToast("Draft sale deleted.", "success");
+      await loadSalesData();
+      renderCurrentRoute();
+    } catch (err) {
+      showToast(err.message || "Unable to delete sale.", "error");
+    }
+  }
+
+  async function handleReturnSale(saleId, receipt) {
+    if (!isSuperAdmin()) { showToast("Only Super Admin can process returns.", "error"); return; }
+    // Fetch full sale details to show items
+    let sale;
+    try {
+      sale = await apiJson("/api/pos/sales/" + saleId);
+    } catch (err) {
+      showToast("Unable to load sale details.", "error");
+      return;
+    }
+    if (!sale || !sale.items || !sale.items.length) {
+      showToast("Sale has no items to return.", "error");
+      return;
+    }
+    const reason = window.prompt(
+      'Process Return for Sale ' + (receipt || saleId) + '?\n\n' +
+      'This creates a new return transaction linked to the original sale and reverses stock for returned items.\n\n' +
+      'Enter the reason for this return:'
+    );
+    if (reason === null) return;
+    if (!reason.trim()) { showToast("A reason is required to process a return.", "error"); return; }
+    // Return all items from original sale (full return)
+    const returnItems = sale.items.map(function (item) {
+      return { product_id: item.product_id, quantity: item.quantity };
+    });
+    if (!window.confirm('Process full return for sale ' + (receipt || saleId) + '?\n\n' + returnItems.length + ' item(s) will be returned and stock reversed.')) return;
+    try {
+      const returnSale = await apiJson("/api/pos/sales/" + saleId + "/return", {
+        method: "POST",
+        body: JSON.stringify({ reason, items: returnItems })
+      });
+      showToast("Return processed. Receipt: " + (returnSale.receipt_number || "—"), "success");
+      await loadSalesData();
+      renderCurrentRoute();
+    } catch (err) {
+      showToast(err.message || "Unable to process return.", "error");
+    }
+  }
+
 })();
