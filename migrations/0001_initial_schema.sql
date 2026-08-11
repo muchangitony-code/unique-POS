@@ -380,6 +380,7 @@ CREATE SEQUENCE public.business_settings_id_seq
 -- Name: business_settings_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
 --
 
+ALTER SEQUENCE public.business_settings_id_seq OWNED BY public.business_settings.id;
 
 
 --
@@ -1146,11 +1147,14 @@ CREATE SEQUENCE public.users_id_seq
 -- Name: admin_notifications id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.admin_notifications ALTER COLUMN id SET DEFAULT nextval('public.admin_notifications_id_seq'::regclass);
 
 
 --
 -- Name: audit_log id; Type: DEFAULT; Schema: public; Owner: -
 --
+
+ALTER TABLE ONLY public.audit_log ALTER COLUMN id SET DEFAULT nextval('public.audit_log_id_seq'::regclass);
 
 
 
@@ -1158,11 +1162,14 @@ CREATE SEQUENCE public.users_id_seq
 -- Name: branches id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.branches ALTER COLUMN id SET DEFAULT nextval('public.branches_id_seq'::regclass);
 
 
 --
 -- Name: brands id; Type: DEFAULT; Schema: public; Owner: -
 --
+
+ALTER TABLE ONLY public.brands ALTER COLUMN id SET DEFAULT nextval('public.brands_id_seq'::regclass);
 
 
 
@@ -1170,125 +1177,147 @@ CREATE SEQUENCE public.users_id_seq
 -- Name: business_settings id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.business_settings ALTER COLUMN id SET DEFAULT nextval('public.business_settings_id_seq'::regclass);
 
 
 --
 -- Name: categories id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.categories ALTER COLUMN id SET DEFAULT nextval('public.categories_id_seq'::regclass);
 
 
 --
 -- Name: customers id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.customers ALTER COLUMN id SET DEFAULT nextval('public.customers_id_seq'::regclass);
 
 
 --
 -- Name: data_migrations id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.data_migrations ALTER COLUMN id SET DEFAULT nextval('public.data_migrations_id_seq'::regclass);
 
 
 --
 -- Name: expenses id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.expenses ALTER COLUMN id SET DEFAULT nextval('public.expenses_id_seq'::regclass);
 
 
 --
 -- Name: invoice_items id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.invoice_items ALTER COLUMN id SET DEFAULT nextval('public.invoice_items_id_seq'::regclass);
 
 
 --
 -- Name: invoice_payments id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.invoice_payments ALTER COLUMN id SET DEFAULT nextval('public.invoice_payments_id_seq'::regclass);
 
 
 --
 -- Name: invoices id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.invoices ALTER COLUMN id SET DEFAULT nextval('public.invoices_id_seq'::regclass);
 
 
 --
 -- Name: login_history id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.login_history ALTER COLUMN id SET DEFAULT nextval('public.login_history_id_seq'::regclass);
 
 
 --
 -- Name: product_stock id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.product_stock ALTER COLUMN id SET DEFAULT nextval('public.product_stock_id_seq'::regclass);
 
 
 --
 -- Name: products id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.products ALTER COLUMN id SET DEFAULT nextval('public.products_id_seq'::regclass);
 
 
 --
 -- Name: purchase_items id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.purchase_items ALTER COLUMN id SET DEFAULT nextval('public.purchase_items_id_seq'::regclass);
 
 
 --
 -- Name: purchases id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.purchases ALTER COLUMN id SET DEFAULT nextval('public.purchases_id_seq'::regclass);
 
 
 --
 -- Name: quotation_items id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.quotation_items ALTER COLUMN id SET DEFAULT nextval('public.quotation_items_id_seq'::regclass);
 
 
 --
 -- Name: quotations id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.quotations ALTER COLUMN id SET DEFAULT nextval('public.quotations_id_seq'::regclass);
 
 
 --
 -- Name: sale_items id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.sale_items ALTER COLUMN id SET DEFAULT nextval('public.sale_items_id_seq'::regclass);
 
 
 --
 -- Name: sales id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.sales ALTER COLUMN id SET DEFAULT nextval('public.sales_id_seq'::regclass);
 
 
 --
 -- Name: stock_movements id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.stock_movements ALTER COLUMN id SET DEFAULT nextval('public.stock_movements_id_seq'::regclass);
 
 
 --
 -- Name: stock_transfers id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.stock_transfers ALTER COLUMN id SET DEFAULT nextval('public.stock_transfers_id_seq'::regclass);
 
 
 --
 -- Name: suppliers id; Type: DEFAULT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.suppliers ALTER COLUMN id SET DEFAULT nextval('public.suppliers_id_seq'::regclass);
 
 
 --
 -- Name: users id; Type: DEFAULT; Schema: public; Owner: -
 --
+
+ALTER TABLE ONLY public.users ALTER COLUMN id SET DEFAULT nextval('public.users_id_seq'::regclass);
 
 
 

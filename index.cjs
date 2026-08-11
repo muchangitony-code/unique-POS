@@ -28244,7 +28244,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path5 = require("path");
-        const outputDir = "/home/runner/workspace/deploy/server";
+        const outputDir = __dirname;
         return path5.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -48153,9 +48153,17 @@ var GetBranchComparisonReportResponse = objectType({
 
 // artifacts/api-server/src/routes/health.ts
 var router = (0, import_express.Router)();
-router.get("/healthz", (_req, res) => {
+router.get("/healthz", async (_req, res) => {
+  let db_ok = false;
+  let db_message;
+  try {
+    await db.execute(sql`SELECT 1`);
+    db_ok = true;
+  } catch (err) {
+    db_message = err instanceof Error ? err.message : String(err);
+  }
   const data = HealthCheckResponse.parse({ status: "ok" });
-  res.json(data);
+  res.json({ ...data, db_ok, ...(db_message ? { db_message } : {}) });
 });
 var health_default = router;
 
@@ -70353,7 +70361,7 @@ router7.get("/inventory/movements", async (req, res) => {
   const [{ count }] = await db.select({ count: sql`count(*)` }).from(stockMovementsTable).where(where);
   const movements = await db.select().from(stockMovementsTable).where(where).orderBy(sql`${stockMovementsTable.createdAt} desc`).limit(l).offset(offset);
   const productIds = [...new Set(movements.map((m) => m.productId))];
-  const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(sql`${productsTable.id} = ANY(${productIds})`) : [];
+  const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(inArray(productsTable.id, productIds)) : [];
   const productMap = Object.fromEntries(products.map((p2) => [p2.id, p2.name]));
   res.json({
     data: movements.map((m) => formatMovement(m, productMap[m.productId])),
@@ -70698,7 +70706,7 @@ var router8 = (0, import_express8.Router)();
 async function formatPurchase(purchase) {
   const items = await db.select().from(purchaseItemsTable).where(eq(purchaseItemsTable.purchaseId, purchase.id));
   const productIds = items.map((i) => i.productId);
-  const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(sql`${productsTable.id} = ANY(${productIds})`) : [];
+  const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(inArray(productsTable.id, productIds)) : [];
   const productMap = Object.fromEntries(products.map((p) => [p.id, p.name]));
   const [supplier] = await db.select({ name: suppliersTable.name }).from(suppliersTable).where(eq(suppliersTable.id, purchase.supplierId));
   return {
@@ -70744,11 +70752,12 @@ router8.post("/purchases", async (req, res) => {
   const purchaseNumber = `PO-${Date.now()}`;
   let subtotal = 0;
   for (const item of items) {
-    subtotal += item.quantity * item.unit_cost;
+    subtotal += item.quantity * (item.unit_cost ?? item.unit_price ?? 0);
   }
   const [purchase] = await db.insert(purchasesTable).values({ purchaseNumber, branchId, supplierId: supplier_id, subtotal: subtotal.toString(), total: subtotal.toString(), notes, expectedDate: expected_date }).returning();
   for (const item of items) {
-    await db.insert(purchaseItemsTable).values({ purchaseId: purchase.id, productId: item.product_id, quantity: item.quantity, unitCost: item.unit_cost.toString(), total: (item.quantity * item.unit_cost).toString() });
+    const unitCostVal = item.unit_cost ?? item.unit_price ?? 0;
+    await db.insert(purchaseItemsTable).values({ purchaseId: purchase.id, productId: item.product_id, quantity: item.quantity, unitCost: unitCostVal.toString(), total: (item.quantity * unitCostVal).toString() });
   }
   await logAudit(req, { action: "purchase.created", entityType: "purchase", entityId: purchase.id, description: `Created purchase order ${purchaseNumber} \u2014 KES ${subtotal.toLocaleString()} (${items.length} item${items.length !== 1 ? "s" : ""})` });
   res.status(201).json(await formatPurchase(purchase));
@@ -71275,12 +71284,13 @@ router13.get("/expenses", async (req, res) => {
 });
 router13.post("/expenses", async (req, res) => {
   const { description, amount, category, payment_method, reference, notes, date: date6, branch_id } = req.body;
-  if (!description || !amount || !category || !date6) {
-    res.status(400).json({ error: "description, amount, category and date required" });
+  if (!description || !amount || !category) {
+    res.status(400).json({ error: "description, amount, and category required" });
     return;
   }
+  const expenseDate = date6 ?? new Date().toISOString().slice(0, 10);
   const branchId = await resolveWriteBranchId(req, branch_id != null ? Number(branch_id) : void 0);
-  const [e] = await db.insert(expensesTable).values({ branchId, description, amount: amount.toString(), category, paymentMethod: payment_method ?? "cash", reference, notes, date: date6 }).returning();
+  const [e] = await db.insert(expensesTable).values({ branchId, description, amount: amount.toString(), category, paymentMethod: payment_method ?? "cash", reference, notes, date: expenseDate }).returning();
   await logAudit(req, { action: "expense.created", entityType: "expense", entityId: e.id, description: `Recorded expense "${e.description}" \u2014 KES ${Number(e.amount).toLocaleString()} (${e.category})` });
   res.status(201).json(fmt3(e));
 });
@@ -72502,9 +72512,11 @@ function combine2(...conds) {
   return list.length ? and(...list) : void 0;
 }
 router18.get("/reports/sales-summary", async (req, res) => {
-  const { from, to } = req.query;
+  const { from: fromParam, to: toParam, start, end } = req.query;
+  const from = fromParam ?? start;
+  const to = toParam ?? end;
   if (!from || !to) {
-    res.status(400).json({ error: "from and to dates required" });
+    res.status(400).json({ error: "from/start and to/end dates required" });
     return;
   }
   const fromDate = new Date(from);
@@ -72597,7 +72609,7 @@ router18.get("/reports/inventory-valuation", async (req, res) => {
       status: currentStock === 0 ? "out_of_stock" : currentStock <= minStock ? "low" : "ok"
     };
   });
-  res.json({ total_cost_value: totalCostValue, total_selling_value: totalSellingValue, potential_profit: totalSellingValue - totalCostValue, items });
+  res.json(items);
 });
 router18.get("/reports/branch-comparison", requireSuperAdmin, async (req, res) => {
   const { from, to } = req.query;
