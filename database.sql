@@ -866,6 +866,7 @@ CREATE TABLE public.products (
     supplier_id integer,
     cost_price numeric(15,2) DEFAULT '0'::numeric NOT NULL,
     selling_price numeric(15,2) DEFAULT '0'::numeric NOT NULL,
+    wholesale_price numeric(15,4) DEFAULT 0,
     vat_rate numeric(5,2) DEFAULT '16'::numeric NOT NULL,
     current_stock integer DEFAULT 0 NOT NULL,
     min_stock integer DEFAULT 0 NOT NULL,
