@@ -7,8 +7,17 @@ BEGIN
       AND table_name = 'products'
       AND column_name = 'wholesale_price'
   ) THEN
-    ALTER TABLE public.products
-      ALTER COLUMN wholesale_price DROP NOT NULL;
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'products'
+        AND column_name = 'wholesale_price'
+        AND is_nullable = 'NO'
+    ) THEN
+      ALTER TABLE public.products
+        ALTER COLUMN wholesale_price DROP NOT NULL;
+    END IF;
 
     IF EXISTS (
       SELECT 1
