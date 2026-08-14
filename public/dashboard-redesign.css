@@ -1,216 +1,81 @@
 /* Unique Solar Kenya — Professional dashboard redesign
-   Scope: dashboard only. Counter/POS styles remain isolated in pos-redesign.css.
+   Dashboard only. Counter/POS styles remain isolated in pos-redesign.css.
 */
 
-/* Remove duplicated dashboard clock; the global topbar already provides date/time. */
-.view-root:has(.dashboard-showcase) .workspace-hero__clock {
-  display: none !important;
-}
+.view-root:has(.dashboard-showcase) .workspace-hero__clock{display:none!important}
+.view-root:has(.dashboard-showcase) .dashboard-showcase{display:block!important;width:100%;max-width:none}
+.view-root:has(.dashboard-showcase) .dashboard-main{width:100%!important;max-width:none!important}
+.view-root:has(.dashboard-showcase) .dashboard-rail{display:none!important}
 
-/* Use the full workspace width and remove the document-preview rail that made the dashboard feel like a collage. */
-.view-root:has(.dashboard-showcase) .dashboard-showcase {
-  display: block;
-}
+/* Clean, compact business header. */
+.view-root:has(.dashboard-showcase) .workspace-hero{margin:0 0 18px!important;padding:4px 0 14px!important;border-bottom:1px solid #dfe7ef!important;background:transparent!important;box-shadow:none!important}
+.view-root:has(.dashboard-showcase) .workspace-hero h2{font-size:1.85rem!important;line-height:1.15!important;letter-spacing:-.025em!important;color:#083d6d!important;margin:0!important}
+.view-root:has(.dashboard-showcase) .workspace-hero p{font-size:.9rem!important;color:#64748b!important;margin:5px 0 0!important}
 
-.view-root:has(.dashboard-showcase) .dashboard-main {
-  width: 100%;
-  max-width: none;
-}
-
-.view-root:has(.dashboard-showcase) .dashboard-rail {
-  display: none !important;
-}
-
-/* Cleaner dashboard header. */
-.view-root:has(.dashboard-showcase) .workspace-hero {
-  margin-bottom: 18px;
-  padding: 4px 2px 14px;
-  border-bottom: 1px solid #dfe7ef;
-}
-
-.view-root:has(.dashboard-showcase) .workspace-hero h2 {
-  font-size: 1.85rem;
-  letter-spacing: -.025em;
-}
-
-.view-root:has(.dashboard-showcase) .workspace-hero p {
-  font-size: .9rem;
-}
-
-/* KPI area: flatter, denser and more business-like. */
-.view-root:has(.dashboard-showcase) .dashboard-grid {
-  gap: 14px;
-}
-
-.view-root:has(.dashboard-showcase) .kpi-grid,
-.view-root:has(.dashboard-showcase) .kpi-grid--secondary {
-  gap: 12px;
-}
-
-.view-root:has(.dashboard-showcase) .kpi-card {
-  padding: 16px;
-  border-radius: 12px;
-  border: 1px solid #dfe7ef;
-  box-shadow: 0 2px 8px rgba(15, 35, 55, .045);
-}
-
-.view-root:has(.dashboard-showcase) .kpi-card::after {
-  width: 70px;
-  height: 70px;
-  opacity: .7;
-}
-
-.view-root:has(.dashboard-showcase) .kpi-card__head {
-  margin-bottom: 12px;
-}
-
-.view-root:has(.dashboard-showcase) .kpi-card__icon {
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
-  font-size: .9rem;
-}
-
-.view-root:has(.dashboard-showcase) .kpi-card__label {
-  font-size: .78rem;
-  text-transform: uppercase;
-  letter-spacing: .045em;
-  color: #64748b;
-}
-
-.view-root:has(.dashboard-showcase) .kpi-card__value {
-  font-size: 1.45rem;
-  letter-spacing: -.02em;
-}
-
-.view-root:has(.dashboard-showcase) .kpi-card__trend {
-  font-size: .76rem;
-  margin-top: 5px;
-}
-
-/* Primary KPIs remain the visual priority; secondary metrics are intentionally quieter. */
-.view-root:has(.dashboard-showcase) .kpi-grid--secondary .kpi-card {
-  background: #f8fafc;
-  box-shadow: none;
-}
-
-.view-root:has(.dashboard-showcase) .kpi-grid--secondary .kpi-card__value {
-  font-size: 1.2rem;
-}
-
-/* Main analytical area. */
+/* Remove the oversized decorative dashboard treatment visible in the old version. */
+.view-root:has(.dashboard-showcase) .kpi-card,
 .view-root:has(.dashboard-showcase) .dashboard-chart-card,
 .view-root:has(.dashboard-showcase) .side-card,
 .view-root:has(.dashboard-showcase) .recent-sales-card,
-.view-root:has(.dashboard-showcase) .quick-actions-card {
-  padding: 18px;
-  border-radius: 12px;
-  border: 1px solid #dfe7ef;
-  box-shadow: 0 2px 10px rgba(15, 35, 55, .045);
-}
+.view-root:has(.dashboard-showcase) .quick-actions-card{background:#fff!important;border:1px solid #dfe7ef!important;box-shadow:0 2px 10px rgba(15,35,55,.055)!important}
+.view-root:has(.dashboard-showcase) .kpi-card{min-height:128px!important;padding:16px!important;border-radius:14px!important;overflow:hidden!important}
+.view-root:has(.dashboard-showcase) .kpi-card::after{width:58px!important;height:58px!important;opacity:.35!important;right:12px!important;bottom:10px!important}
+.view-root:has(.dashboard-showcase) .kpi-card__head{margin-bottom:9px!important;position:relative;z-index:1}
+.view-root:has(.dashboard-showcase) .kpi-card__icon{width:38px!important;height:38px!important;border-radius:10px!important;font-size:.9rem!important;box-shadow:none!important}
+.view-root:has(.dashboard-showcase) .kpi-card__label{font-size:.76rem!important;font-weight:700!important;text-transform:uppercase!important;letter-spacing:.04em!important;color:#64748b!important}
+.view-root:has(.dashboard-showcase) .kpi-card__value{font-size:1.45rem!important;line-height:1.15!important;letter-spacing:-.025em!important;color:#083d6d!important;white-space:nowrap!important;position:relative;z-index:1}
+.view-root:has(.dashboard-showcase) .kpi-card__trend{font-size:.75rem!important;margin-top:7px!important;position:relative;z-index:1}
 
+/* Make KPI groups deliberate rather than leaving large empty areas. */
+.view-root:has(.dashboard-showcase) .dashboard-grid{display:grid!important;gap:14px!important;width:100%!important}
+.view-root:has(.dashboard-showcase) .kpi-grid{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:12px!important;width:100%!important}
+.view-root:has(.dashboard-showcase) .kpi-grid--secondary{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:12px!important;width:100%!important}
+.view-root:has(.dashboard-showcase) .kpi-grid--secondary .kpi-card{min-height:104px!important;background:#f8fafc!important;box-shadow:none!important}
+.view-root:has(.dashboard-showcase) .kpi-grid--secondary .kpi-card__value{font-size:1.25rem!important}
+
+/* Main analysis area: chart and business summary side-by-side. */
 .view-root:has(.dashboard-showcase) .dashboard-chart-card,
-.view-root:has(.dashboard-showcase) .side-card {
-  margin-top: 2px;
+.view-root:has(.dashboard-showcase) .side-card,
+.view-root:has(.dashboard-showcase) .recent-sales-card,
+.view-root:has(.dashboard-showcase) .quick-actions-card{padding:18px!important;border-radius:14px!important}
+.view-root:has(.dashboard-showcase) .dashboard-chart-card,.view-root:has(.dashboard-showcase) .side-card{margin-top:0!important}
+.view-root:has(.dashboard-showcase) .section-head{margin-bottom:14px!important}
+.view-root:has(.dashboard-showcase) .section-head h3{font-size:1rem!important;color:#172b4d!important}
+.view-root:has(.dashboard-showcase) .section-head p{font-size:.78rem!important;color:#64748b!important}
+.view-root:has(.dashboard-showcase) .chart-wrap{min-height:260px!important}
+
+/* Lists/tables should be compact and readable. */
+.view-root:has(.dashboard-showcase) .list-stack{gap:6px!important}
+.view-root:has(.dashboard-showcase) .list-item{padding:9px 10px!important;border-radius:8px!important;background:#f8fafc!important}
+.view-root:has(.dashboard-showcase) .list-item__rank{width:28px!important;height:28px!important;border-radius:8px!important;font-size:.78rem!important}
+.view-root:has(.dashboard-showcase) .list-item__title{font-size:.82rem!important}
+.view-root:has(.dashboard-showcase) .list-item__meta{font-size:.72rem!important}
+.view-root:has(.dashboard-showcase) .recent-sales-card .data-table-wrap{border-radius:8px!important;overflow:auto!important}
+.view-root:has(.dashboard-showcase) .recent-sales-card .data-table{min-width:620px!important}
+.view-root:has(.dashboard-showcase) .recent-sales-card .data-table th,.view-root:has(.dashboard-showcase) .recent-sales-card .data-table td{padding:9px 11px!important;font-size:.77rem!important}
+
+/* Quick actions: compact operational toolbar. */
+.view-root:has(.dashboard-showcase) .quick-actions-grid{display:grid!important;grid-template-columns:repeat(7,minmax(0,1fr))!important;gap:8px!important}
+.view-root:has(.dashboard-showcase) .quick-actions-grid .btn{min-height:44px!important;border-radius:9px!important;padding:9px 10px!important;font-size:.77rem!important;box-shadow:none!important}
+
+/* Prevent dashboard controls/cards from creating horizontal overflow. */
+.view-root:has(.dashboard-showcase) .dashboard-grid>*{min-width:0!important}
+.view-root:has(.dashboard-showcase) img{max-width:100%}
+
+@media (min-width:1151px){
+  .view-root:has(.dashboard-showcase) .dashboard-grid{grid-template-columns:minmax(0,1.45fr) minmax(330px,.85fr)!important;align-items:start!important}
+  .view-root:has(.dashboard-showcase) .kpi-grid,.view-root:has(.dashboard-showcase) .kpi-grid--secondary{grid-column:1/-1!important}
+  .view-root:has(.dashboard-showcase) .dashboard-chart-card{grid-column:1!important}
+  .view-root:has(.dashboard-showcase) .side-card{grid-column:2!important}
+  .view-root:has(.dashboard-showcase) .recent-sales-card,.view-root:has(.dashboard-showcase) .quick-actions-card{grid-column:1/-1!important}
 }
-
-.view-root:has(.dashboard-showcase) .section-head {
-  margin-bottom: 14px;
+@media (min-width:900px) and (max-width:1150px){
+  .view-root:has(.dashboard-showcase) .kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .view-root:has(.dashboard-showcase) .kpi-grid--secondary{grid-template-columns:repeat(4,minmax(0,1fr))!important}
+  .view-root:has(.dashboard-showcase) .dashboard-chart-card,.view-root:has(.dashboard-showcase) .side-card,.view-root:has(.dashboard-showcase) .recent-sales-card,.view-root:has(.dashboard-showcase) .quick-actions-card{grid-column:1/-1!important}
+  .view-root:has(.dashboard-showcase) .quick-actions-grid{grid-template-columns:repeat(4,minmax(0,1fr))!important}
 }
-
-.view-root:has(.dashboard-showcase) .section-head h3 {
-  font-size: 1rem;
-  color: #083d6d;
-}
-
-.view-root:has(.dashboard-showcase) .section-head p {
-  font-size: .78rem;
-}
-
-.view-root:has(.dashboard-showcase) .chart-wrap {
-  min-height: 285px;
-}
-
-.view-root:has(.dashboard-showcase) .list-stack {
-  gap: 8px;
-}
-
-.view-root:has(.dashboard-showcase) .list-item {
-  padding: 10px;
-  border-radius: 8px;
-  background: #f8fafc;
-}
-
-.view-root:has(.dashboard-showcase) .list-item__rank {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  font-size: .8rem;
-}
-
-.view-root:has(.dashboard-showcase) .list-item__title {
-  font-size: .82rem;
-}
-
-.view-root:has(.dashboard-showcase) .list-item__meta {
-  font-size: .72rem;
-}
-
-/* Recent sales should read like an operational table, not a card inside a card. */
-.view-root:has(.dashboard-showcase) .recent-sales-card .data-table-wrap {
-  border-radius: 8px;
-}
-
-.view-root:has(.dashboard-showcase) .recent-sales-card .data-table {
-  min-width: 620px;
-}
-
-.view-root:has(.dashboard-showcase) .recent-sales-card .data-table th,
-.view-root:has(.dashboard-showcase) .recent-sales-card .data-table td {
-  padding: 10px 12px;
-  font-size: .78rem;
-}
-
-/* Quick actions become a compact operations toolbar. */
-.view-root:has(.dashboard-showcase) .quick-actions-grid {
-  gap: 8px;
-}
-
-.view-root:has(.dashboard-showcase) .quick-actions-grid .btn {
-  min-height: 42px;
-  border-radius: 8px;
-  padding: 9px 11px;
-  font-size: .78rem;
-}
-
-/* Desktop proportions. */
-@media (min-width: 1100px) {
-  .view-root:has(.dashboard-showcase) .dashboard-grid {
-    gap: 14px;
-  }
-}
-
-/* Laptop: keep the dashboard dense without making it cramped. */
-@media (min-width: 900px) and (max-width: 1150px) {
-  .view-root:has(.dashboard-showcase) .kpi-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .view-root:has(.dashboard-showcase) .kpi-grid--secondary {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .view-root:has(.dashboard-showcase) .dashboard-chart-card,
-  .view-root:has(.dashboard-showcase) .side-card,
-  .view-root:has(.dashboard-showcase) .recent-sales-card,
-  .view-root:has(.dashboard-showcase) .quick-actions-card {
-    grid-column: 1 / -1;
-  }
-}
-
-@media (max-width: 899px) {
-  .view-root:has(.dashboard-showcase) .kpi-grid,
-  .view-root:has(.dashboard-showcase) .kpi-grid--secondary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+@media (max-width:899px){
+  .view-root:has(.dashboard-showcase) .kpi-grid,.view-root:has(.dashboard-showcase) .kpi-grid--secondary{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .view-root:has(.dashboard-showcase) .quick-actions-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
 }
