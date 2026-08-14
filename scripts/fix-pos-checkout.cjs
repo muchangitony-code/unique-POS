@@ -6,67 +6,32 @@ const path = require("node:path");
 const file = path.join(__dirname, "..", "public", "app.js");
 let source = fs.readFileSync(file, "utf8");
 
-function replaceOnce(oldText, newText, label) {
-  if (!source.includes(oldText)) throw new Error(`Checkout patch target not found: ${label}`);
-  source = source.replace(oldText, newText);
+// The live frontend currently starts Cash Received at 0. The checkout guard then
+// rejects a normal sale before the API is called. Make zero mean "pay the current
+// grand total" for non-credit sales, while still rejecting a deliberately entered
+// amount that is below the total.
+function patchCheckoutFunction(functionName) {
+  const start = source.indexOf(`async function ${functionName}()`);
+  if (start < 0) throw new Error(`Checkout function not found: ${functionName}`);
+  const next = source.indexOf("\n  async function ", start + 10);
+  const end = next >= 0 ? next : source.length;
+  let block = source.slice(start, end);
+
+  const old = `    const totals = calculatePosTotals();\n    if (state.pos.payment_method !== "credit" && firstNumber(state.pos.amount_paid, 0) < totals.total) {\n      showToast("Amount paid is less than the grand total.", "error");\n      return;\n    }\n    const payload = {`;
+  const replacement = `    const totals = calculatePosTotals();\n    const enteredAmount = Math.round(firstNumber(state.pos.amount_paid, 0) * 100) / 100;\n    const grandTotal = Math.round(firstNumber(totals.total, 0) * 100) / 100;\n    // A normal sale defaults to full payment. If the cashier enters a positive\n    // amount, that amount is respected so change/underpayment validation still works.\n    const amountPaid = state.pos.payment_method === "credit" ? 0 : (enteredAmount > 0 ? enteredAmount : grandTotal);\n    if (state.pos.payment_method !== "credit" && amountPaid + 0.005 < grandTotal) {\n      showToast("Amount received " + money(amountPaid) + " is less than the sale total " + money(grandTotal) + ".", "error");\n      return;\n    }\n    const payload = {`;
+  if (!block.includes(old)) throw new Error(`Checkout validation block not found: ${functionName}`);
+  block = block.replace(old, replacement);
+
+  const oldPayload = `      amount_paid: state.pos.payment_method === "credit" ? 0 : firstNumber(state.pos.amount_paid, 0),`;
+  const newPayload = `      amount_paid: amountPaid,`;
+  if (!block.includes(oldPayload)) throw new Error(`Checkout payment payload not found: ${functionName}`);
+  block = block.replace(oldPayload, newPayload);
+
+  source = source.slice(0, start) + block + source.slice(end);
 }
 
-replaceOnce(
-`      amount_paid: 0,\n      notes: "",`,
-`      amount_paid: 0,\n      // True means the tender amount follows the current grand total automatically.\n      // Once the cashier edits Cash Received, it becomes manual so overpayment/change is preserved.\n      amount_paid_auto: true,\n      notes: "",`,
-"POS state"
-);
-
-replaceOnce(
-`      if (target.id === "posAmountPaidInput") {\n        state.pos.amount_paid = clampMoney(target.value);\n        renderCurrentRoute();\n      }`,
-`      if (target.id === "posAmountPaidInput") {\n        state.pos.amount_paid = clampMoney(target.value);\n        state.pos.amount_paid_auto = false;\n        renderCurrentRoute();\n      }`,
-"amount-paid input handler"
-);
-
-replaceOnce(
-`      case "pos-payment":\n        state.pos.payment_method = button.dataset.value || "cash";\n        renderCurrentRoute();\n        return;`,
-`      case "pos-payment":\n        state.pos.payment_method = button.dataset.value || "cash";\n        state.pos.amount_paid_auto = true;\n        state.pos.amount_paid = state.pos.payment_method === "credit" ? 0 : calculatePosTotals().total;\n        renderCurrentRoute();\n        return;`,
-"payment method handler"
-);
-
-replaceOnce(
-`  function renderSales() {\n    const products = filterPosProducts();\n    const totals = calculatePosTotals();`,
-`  function renderSales() {\n    const products = filterPosProducts();\n    const totals = calculatePosTotals();\n    // Cash/M-Pesa/card/bank sales are full-payment transactions by default.\n    // Keep Cash Received synchronized with the live grand total until the cashier edits it.\n    if (state.pos.payment_method === "credit") {\n      state.pos.amount_paid = 0;\n      state.pos.amount_paid_auto = true;\n    } else if (state.pos.amount_paid_auto) {\n      state.pos.amount_paid = totals.total;\n    }`,
-"sales render synchronization"
-);
-
-replaceOnce(
-`    state.pos.amount_paid = 0;\n    state.pos.notes = "";`,
-`    state.pos.amount_paid = 0;\n    state.pos.amount_paid_auto = true;\n    state.pos.notes = "";`,
-"basket reset"
-);
-
-replaceOnce(
-`    state.pos.shipping_amount = firstNumber(held.shipping_amount, 0);\n    state.pos.notes = held.notes || "";`,
-`    state.pos.shipping_amount = firstNumber(held.shipping_amount, 0);\n    state.pos.amount_paid = 0;\n    state.pos.amount_paid_auto = true;\n    state.pos.notes = held.notes || "";`,
-"held-sale recall"
-);
-
-const oldCompleteGuard = `    const totals = calculatePosTotals();\n    if (state.pos.payment_method !== "credit" && firstNumber(state.pos.amount_paid, 0) < totals.total) {\n      showToast("Amount paid is less than the grand total.", "error");\n      return;\n    }\n    const payload = {`;
-const newCompleteGuard = `    const totals = calculatePosTotals();\n    const amountPaid = Math.round(firstNumber(state.pos.amount_paid, 0) * 100) / 100;\n    const grandTotal = Math.round(firstNumber(totals.total, 0) * 100) / 100;\n    if (state.pos.payment_method !== "credit" && amountPaid + 0.005 < grandTotal) {\n      showToast("Amount received " + money(amountPaid) + " is less than the sale total " + money(grandTotal) + ".", "error");\n      return;\n    }\n    const payload = {`;
-replaceOnce(oldCompleteGuard, newCompleteGuard, "complete sale validation");
-
-replaceOnce(
-`      amount_paid: state.pos.payment_method === "credit" ? 0 : firstNumber(state.pos.amount_paid, 0),\n      payment_method: state.pos.payment_method,`,
-`      amount_paid: state.pos.payment_method === "credit" ? 0 : amountPaid,\n      payment_method: state.pos.payment_method,`,
-"complete sale amount payload"
-);
-
-const oldCompleteAndThenGuard = oldCompleteGuard;
-const newCompleteAndThenGuard = newCompleteGuard;
-replaceOnce(oldCompleteAndThenGuard, newCompleteAndThenGuard, "complete-and-print validation");
-
-// The second payload uses the same variable names and should use amountPaid too.
-replaceOnce(
-`      amount_paid: state.pos.payment_method === "credit" ? 0 : firstNumber(state.pos.amount_paid, 0),\n      payment_method: state.pos.payment_method,`,
-`      amount_paid: state.pos.payment_method === "credit" ? 0 : amountPaid,\n      payment_method: state.pos.payment_method,`,
-"complete-and-print amount payload"
-);
+patchCheckoutFunction("completeSale");
+patchCheckoutFunction("completeSaleAndThen");
 
 fs.writeFileSync(file, source);
-console.log("UniquePOS checkout payment handling repaired: non-credit sales default to the current grand total, manual tender is preserved, credit remains zero-paid, and money comparisons use cents to avoid floating-point false failures.");
+console.log("UniquePOS checkout fixed: zero Cash Received now defaults to the live grand total for non-credit sales; manually entered amounts remain validated for underpayment.");
