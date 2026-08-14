@@ -65,6 +65,9 @@ async function start() {
     if (result.adminBootstrapped) {
       console.log("[bootstrap-db] Admin account ensured");
     }
+    // Load the targeted PDFKit table-cursor fix before the bundled API renderer.
+    // It affects only the A4 item-table drawing sequence.
+    require("./scripts/pdfkit-a4-table-runtime-fix.cjs");
     require("./index.cjs");
   } catch (err) {
     console.error("[startup] Startup failed", err);
