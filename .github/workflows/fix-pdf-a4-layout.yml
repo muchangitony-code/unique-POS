@@ -1,0 +1,31 @@
+name: Apply A4 PDF layout repair
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch bundled PDF renderer
+        run: node scripts/fix-pdf-a4-layout.cjs
+
+      - name: Commit patched renderer and remove one-time files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.cjs
+          git rm -f scripts/fix-pdf-a4-layout.cjs .github/workflows/fix-pdf-a4-layout.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "Fix broken A4 PDF table layout"
+          git push origin HEAD:main
