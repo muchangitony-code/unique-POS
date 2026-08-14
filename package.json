@@ -3,9 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "main": "app.js",
-  "engines": {
-    "node": ">=22"
-  },
+  "engines": {"node": ">=22"},
   "scripts": {
     "build": "node scripts/build.cjs",
     "start": "node app.js",
