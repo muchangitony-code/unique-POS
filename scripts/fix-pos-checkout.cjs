@@ -6,10 +6,16 @@ const path = require("node:path");
 const file = path.join(__dirname, "..", "public", "app.js");
 let source = fs.readFileSync(file, "utf8");
 
-// The live frontend currently starts Cash Received at 0. The checkout guard then
-// rejects a normal sale before the API is called. Make zero mean "pay the current
-// grand total" for non-credit sales, while still rejecting a deliberately entered
-// amount that is below the total.
+const MARKER = "const amountPaid = state.pos.payment_method === \"credit\" ? 0 : (enteredAmount > 0 ? enteredAmount : grandTotal);";
+
+// Railway may execute the build step more than once. The repair must therefore
+// be safe to run repeatedly and must also be able to run immediately before the
+// application starts.
+if (source.includes(MARKER)) {
+  console.log("UniquePOS checkout repair already applied.");
+  process.exit(0);
+}
+
 function patchCheckoutFunction(functionName) {
   const start = source.indexOf(`async function ${functionName}()`);
   if (start < 0) throw new Error(`Checkout function not found: ${functionName}`);
