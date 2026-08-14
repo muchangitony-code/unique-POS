@@ -12,6 +12,7 @@ const requiredFiles = [
   "public/index.html",
   "public/app.js",
   "public/styles.css",
+  "public/quotation-custom-items.js",
   "scripts/bootstrap-db.cjs",
   "scripts/database-url.cjs",
   "scripts/run-migrations.cjs",
