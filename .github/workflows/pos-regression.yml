@@ -1,0 +1,37 @@
+name: POS regression checks
+
+on:
+  push:
+    branches: ["main", "chatgpt/**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build and syntax validation
+        run: npm run build
+      - name: Verify quotation custom-item integration
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const html = fs.readFileSync('public/index.html', 'utf8');
+          const script = fs.readFileSync('public/quotation-custom-items.js', 'utf8');
+          const migration = fs.readFileSync('migrations/0006_quotation_custom_items.sql', 'utf8');
+          if (!html.includes('/quotation-custom-items.js')) throw new Error('Custom quotation script is not loaded by index.html');
+          if (!script.includes('Add Non-Stock Item')) throw new Error('Non-stock quotation action is missing');
+          if (!script.includes('product_id: productId')) throw new Error('Quotation items are not preserving product linkage');
+          if (!script.includes('x-branch-id')) throw new Error('Quotation creation is missing branch scoping');
+          if (!migration.includes('ALTER COLUMN product_id DROP NOT NULL')) throw new Error('Quotation migration does not permit non-stock items');
+          console.log('Quotation custom-item integration checks passed.');
+          NODE
