@@ -63,6 +63,14 @@
     return select.value || "";
   }
 
+  function activeBranchHeaders() {
+    var headers = {};
+    var select = document.getElementById("branchSelect");
+    var branchId = select ? Number(select.value) : 0;
+    if (Number.isInteger(branchId) && branchId > 0) headers["x-branch-id"] = String(branchId);
+    return headers;
+  }
+
   function openQuotationBuilder() {
     var inventoryItems = getBasketItems();
     var existing = document.getElementById(MODAL_ID);
@@ -175,13 +183,14 @@
     };
 
     try {
+      var headers = Object.assign({
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": "Bearer " + token()
+      }, activeBranchHeaders());
       var response = await fetch("/api/quotations", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-          "Authorization": "Bearer " + token()
-        },
+        headers: headers,
         body: JSON.stringify(payload)
       });
       var data = await response.json().catch(function () { return {}; });
