@@ -2,14 +2,13 @@ name: Apply A4 PDF layout repair
 
 on:
   push:
-    branches: [main]
+    branches: [chatgpt/apply-pdf-patch-branch]
 
 permissions:
   contents: write
 
 jobs:
   repair:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -27,4 +26,4 @@ jobs:
           git add index.cjs
           git diff --cached --quiet && exit 0
           git commit -m "Fix broken A4 PDF table layout"
-          git push origin HEAD:main
+          git push origin HEAD:chatgpt/apply-pdf-patch-branch
