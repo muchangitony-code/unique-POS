@@ -13,8 +13,6 @@
     "db:migrate": "node scripts/run-migrations.cjs",
     "db:generate-initial": "node scripts/generate-initial-migration.cjs",
     "db:verify": "node scripts/verify-schema.cjs",
-    "db:generate-initial": "node scripts/generate-initial-migration.cjs",
-    "db:verify": "node scripts/verify-schema.cjs",
     "startup:validate": "node scripts/validate-startup-env.cjs"
   },
   "dependencies": {
