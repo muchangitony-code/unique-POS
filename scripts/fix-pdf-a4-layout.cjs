@@ -63,7 +63,7 @@ const oldRows = `      data.rows.forEach((row, index) => {
           row.unit,
           fmtCurrency2(row.unitPrice, data.currency),
           fmtCurrency2(row.discount, data.currency),
-          `${safeNum(row.vatRate).toLocaleString()}%`,
+          `\${safeNum(row.vatRate).toLocaleString()}%`,
           fmtCurrency2(row.total, data.currency)
         ];
         values.forEach((value, cellIndex) => {
@@ -89,7 +89,7 @@ const newRows = `      data.rows.forEach((row, index) => {
           row.unit,
           fmtCurrency2(row.unitPrice, data.currency),
           fmtCurrency2(row.discount, data.currency),
-          `${safeNum(row.vatRate).toLocaleString()}%`,
+          `\${safeNum(row.vatRate).toLocaleString()}%`,
           fmtCurrency2(row.total, data.currency)
         ];
         // Use one fixed Y coordinate for every cell. Previously each PDFKit text() call mutated doc.y,
