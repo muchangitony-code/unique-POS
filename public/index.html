@@ -59,36 +59,38 @@
           <article class="hero-card">
             <span class="hero-card__icon"><i class="fa-solid fa-solar-panel"></i></span>
             <div>
-              <strong>Stock control</strong>
-              <p>Manage products, prices, inventory and branch stock from one workspace.</p>
+              <strong>Solar-focused retail</strong>
+              <p>Built for product-rich solar and electrical merchandising workflows.</p>
             </div>
           </article>
         </div>
+
+        <div class="service-status" id="apiStatus">Checking service status…</div>
       </section>
 
       <section class="login-panel">
         <div class="login-card">
           <div class="login-card__header">
-            <h2>Sign in to Unique POS</h2>
-            <p>Secure access to your business operations.</p>
+            <h2>Sign in</h2>
+            <p>Use your account to open the POS workspace.</p>
           </div>
-          <form class="stack-form" id="loginForm">
+
+          <form id="loginForm" class="stack-form">
             <label>
-              <span>Email</span>
-              <input id="email" type="email" autocomplete="username" placeholder="admin@example.com" required />
+              <span>Email or username</span>
+              <input id="email" name="email" type="text" autocomplete="username" required />
             </label>
             <label>
               <span>Password</span>
-              <input id="password" type="password" autocomplete="current-password" placeholder="Enter your password" required />
+              <input id="password" name="password" type="password" autocomplete="current-password" required />
             </label>
-            <div id="totpWrap" class="hidden">
-              <label>
-                <span>Authenticator code</span>
-                <input id="totp" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code" />
-              </label>
-            </div>
-            <button id="submitBtn" class="btn btn-primary btn-block" type="submit">Sign in</button>
+            <label id="totpWrap" class="hidden">
+              <span>Authentication code</span>
+              <input id="totp" name="totp" type="text" inputmode="numeric" autocomplete="one-time-code" />
+            </label>
+            <button id="submitBtn" type="submit" class="btn btn-primary btn-block">Sign in</button>
           </form>
+
           <div id="loginMessage" class="inline-message hidden"></div>
         </div>
       </section>
@@ -103,9 +105,11 @@
             <span>Point of Sale Suite</span>
           </div>
         </div>
-        <nav class="sidebar__nav">
+
+        <nav class="sidebar__nav" aria-label="Sidebar Navigation">
           <ul id="sidebarNav"></ul>
         </nav>
+
         <div class="sidebar__footer">
           <div class="user-card">
             <div class="user-card__avatar" id="sidebarUserInitials">US</div>
@@ -114,47 +118,84 @@
               <span id="sidebarUserRole">Administrator</span>
             </div>
           </div>
-          <button class="btn btn-ghost btn-block" data-action="logout"><i class="fa-solid fa-right-from-bracket"></i>Logout</button>
+          <button class="btn btn-ghost btn-block" data-action="logout">
+            <i class="fa-solid fa-right-from-bracket"></i>
+            Logout
+          </button>
         </div>
       </aside>
 
-      <main class="main-shell">
+      <div class="main-shell">
         <header class="topbar">
           <div class="topbar__left">
-            <button class="icon-btn mobile-only" id="sidebarToggle" aria-label="Toggle menu"><i class="fa-solid fa-bars"></i></button>
+            <button class="icon-btn mobile-only" id="sidebarToggle" aria-label="Open menu" type="button">
+              <i class="fa-solid fa-bars"></i>
+            </button>
             <div>
               <h1 id="pageTitle">Dashboard</h1>
-              <p id="pageSubtitle">Operational overview, performance and activity.</p>
+              <p id="pageSubtitle">Operational overview and live business activity.</p>
             </div>
           </div>
+
           <div class="topbar__right">
             <label class="search-field">
               <i class="fa-solid fa-magnifying-glass"></i>
-              <input id="globalSearchInput" type="search" placeholder="Search products, invoices, customers…" />
+              <input
+                id="globalSearchInput"
+                type="search"
+                placeholder="Search products, invoices, customers..."
+              />
             </label>
+
             <div class="topbar-select-group">
-              <label class="topbar-select-field"><span>Branch</span><select id="branchSelect" class="topbar-select"></select></label>
-              <label class="topbar-select-field"><span>User</span><select id="userSelect" class="topbar-select"></select></label>
+              <label class="topbar-select-field">
+                <span>Branch</span>
+                <select id="branchSelect" class="topbar-select" aria-label="Branch selector">
+                  <option>Main Branch</option>
+                </select>
+              </label>
+              <label class="topbar-select-field">
+                <span>User</span>
+                <select id="userSelect" class="topbar-select" aria-label="User selector">
+                  <option>Admin</option>
+                </select>
+              </label>
             </div>
-            <div class="topbar-clock"><span id="topbarDate">Today</span><strong id="topbarTime">12:00 PM</strong></div>
+
+            <div class="topbar-clock" aria-live="polite">
+              <span id="topbarDate">Saturday, 10 Aug 2026</span>
+              <strong id="topbarTime">12:45 PM</strong>
+            </div>
+
+            <button class="icon-btn" data-action="notify" aria-label="Notifications">
+              <i class="fa-regular fa-bell"></i>
+            </button>
+            <button class="icon-btn" data-route="settings" aria-label="Settings">
+              <i class="fa-solid fa-gear"></i>
+            </button>
+            <button class="icon-btn" data-action="logout" aria-label="Logout">
+              <i class="fa-solid fa-arrow-right-from-bracket"></i>
+            </button>
           </div>
         </header>
 
-        <section class="view-root" id="viewRoot"></section>
-      </main>
+        <main class="view-root" id="viewRoot"></main>
+      </div>
     </div>
 
     <div class="modal-overlay hidden" id="modalOverlay">
-      <div class="modal-window" id="modalWindow" role="dialog" aria-modal="true">
+      <div class="modal-window" id="modalWindow" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
         <div class="modal-header">
           <div>
             <h3 id="modalTitle">Modal</h3>
             <p id="modalSubtitle"></p>
           </div>
-          <button class="icon-btn" type="button" data-action="close-modal" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+          <button class="icon-btn" data-action="close-modal" aria-label="Close modal">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
         </div>
-        <div id="modalBody" class="modal-body"></div>
-        <div id="modalActions" class="modal-actions"></div>
+        <div class="modal-actions" id="modalActions"></div>
+        <div class="modal-body" id="modalBody"></div>
       </div>
     </div>
 
