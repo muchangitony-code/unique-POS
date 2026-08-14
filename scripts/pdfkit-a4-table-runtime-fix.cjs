@@ -6,23 +6,24 @@
 // A4 item table is being drawn; all other document layout remains untouched.
 const PDFDocument = require("pdfkit");
 const proto = PDFDocument.prototype;
-if (proto.__uniquePosA4TableFixApplied) return;
 
-const originalText = proto.text;
-proto.text = function patchedPdfKitText(text, x, y, options) {
-  const value = String(text ?? "").trim();
-  if (value === "Item Code") this.__uniquePosA4TableMode = true;
+if (!proto.__uniquePosA4TableFixApplied) {
+  const originalText = proto.text;
+  proto.text = function patchedPdfKitText(text, x, y, options) {
+    const value = String(text ?? "").trim();
+    if (value === "Item Code") this.__uniquePosA4TableMode = true;
 
-  const tableMode = this.__uniquePosA4TableMode === true;
-  const explicitPosition = typeof x === "number" && typeof y === "number";
-  const preserveY = tableMode && explicitPosition;
-  const previousY = this.y;
+    const tableMode = this.__uniquePosA4TableMode === true;
+    const explicitPosition = typeof x === "number" && typeof y === "number";
+    const preserveY = tableMode && explicitPosition;
+    const previousY = this.y;
 
-  const result = originalText.call(this, text, x, y, options);
+    const result = originalText.call(this, text, x, y, options);
 
-  if (preserveY) this.y = previousY;
-  if (value === "NOTES") this.__uniquePosA4TableMode = false;
-  return result;
-};
+    if (preserveY) this.y = previousY;
+    if (value === "NOTES") this.__uniquePosA4TableMode = false;
+    return result;
+  };
 
-proto.__uniquePosA4TableFixApplied = true;
+  proto.__uniquePosA4TableFixApplied = true;
+}
