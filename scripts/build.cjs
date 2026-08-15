@@ -16,6 +16,7 @@ const requiredFiles = [
   "server/pdf-engine.cjs",
   "server/pdf-formatters.cjs",
   "server/pdf-fonts.cjs",
+  "scripts/load-patched-index.cjs",
   "scripts/bootstrap-db.cjs",
   "scripts/database-url.cjs",
   "scripts/run-migrations.cjs",
@@ -26,21 +27,13 @@ const requiredFiles = [
 
 for (const relativePath of requiredFiles) {
   const absolutePath = path.join(repoRoot, relativePath);
-  if (!fs.existsSync(absolutePath)) {
-    throw new Error(`Missing required runtime file: ${relativePath}`);
-  }
+  if (!fs.existsSync(absolutePath)) throw new Error(`Missing required runtime file: ${relativePath}`);
 }
 
-const syntaxCheckedFiles = requiredFiles.filter((relativePath) =>
-  relativePath.endsWith(".js") || relativePath.endsWith(".cjs")
-);
-
+const syntaxCheckedFiles = requiredFiles.filter((relativePath) => relativePath.endsWith(".js") || relativePath.endsWith(".cjs"));
 for (const relativePath of syntaxCheckedFiles) {
-  const absolutePath = path.join(repoRoot, relativePath);
-  const result = spawnSync(process.execPath, ["--check", absolutePath], { stdio: "inherit" });
-  if (result.status !== 0) {
-    process.exit(result.status || 1);
-  }
+  const result = spawnSync(process.execPath, ["--check", path.join(repoRoot, relativePath)], { stdio: "inherit" });
+  if (result.status !== 0) process.exit(result.status || 1);
 }
 
 console.log("[build] Runtime bundle, PDF engine and startup scripts validated.");
