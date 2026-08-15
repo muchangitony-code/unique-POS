@@ -13,6 +13,9 @@ const requiredFiles = [
   "public/app.js",
   "public/styles.css",
   "public/quotation-custom-items.js",
+  "server/pdf-engine.cjs",
+  "server/pdf-formatters.cjs",
+  "server/pdf-fonts.cjs",
   "scripts/bootstrap-db.cjs",
   "scripts/database-url.cjs",
   "scripts/run-migrations.cjs",
@@ -40,4 +43,4 @@ for (const relativePath of syntaxCheckedFiles) {
   }
 }
 
-console.log("[build] Runtime bundle and startup scripts validated.");
+console.log("[build] Runtime bundle, PDF engine and startup scripts validated.");
