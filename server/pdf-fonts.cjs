@@ -1,10 +1,10 @@
 'use strict';
 const fs = require('node:fs');
-const path = require('node:path');
 const fontkit = require('@pdf-lib/fontkit');
 
-const FONT_DIR = path.join(__dirname, '..', 'fonts');
-const FONT_PATH = path.join(FONT_DIR, 'DejaVuSans.ttf');
+// Fontsource ships the actual DejaVu Sans TTF with the application. We embed the TTF bytes
+// into every generated PDF; the PDF never relies on viewer-installed fonts.
+const FONT_PATH = require.resolve('@fontsource/dejavu-sans/files/latin-400-normal.ttf');
 
 async function loadFonts(pdfDoc) {
   pdfDoc.registerFontkit(fontkit);
