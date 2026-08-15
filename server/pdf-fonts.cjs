@@ -1,6 +1,6 @@
 'use strict';
 const fs = require('node:fs');
-const fontkit = require('@pdf-lib/fontkit');
+const fontkit = require('fontkit');
 
 // Fontsource ships the actual DejaVu Sans TTF with the application. We embed the TTF bytes
 // into every generated PDF; the PDF never relies on viewer-installed fonts.
