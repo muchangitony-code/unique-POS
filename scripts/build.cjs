@@ -18,7 +18,6 @@ for (const file of [regular, bold]) {
 
 if (!fs.existsSync(sourceBundle)) throw new Error(`Missing application bundle: ${sourceBundle}`);
 
-// Keep the PDF font assets in the generated deployment artifact.
 const bundleAssets = path.join(root, 'build', 'assets', 'fonts');
 fs.mkdirSync(bundleAssets, { recursive: true });
 for (const file of [regular, bold]) fs.copyFileSync(file, path.join(bundleAssets, path.basename(file)));
@@ -38,7 +37,7 @@ function buildRuntimeBundle() {
 
   let transformed = source.slice(0, start) +
     'async function renderPdfBuffer(payload, paper) {\n' +
-    '  return await require("./server/pdf/legacy.cjs").renderLegacyPdf(payload, paper);\n' +
+    '  return await require("./server/pdf/index.cjs").renderPdfBuffer(payload, paper);\n' +
     '}\n' +
     source.slice(end);
 
@@ -57,7 +56,7 @@ buildRuntimeBundle();
 
 const requiredFiles = [
   'app.js', 'index.cjs', 'product-bulk.cjs', 'public/index.html', 'public/app.js', 'public/styles.css', 'public/quotation-custom-items.js',
-  'server/pdf/index.cjs', 'server/pdf/schema.cjs', 'server/pdf/format.js', 'server/pdf/fonts.cjs', 'server/pdf/legacy.cjs', 'server/pdf/bundle-loader.cjs',
+  'server/pdf/index.cjs', 'server/pdf/schema.cjs', 'server/pdf/format.js', 'server/pdf/fonts.cjs', 'server/pdf/bundle-loader.cjs',
   'scripts/bootstrap-db.cjs', 'scripts/database-url.cjs', 'scripts/run-migrations.cjs', 'scripts/schema-config.cjs', 'scripts/sql-utils.cjs', 'scripts/validate-startup-env.cjs',
   'assets/fonts/DejaVuSans.ttf', 'assets/fonts/DejaVuSans-Bold.ttf', 'assets/fonts/LICENSE.txt', 'index.runtime.cjs'
 ];
