@@ -21,7 +21,7 @@ function rowHeight(pdf,item){ return Math.max(27,wrapHeight(pdf,safeDescription(
 function itemTotals(item){ const gross=mulCents(moneyFromInput(item.unitPrice),item.qty); const discount=moneyFromInput(item.discount||'0'); const net=Math.max(0,gross-discount); const tax=taxCents(net,item.taxRate||0); return {gross,discount,tax,total:net+tax}; }
 function totals(items){ let subtotal=0,discount=0,tax=0,total=0; for(const item of items){const t=itemTotals(item);subtotal+=t.gross;discount+=t.discount;tax+=t.tax;total+=t.total;} return {subtotal,discount,tax,total}; }
 
-// Vector version of the Unique Solar Kenya mark. PDFKit does not reliably decode SVG files.
+// Vector version of the Unique Solar Kenya mark. PDFKit polygon() expects point arrays, not raw coordinates.
 function drawLogo(pdf,x,y,size=62){
  const s=size/62; pdf.save();
  pdf.fillColor(COLORS.orange).circle(x+31*s,y+20*s,15*s).fill();
@@ -29,8 +29,8 @@ function drawLogo(pdf,x,y,size=62){
  pdf.strokeColor(COLORS.orange).lineWidth(1.8*s).lineCap('round');
  [[31,1,31,10],[18,5,21,13],[44,5,41,13],[8,15,15,18],[54,15,47,18]].forEach(r=>pdf.moveTo(x+r[0]*s,y+r[1]*s).lineTo(x+r[2]*s,y+r[3]*s).stroke());
  pdf.fillColor(COLORS.accent);
- pdf.polygon(x+5*s,y+39*s,x+28*s,y+39*s,x+36*s,y+29*s,x+13*s,y+29*s).fill();
- pdf.polygon(x+31*s,y+39*s,x+54*s,y+39*s,x+58*s,y+29*s,x+36*s,y+29*s).fill();
+ pdf.polygon([x+5*s,y+39*s],[x+28*s,y+39*s],[x+36*s,y+29*s],[x+13*s,y+29*s]).fill();
+ pdf.polygon([x+31*s,y+39*s],[x+54*s,y+39*s],[x+58*s,y+29*s],[x+36*s,y+29*s]).fill();
  pdf.strokeColor(COLORS.white).lineWidth(1.1*s);
  pdf.moveTo(x+13*s,y+29*s).lineTo(x+28*s,y+39*s).stroke(); pdf.moveTo(x+36*s,y+29*s).lineTo(x+54*s,y+39*s).stroke(); pdf.moveTo(x+8*s,y+35*s).lineTo(x+53*s,y+35*s).stroke();
  pdf.strokeColor(COLORS.orange).lineWidth(2.4*s); pdf.moveTo(x+4*s,y+49*s).lineTo(x+31*s,y+44*s).lineTo(x+58*s,y+49*s).stroke(); pdf.restore();
