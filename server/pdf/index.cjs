@@ -1,6 +1,6 @@
 'use strict';
 const PDFDocument = require('pdfkit');
-const { validateDocument, normalizeDocument } = require('./schema');
+const { validateDocument, normalizeDocument } = require('./schema.cjs');
 const { moneyFromInput, mulCents, taxCents, formatMoney, formatNumber } = require('./format');
 const { registerFonts } = require('./fonts.cjs');
 const A4 = { width: 595.28, height: 841.89 }, M = 40, CONTENT_W = A4.width - M * 2, FOOTER_Y = A4.height - 25;
