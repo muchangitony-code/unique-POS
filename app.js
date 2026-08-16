@@ -33,12 +33,21 @@ process.env.BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups
 process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dirname, "storage");
 if (!process.env.PORT) process.env.PORT = "8080";
 
+function ensureRuntimeBundle() {
+  const runtimeBundle = path.join(__dirname, "index.runtime.cjs");
+  if (fs.existsSync(runtimeBundle)) return;
+  console.log("[startup] Generated runtime bundle is missing; running deterministic build step");
+  require("./scripts/build.cjs");
+  if (!fs.existsSync(runtimeBundle)) throw new Error(`Build completed without creating ${runtimeBundle}`);
+}
+
 async function start() {
   try {
     assertFonts();
     console.log("[startup] PDF FONT_DIR:", FONT_DIR);
     console.log("[startup] PDF FONT_DIR contents:", fs.readdirSync(FONT_DIR).sort());
     validateStartupEnv();
+    ensureRuntimeBundle();
     const { bootstrapDatabaseIfNeeded } = require("./scripts/bootstrap-db.cjs");
     const result = await bootstrapDatabaseIfNeeded();
     process.env.UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS = "1";
