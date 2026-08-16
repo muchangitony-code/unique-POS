@@ -56,4 +56,81 @@ async function renderDocument({ type, doc: input, company }) {
   for (const page of pages) { pdf.addPage({ size: 'A4', margins: { top: M, bottom: M, left: M, right: M } }); let y = tableHeader(pdf, header(pdf, data)) + 3; page.rows.forEach((item, i) => { y = row(pdf, item, y, i); }); if (page === pages[pages.length - 1]) { y += 14; totalsBlock(pdf, t, data.currency, y); y += 94; y += block(pdf, 'Notes', data.notes, y) + 8; block(pdf, data.type === 'invoice' ? 'Terms & Conditions' : 'Quotation Terms', data.terms, y); } }
   const range = pdf.bufferedPageRange(); for (let i = range.start; i < range.start + range.count; i++) footer(pdf, i + 1, range.count, data); pdf.end(); return done;
 }
-module.exports = { renderDocument };
+
+function asDate(value) {
+  if (value == null || value === '') return '';
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? '' : value.toISOString().slice(0, 10);
+  const s = String(value).trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const dmy = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})(?:\D.*)?$/);
+  if (dmy) {
+    const day = Number(dmy[1]), month = Number(dmy[2]), year = Number(dmy[3]);
+    const d = new Date(Date.UTC(year, month - 1, day));
+    if (d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day) return d.toISOString().slice(0, 10);
+  }
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+}
+function moneyValue(value) {
+  if (value == null || value === '') return '0';
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  const cleaned = String(value).trim().replace(/[^0-9.-]/g, '');
+  return cleaned || '0';
+}
+function quantityValue(value) {
+  if (value == null || value === '') return 0;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const n = Number(String(value).replace(/,/g, '').trim());
+  return Number.isFinite(n) ? n : 0;
+}
+function mapDocumentPayload(payload, paper) {
+  if (paper && paper !== 'a4') throw new Error('The invoice/quotation PDF API only supports A4 documents');
+  const source = payload && typeof payload === 'object' ? payload : {};
+  const rawType = String(source.documentType || source.type || '').toLowerCase();
+  const type = rawType.includes('quotation') ? 'quotation' : 'invoice';
+  const rows = Array.isArray(source.rows) ? source.rows : Array.isArray(source.items) ? source.items : [];
+  const customer = source.customer && typeof source.customer === 'object' ? source.customer : {};
+  const company = source.company && typeof source.company === 'object' ? source.company : {};
+  const settings = source.settings && typeof source.settings === 'object' ? source.settings : {};
+  return {
+    type,
+    doc: {
+      number: source.documentNumber || source.number || 'DOCUMENT',
+      date: asDate(source.documentDate || source.date || new Date()),
+      dueDate: asDate(source.dueDate),
+      validUntil: asDate(source.validUntil || source.dueDate),
+      customer: {
+        name: source.customerName || source.partyName || customer.name || customer.customer_name || 'Walk-in Customer',
+        address: source.customerAddress || customer.address || '',
+        phone: source.customerPhone || customer.phone || '',
+        email: source.customerEmail || customer.email || '',
+        taxId: source.customerTaxNumber || customer.taxNumber || customer.tax_id || ''
+      },
+      items: rows.map((r) => ({
+        description: r.description || r.productName || r.product_name || 'Item',
+        qty: quantityValue(r.quantity ?? r.qty),
+        unitPrice: moneyValue(r.unitPrice ?? r.unit_price ?? r.price),
+        taxRate: quantityValue(r.taxRate ?? r.tax_rate ?? r.vatRate ?? r.vat_rate),
+        discount: moneyValue(r.discount ?? r.discount_amount ?? '0')
+      })),
+      currency: String(source.currency || settings.currency || 'KES').trim().toUpperCase(),
+      notes: Array.isArray(source.notesSections) ? source.notesSections.map((x) => Array.isArray(x) ? x.join(': ') : String(x)).join('\n') : String(source.notes || ''),
+      terms: Array.isArray(source.termsLines) ? source.termsLines.join('\n') : String(source.terms || '')
+    },
+    company: {
+      name: company.name || company.businessName || settings.businessName || 'Unique Solar Kenya Ltd',
+      address: company.address || company.businessAddress || settings.businessAddress || '',
+      phone: company.phone || company.businessPhone || settings.businessPhone || '',
+      email: company.email || company.businessEmail || settings.businessEmail || '',
+      taxId: company.taxPin || company.taxId || settings.taxPin || settings.taxNumber || settings.tax_number || '',
+      logo: company.logo || settings.logoUrl || null
+    }
+  };
+}
+
+async function renderPdfBuffer(payload, paper) {
+  return renderDocument(mapDocumentPayload(payload, paper));
+}
+
+module.exports = { renderDocument, renderPdfBuffer, mapDocumentPayload };
