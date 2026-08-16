@@ -35,7 +35,7 @@ function fixPdfStoredLogoLoader() {
   const start = source.indexOf('async function loadLogoBuffer(logoUrl){');
   const end = source.indexOf('\n\nfunction drawLogo', start);
   if (start < 0 || end < 0) return;
-  const replacement = `async function loadLogoBuffer(logoUrl){\n const raw=String(logoUrl||'').trim();\n if(!raw || raw.startsWith('data:image/svg+xml')) return null;\n try {\n   if(raw.startsWith('/objects/')) {\n     const storageRoot=path.resolve(String(process.env.LOCAL_STORAGE_DIR||path.join(process.cwd(),'storage')));\n     const relative=raw.slice('/objects/'.length);\n     if(!relative || relative.includes('..')) return null;\n     const filePath=path.join(storageRoot,relative);\n     const rootPrefix=storageRoot.endsWith(path.sep)?storageRoot:storageRoot+path.sep;\n     if(!filePath.startsWith(rootPrefix) || !fs.existsSync(filePath)) return null;\n     const stat=fs.statSync(filePath);\n     if(!stat.isFile() || stat.size>MAX_LOGO_BYTES) return null;\n     const buffer=fs.readFileSync(filePath);\n     if(!buffer.length) return null;\n     return buffer;\n   }\n   let url=raw;\n   if(url.startsWith('/')) {\n     const origin=String(process.env.PUBLIC_APP_URL||process.env.APP_URL||process.env.RAILWAY_STATIC_URL||'').trim().replace(/\\/$/,'');\n     const publicDomain=String(process.env.RAILWAY_PUBLIC_DOMAIN||'').trim();\n     const base=origin || (publicDomain ? \`https://\${publicDomain}\` : \`http://127.0.0.1:\${process.env.PORT||3000}\`);\n     url=base+url;\n   }\n   if(!/^https?:\\/\\//i.test(url)) return null;\n   const response=await fetch(url,{redirect:'follow'});\n   if(!response.ok) return null;\n   const contentType=String(response.headers.get('content-type')||'').toLowerCase();\n   if(!/^image\\/(png|jpeg|jpg)$/i.test(contentType)) return null;\n   const length=Number(response.headers.get('content-length')||0);\n   if(length && length>MAX_LOGO_BYTES) return null;\n   const buffer=Buffer.from(await response.arrayBuffer());\n   if(!buffer.length || buffer.length>MAX_LOGO_BYTES) return null;\n   return buffer;\n } catch(_error) {\n   return null;\n }\n}`;
+  const replacement = `async function loadLogoBuffer(logoUrl){\n const raw=String(logoUrl||'').trim();\n if(!raw || raw.startsWith('data:image/svg+xml')) return null;\n try {\n   if(raw.startsWith('/objects/')) {\n     const nodeFs=require('node:fs'); const nodePath=require('node:path');\n     const storageRoot=nodePath.resolve(String(process.env.LOCAL_STORAGE_DIR||nodePath.join(process.cwd(),'storage')));\n     const relative=raw.slice('/objects/'.length);\n     if(!relative || relative.includes('..')) return null;\n     const filePath=nodePath.join(storageRoot,relative);\n     const rootPrefix=storageRoot.endsWith(nodePath.sep)?storageRoot:storageRoot+nodePath.sep;\n     if(!filePath.startsWith(rootPrefix) || !nodeFs.existsSync(filePath)) return null;\n     const stat=nodeFs.statSync(filePath);\n     if(!stat.isFile() || stat.size>MAX_LOGO_BYTES) return null;\n     const buffer=nodeFs.readFileSync(filePath);\n     if(!buffer.length) return null;\n     return buffer;\n   }\n   let url=raw;\n   if(url.startsWith('/')) {\n     const origin=String(process.env.PUBLIC_APP_URL||process.env.APP_URL||process.env.RAILWAY_STATIC_URL||'').trim().replace(/\\/$/,'');\n     const publicDomain=String(process.env.RAILWAY_PUBLIC_DOMAIN||'').trim();\n     const base=origin || (publicDomain ? \`https://\${publicDomain}\` : \`http://127.0.0.1:\${process.env.PORT||3000}\`);\n     url=base+url;\n   }\n   if(!/^https?:\\/\\//i.test(url)) return null;\n   const response=await fetch(url,{redirect:'follow'});\n   if(!response.ok) return null;\n   const contentType=String(response.headers.get('content-type')||'').toLowerCase();\n   if(!/^image\\/(png|jpeg|jpg)$/i.test(contentType)) return null;\n   const length=Number(response.headers.get('content-length')||0);\n   if(length && length>MAX_LOGO_BYTES) return null;\n   const buffer=Buffer.from(await response.arrayBuffer());\n   if(!buffer.length || buffer.length>MAX_LOGO_BYTES) return null;\n   return buffer;\n } catch(_error) {\n   return null;\n }\n}`;
   fs.writeFileSync(pdfRenderer, source.slice(0,start) + replacement + source.slice(end), 'utf8');
 }
 
@@ -51,28 +51,23 @@ function buildRuntimeBundle() {
   const startMarker = 'async function renderPdfBuffer(payload, paper) {';
   const start = source.indexOf(startMarker);
   if (start < 0) throw new Error('Bundled index.cjs does not expose the PDF renderer marker');
-
   const endMarkers = [
     'router17.get(\\"/documents/:type/:id/preview\\"',
     'router17.get("/documents/:type/:id/preview"'
   ];
   const end = endMarkers.map((marker) => source.indexOf(marker, start)).find((index) => index >= 0);
   if (end == null) throw new Error('Bundled index.cjs does not expose the document preview route marker');
-
   let transformed = source.slice(0, start) +
     'async function renderPdfBuffer(payload, paper) {\n' +
     '  return await require("./server/pdf/index.cjs").renderPdfBuffer(payload, paper);\n' +
     '}\n' +
     source.slice(end);
-
   const oldHeaders = 'const fileBase = `${type}-${payload.documentNumber || id}`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");\n    const disposition = String(req.query.disposition || "").toLowerCase() === "attachment" || String(req.query.download || "") === "1" ? "attachment" : "inline";\n    res.setHeader("Content-Type", "application/pdf");\n    res.setHeader("Content-Disposition", `${disposition}; filename="${fileBase}.pdf"`);';
   const newHeaders = 'const fileBase = String(payload.documentNumber || id).replace(/[^a-zA-Z0-9._-]+/g, "-");\n    res.setHeader("Content-Type", "application/pdf");\n    res.setHeader("Content-Disposition", `inline; filename="${fileBase}.pdf"`);';
   transformed = transformed.replace(oldHeaders, newHeaders);
-
   const oldError = 'console.error("[documents.pdf] Failed to generate PDF", error40);\n    res.status(500).json({ error: "Unable to generate document PDF." });';
   const newError = 'logger.error({ err: error40 }, "[documents.pdf] Failed to generate document PDF");\n    const detail = error40 && error40.message ? String(error40.message) : "Unable to generate document PDF.";\n    if (error40?.statusCode === 400 || error40?.status === 400) res.status(400).json({ error: detail });\n    else res.status(500).json({ error: detail });';
   transformed = transformed.replace(oldError, newError);
-
   fs.writeFileSync(runtimeBundle, transformed, 'utf8');
 }
 
