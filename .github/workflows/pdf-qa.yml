@@ -1,0 +1,35 @@
+name: PDF QA
+
+on:
+  push:
+    branches: ["fresh-invoice-quotation-pdf"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  pdf:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Generate fixtures
+        run: node scripts/pdf-fixtures.js
+      - name: Structural assertions
+        run: node tests/pdf-structural.cjs
+      - name: Rasterize all PDFs
+        run: node tests/pdf-visual-qa.cjs
+      - name: Upload rendered pages
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-rendered-pages
+          path: out/rendered/*.jpg
+          if-no-files-found: error
