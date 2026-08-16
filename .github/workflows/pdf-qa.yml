@@ -2,7 +2,7 @@ name: PDF QA
 
 on:
   push:
-    branches: ["fresh-invoice-quotation-pdf"]
+    branches: ["main", "fresh-invoice-quotation-pdf"]
   pull_request:
     branches: ["main"]
 
@@ -21,6 +21,8 @@ jobs:
         run: npm ci
       - name: Build
         run: npm run build
+      - name: Download-path smoke test
+        run: npm run pdf:download-smoke
       - name: Generate fixtures
         run: node scripts/pdf-fixtures.js
       - name: Structural assertions
