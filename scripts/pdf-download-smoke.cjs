@@ -2,7 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { renderLegacyPdf } = require('../server/pdf/legacy.cjs');
+const { renderPdfBuffer } = require('../server/pdf/index.cjs');
 
 const out = path.join(process.cwd(), 'out');
 fs.mkdirSync(out, { recursive: true });
@@ -34,8 +34,8 @@ function payload(type) {
 
 (async () => {
   for (const type of ['invoice', 'quotation']) {
-    const pdf = await renderLegacyPdf(payload(type), 'a4');
-    if (!Buffer.isBuffer(pdf) || pdf.length < 1000) throw new Error(`${type}: legacy PDF renderer returned an empty/invalid buffer`);
+    const pdf = await renderPdfBuffer(payload(type), 'a4');
+    if (!Buffer.isBuffer(pdf) || pdf.length < 1000) throw new Error(`${type}: unified PDF renderer returned an empty/invalid buffer`);
     const file = path.join(out, `pdf-download-smoke-${type}.pdf`);
     fs.writeFileSync(file, pdf);
     console.log(`[pdf-download-smoke] generated ${file} (${pdf.length} bytes)`);
