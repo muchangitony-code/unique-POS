@@ -6,6 +6,7 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "build": "node scripts/build.cjs",
+    "prestart": "node scripts/build.cjs",
     "start": "node app.js",
     "db:init": "node scripts/bootstrap-db.cjs",
     "db:migrate": "node scripts/run-migrations.cjs",
