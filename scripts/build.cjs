@@ -46,7 +46,7 @@ function buildRuntimeBundle() {
   transformed = transformed.replace(oldHeaders, newHeaders);
 
   const oldError = 'console.error("[documents.pdf] Failed to generate PDF", error40);\n    res.status(500).json({ error: "Unable to generate document PDF." });';
-  const newError = 'logger.error({ err: error40 }, "[documents.pdf] Failed to generate PDF");\n    if (error40?.statusCode === 400 || error40?.status === 400) res.status(400).json({ error: error40.message });\n    else res.status(500).json({ error: "Unable to generate document PDF." });';
+  const newError = 'logger.error({ err: error40 }, "[documents.pdf] Failed to generate PDF");\n    const detail = error40 && error40.message ? String(error40.message) : "Unable to generate document PDF.";\n    if (error40?.statusCode === 400 || error40?.status === 400) res.status(400).json({ error: detail });\n    else res.status(500).json({ error: detail });';
   transformed = transformed.replace(oldError, newError);
 
   fs.writeFileSync(runtimeBundle, transformed, 'utf8');
