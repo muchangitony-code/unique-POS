@@ -19,7 +19,6 @@ for (const file of [regular, bold]) {
 
 if (!fs.existsSync(sourceBundle)) throw new Error(`Missing application bundle: ${sourceBundle}`);
 
-// Keep long company names from colliding with address/contact lines in PDF headers.
 function fixPdfHeaderLayout() {
   if (!fs.existsSync(pdfRenderer)) return;
   const source = fs.readFileSync(pdfRenderer, 'utf8');
@@ -30,7 +29,18 @@ function fixPdfHeaderLayout() {
   fs.writeFileSync(pdfRenderer, source.slice(0,start) + replacement + source.slice(end), 'utf8');
 }
 
+function fixPdfStoredLogoLoader() {
+  if (!fs.existsSync(pdfRenderer)) return;
+  const source = fs.readFileSync(pdfRenderer, 'utf8');
+  const start = source.indexOf('async function loadLogoBuffer(logoUrl){');
+  const end = source.indexOf('\n\nfunction drawLogo', start);
+  if (start < 0 || end < 0) return;
+  const replacement = `async function loadLogoBuffer(logoUrl){\n const raw=String(logoUrl||'').trim();\n if(!raw || raw.startsWith('data:image/svg+xml')) return null;\n try {\n   if(raw.startsWith('/objects/')) {\n     const storageRoot=path.resolve(String(process.env.LOCAL_STORAGE_DIR||path.join(process.cwd(),'storage')));\n     const relative=raw.slice('/objects/'.length);\n     if(!relative || relative.includes('..')) return null;\n     const filePath=path.join(storageRoot,relative);\n     const rootPrefix=storageRoot.endsWith(path.sep)?storageRoot:storageRoot+path.sep;\n     if(!filePath.startsWith(rootPrefix) || !fs.existsSync(filePath)) return null;\n     const stat=fs.statSync(filePath);\n     if(!stat.isFile() || stat.size>MAX_LOGO_BYTES) return null;\n     const buffer=fs.readFileSync(filePath);\n     if(!buffer.length) return null;\n     return buffer;\n   }\n   let url=raw;\n   if(url.startsWith('/')) {\n     const origin=String(process.env.PUBLIC_APP_URL||process.env.APP_URL||process.env.RAILWAY_STATIC_URL||'').trim().replace(/\\/$/,'');\n     const publicDomain=String(process.env.RAILWAY_PUBLIC_DOMAIN||'').trim();\n     const base=origin || (publicDomain ? \`https://\${publicDomain}\` : \`http://127.0.0.1:\${process.env.PORT||3000}\`);\n     url=base+url;\n   }\n   if(!/^https?:\\/\\//i.test(url)) return null;\n   const response=await fetch(url,{redirect:'follow'});\n   if(!response.ok) return null;\n   const contentType=String(response.headers.get('content-type')||'').toLowerCase();\n   if(!/^image\\/(png|jpeg|jpg)$/i.test(contentType)) return null;\n   const length=Number(response.headers.get('content-length')||0);\n   if(length && length>MAX_LOGO_BYTES) return null;\n   const buffer=Buffer.from(await response.arrayBuffer());\n   if(!buffer.length || buffer.length>MAX_LOGO_BYTES) return null;\n   return buffer;\n } catch(_error) {\n   return null;\n }\n}`;
+  fs.writeFileSync(pdfRenderer, source.slice(0,start) + replacement + source.slice(end), 'utf8');
+}
+
 fixPdfHeaderLayout();
+fixPdfStoredLogoLoader();
 
 const bundleAssets = path.join(root, 'build', 'assets', 'fonts');
 fs.mkdirSync(bundleAssets, { recursive: true });
@@ -60,7 +70,7 @@ function buildRuntimeBundle() {
   transformed = transformed.replace(oldHeaders, newHeaders);
 
   const oldError = 'console.error("[documents.pdf] Failed to generate PDF", error40);\n    res.status(500).json({ error: "Unable to generate document PDF." });';
-  const newError = 'logger.error({ err: error40 }, "[documents.pdf] Failed to generate PDF");\n    const detail = error40 && error40.message ? String(error40.message) : "Unable to generate document PDF.";\n    if (error40?.statusCode === 400 || error40?.status === 400) res.status(400).json({ error: detail });\n    else res.status(500).json({ error: detail });';
+  const newError = 'logger.error({ err: error40 }, "[documents.pdf] Failed to generate document PDF");\n    const detail = error40 && error40.message ? String(error40.message) : "Unable to generate document PDF.";\n    if (error40?.statusCode === 400 || error40?.status === 400) res.status(400).json({ error: detail });\n    else res.status(500).json({ error: detail });';
   transformed = transformed.replace(oldError, newError);
 
   fs.writeFileSync(runtimeBundle, transformed, 'utf8');
