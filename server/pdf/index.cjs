@@ -1,7 +1,6 @@
 'use strict';
 
 const PDFDocument = require('pdfkit');
-const { PassThrough } = require('node:stream');
 const { validateDocument, normalizeDocument } = require('./schema');
 const { moneyFromInput, mulCents, taxCents, formatMoney, formatNumber } = require('./format');
 const { getFonts } = require('./fonts');
@@ -24,22 +23,15 @@ function itemTotals(item) {
 }
 function computeTotals(items) {
   let subtotal = 0, discount = 0, tax = 0, total = 0;
-  for (const item of items) {
-    const t = itemTotals(item);
-    subtotal += t.gross;
-    discount += t.discount;
-    tax += t.tax;
-    total += t.total;
-  }
+  for (const item of items) { const t = itemTotals(item); subtotal += t.gross; discount += t.discount; tax += t.tax; total += t.total; }
   return { subtotal, discount, tax, total };
 }
-function text(doc, value, x, y, opts = {}) {
-  doc.font(opts.font || 'body').fontSize(opts.size || 9).fillColor(opts.color || COLORS.text).text(String(value ?? ''), x, y, { width: opts.width, align: opts.align || 'left', lineGap: opts.lineGap || 0 });
-}
+function text(doc, value, x, y, opts = {}) { doc.font(opts.font || 'body').fontSize(opts.size || 9).fillColor(opts.color || COLORS.text).text(String(value ?? ''), x, y, { width: opts.width, align: opts.align || 'left', lineGap: opts.lineGap || 0 }); }
 function rightText(doc, value, x, y, width, opts = {}) { text(doc, value, x, y, { ...opts, width, align: 'right' }); }
 function rule(doc, y) { doc.strokeColor(COLORS.line).lineWidth(0.6).moveTo(M, y).lineTo(A4.width - M, y).stroke(); }
+function safeDescription(value) { return String(value ?? '').replace(/([^\s]{30})(?=[^\s])/g, '$1\u200b'); }
 function wrapHeight(doc, value, width, size = ROW_FONT, font = 'body') { doc.font(font).fontSize(size); return doc.heightOfString(String(value ?? ''), { width, lineGap: 0 }); }
-function rowHeight(doc, item) { return Math.max(26, wrapHeight(doc, item.description, COLS.description - 12) + 12); }
+function rowHeight(doc, item) { return Math.max(26, wrapHeight(doc, safeDescription(item.description), COLS.description - 12) + 12); }
 
 function drawFooter(doc, pageNumber, totalPages, data) {
   const y = A4.height - 25;
@@ -90,7 +82,7 @@ function drawRow(doc, item, y, index) {
   if (index % 2) doc.fillColor(COLORS.soft).rect(M, y, TABLE_W, h).fill();
   doc.strokeColor(COLORS.line).lineWidth(0.4).rect(M, y, TABLE_W, h).stroke();
   let x = M;
-  text(doc, item.description, x + 6, y + 7, { size: ROW_FONT, width: COLS.description - 12 }); x += COLS.description;
+  text(doc, safeDescription(item.description), x + 6, y + 7, { size: ROW_FONT, width: COLS.description - 12 }); x += COLS.description;
   rightText(doc, formatNumber(item.qty), x, y + 7, COLS.qty - 6, { size: ROW_FONT }); x += COLS.qty;
   rightText(doc, formatMoney(moneyFromInput(item.unitPrice), item.currency), x, y + 7, COLS.unitPrice - 6, { size: ROW_FONT }); x += COLS.unitPrice;
   rightText(doc, `${item.taxRate.toFixed(2)}%`, x, y + 7, COLS.tax - 6, { size: ROW_FONT }); x += COLS.tax;
@@ -105,7 +97,6 @@ function drawTotals(doc, totals, currency, y) {
   doc.fillColor(COLORS.accent).rect(x, y, w, 26).fill();
   text(doc, 'GRAND TOTAL', x + 12, y + 8, { font: 'bodyBold', size: 8.5, color: COLORS.white });
   rightText(doc, formatMoney(totals.total, currency), x + 100, y + 7, w - 112, { font: 'bodyBold', size: 11, color: COLORS.white });
-  return h;
 }
 function drawTextBlock(doc, title, value, y, width = CONTENT_W) {
   if (!value) return 0;
@@ -115,19 +106,19 @@ function drawTextBlock(doc, title, value, y, width = CONTENT_W) {
   text(doc, value, M + 10, y + 22, { size: 8, color: COLORS.muted, width: width - 20 });
   return h;
 }
-function makePages(pdf, data) {
+function makePages(doc, data) {
   const pages = [];
   let page = { rows: [], height: 0 };
-  let available = A4.height - 220 - FOOTER_H - 25;
+  const rowAvailable = 467;
   for (const item of data.items) {
-    const h = rowHeight(pdf, item);
-    if (page.rows.length && page.height + h > available) { pages.push(page); page = { rows: [], height: 0 }; available = A4.height - 95 - FOOTER_H - 25; }
+    const h = rowHeight(doc, item);
+    if (page.rows.length && page.height + h > rowAvailable) { pages.push(page); page = { rows: [], height: 0 }; }
     page.rows.push(item); page.height += h;
   }
   pages.push(page);
   const final = pages[pages.length - 1];
-  const extraH = 14 + 86 + 8 + (data.notes ? wrapHeight(pdf, data.notes, CONTENT_W, 8) + 32 + 8 : 0) + (data.terms ? wrapHeight(pdf, data.terms, CONTENT_W, 8) + 32 : 0);
-  if (final.height + extraH > available) pages.push({ rows: [], height: 0 });
+  const extras = 14 + 86 + 8 + (data.notes ? wrapHeight(doc, data.notes, CONTENT_W, 8) + 32 + 8 : 0) + (data.terms ? wrapHeight(doc, data.terms, CONTENT_W, 8) + 32 : 0);
+  if (final.height + extras > rowAvailable) pages.push({ rows: [], height: 0 });
   return pages;
 }
 
@@ -142,19 +133,15 @@ async function renderDocument({ type, doc: input, company }) {
   const chunks = [];
   const done = new Promise((resolve, reject) => { pdf.on('data', (c) => chunks.push(c)); pdf.once('end', () => resolve(Buffer.concat(chunks))); pdf.once('error', reject); });
   const pages = makePages(pdf, data);
-  pages.forEach((page, pageIndex) => {
+  pages.forEach((page) => {
     pdf.addPage({ size: 'A4', margins: { top: M, bottom: M, left: M, right: M } });
     let y = drawHeader(pdf, data);
     y = drawTableHeader(pdf, y) + 3;
     page.rows.forEach((item, i) => { y = drawRow(pdf, item, y, i); });
-    if (pageIndex === pages.length - 1) {
-      const totalsH = 86;
-      if (y + 14 + totalsH > A4.height - FOOTER_H - M) {
-        pdf.addPage({ size: 'A4', margins: { top: M, bottom: M, left: M, right: M } });
-        y = drawHeader(pdf, data);
-      }
+    if (page === pages[pages.length - 1]) {
       y += 14;
-      y += drawTotals(pdf, totals, data.currency, y) + 8;
+      drawTotals(pdf, totals, data.currency, y);
+      y += 94;
       y += drawTextBlock(pdf, 'Notes', data.notes, y) + 8;
       drawTextBlock(pdf, data.type === 'invoice' ? 'Terms & Conditions' : 'Quotation Terms', data.terms, y);
     }
