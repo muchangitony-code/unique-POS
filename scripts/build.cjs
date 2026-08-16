@@ -29,7 +29,6 @@ function fixPdfHeaderLayout() {
   fs.writeFileSync(pdfRenderer, source.slice(0,start) + replacement + source.slice(end), 'utf8');
 }
 
-// Keep the standalone PDF renderer aligned with the application's object storage.
 function fixPdfStoredLogoLoader() {
   if (!fs.existsSync(pdfRenderer)) return;
   const source = fs.readFileSync(pdfRenderer, 'utf8');
@@ -71,7 +70,10 @@ function buildRuntimeBundle() {
     'async function renderPdfBuffer(payload, paper) {\n' +
     '  let logoBuffer = null;\n' +
     '  try {\n' +
-    '    const logoPath = payload && payload.settings ? (payload.settings.logoUrl || (payload.branch && payload.branch.logoUrl) || "") : "";\n' +
+    '    const settings = payload && payload.settings && typeof payload.settings === "object" ? payload.settings : {};\n' +
+    '    const branch = payload && payload.branch && typeof payload.branch === "object" ? payload.branch : {};\n' +
+    '    const company = payload && payload.company && typeof payload.company === "object" ? payload.company : {};\n' +
+    '    const logoPath = settings.logoUrl || settings.logo_url || settings.logo || branch.logoUrl || branch.logo_url || company.logoUrl || company.logo_url || "";\n' +
     '    if (typeof loadStoredAssetBuffer === "function" && logoPath) logoBuffer = await loadStoredAssetBuffer(logoPath);\n' +
     '  } catch (_error) {}\n' +
     '  return await require("./server/pdf/index.cjs").renderPdfBuffer({ ...payload, __logoBuffer: logoBuffer }, paper);\n' +
@@ -81,7 +83,7 @@ function buildRuntimeBundle() {
   const newHeaders = 'const fileBase = String(payload.documentNumber || id).replace(/[^a-zA-Z0-9._-]+/g, "-");\n    res.setHeader("Content-Type", "application/pdf");\n    res.setHeader("Content-Disposition", `inline; filename="${fileBase}.pdf"`);';
   transformed = transformed.replace(oldHeaders, newHeaders);
   const oldError = 'console.error("[documents.pdf] Failed to generate PDF", error40);\n    res.status(500).json({ error: "Unable to generate document PDF." });';
-  const newError = 'logger.error({ err: error40 }, "[documents.pdf] Failed to generate PDF");\n    const detail = error40 && error40.message ? String(error40.message) : "Unable to generate document PDF.";\n    if (error40?.statusCode === 400 || error40?.status === 400) res.status(400).json({ error: detail });\n    else res.status(500).json({ error: detail });';
+  const newError = 'logger.error({ err: error40 }, "[documents.pdf] Failed to generate document PDF");\n    const detail = error40 && error40.message ? String(error40.message) : "Unable to generate document PDF.";\n    if (error40?.statusCode === 400 || error40?.status === 400) res.status(400).json({ error: detail });\n    else res.status(500).json({ error: detail });';
   transformed = transformed.replace(oldError, newError);
   fs.writeFileSync(runtimeBundle, transformed, 'utf8');
 }
