@@ -12,8 +12,8 @@
     "db:generate-initial": "node scripts/generate-initial-migration.cjs",
     "db:verify": "node scripts/verify-schema.cjs",
     "startup:validate": "node scripts/validate-startup-env.cjs",
-    "pdf:sample": "node tests/generate-pdf-samples.cjs",
-    "pdf:qa": "node tests/pdf-qa.cjs"
+    "pdf:sample": "node scripts/pdf-fixtures.js",
+    "pdf:qa": "node scripts/pdf-fixtures.js && node tests/pdf-structural.cjs"
   },
   "dependencies": {
     "@fontsource/dejavu-sans": "^5.3.0",
