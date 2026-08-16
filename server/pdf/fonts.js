@@ -11,4 +11,14 @@ function getFonts() {
   cached = { regular, bold };
   return cached;
 }
-module.exports = { getFonts };
+function registerFonts(doc) {
+  const fonts = getFonts();
+  try {
+    doc.registerFont('body', fonts.regular);
+    doc.registerFont('bodyBold', fonts.bold);
+  } catch (err) {
+    throw new Error('Failed to register embedded DejaVu Sans PDF fonts; refusing built-in font fallback.', { cause: err });
+  }
+  return fonts;
+}
+module.exports = { getFonts, registerFonts };
