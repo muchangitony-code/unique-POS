@@ -2,7 +2,7 @@
 const PDFDocument = require('pdfkit');
 const { validateDocument, normalizeDocument } = require('./schema');
 const { moneyFromInput, mulCents, taxCents, formatMoney, formatNumber } = require('./format');
-const { registerFonts } = require('./fonts');
+const { registerFonts } = require('./fonts.cjs');
 const A4 = { width: 595.28, height: 841.89 }, M = 40, CONTENT_W = A4.width - M * 2, FOOTER_Y = A4.height - 25;
 const COLORS = { text: '#111827', muted: '#6B7280', line: '#D1D5DB', soft: '#F8FAFC', accent: '#083D6D', white: '#FFFFFF' };
 const COLS = { description: 210, qty: 45, unitPrice: 100, tax: 50, amount: 110 }, TABLE_W = 515, ROW_FONT = 8.5, ROW_AVAILABLE = 467;
@@ -18,33 +18,33 @@ function header(pdf, data) {
   pdf.fillColor(COLORS.accent).rect(0, 0, A4.width, 6).fill();
   if (Buffer.isBuffer(data.company.logo)) { try { pdf.image(data.company.logo, M, M + 4, { fit: [58, 40] }); } catch {} }
   const x = Buffer.isBuffer(data.company.logo) ? M + 68 : M;
-  text(pdf, data.company.name, x, M + 5, { font: 'bodyBold', size: 17, color: COLORS.accent, width: 300 });
+  text(pdf, data.company.name, x, M + 5, { font: 'bold', size: 17, color: COLORS.accent, width: 300 });
   if (data.company.address) text(pdf, data.company.address, x, M + 28, { size: 8, color: COLORS.muted, width: 300 });
   const contact = [data.company.phone, data.company.email].filter(Boolean).join(' · '); if (contact) text(pdf, contact, x, M + 41, { size: 8, color: COLORS.muted, width: 300 });
   if (data.company.taxId) text(pdf, `Tax ID: ${data.company.taxId}`, x, M + 54, { size: 8, color: COLORS.muted, width: 300 });
   const cx = A4.width - M - 185; pdf.fillColor(COLORS.accent).roundedRect(cx, M + 2, 185, 76, 4).fill();
-  text(pdf, data.type === 'invoice' ? 'INVOICE' : 'QUOTATION', cx + 12, M + 13, { font: 'bodyBold', size: 15, color: COLORS.white }); text(pdf, data.number, cx + 12, M + 33, { size: 9, color: COLORS.white });
+  text(pdf, data.type === 'invoice' ? 'INVOICE' : 'QUOTATION', cx + 12, M + 13, { font: 'bold', size: 15, color: COLORS.white }); text(pdf, data.number, cx + 12, M + 33, { size: 9, color: COLORS.white });
   text(pdf, `Date: ${data.date}`, cx + 12, M + 47, { size: 8, color: COLORS.white }); text(pdf, `${data.type === 'invoice' ? 'Due date' : 'Valid until'}: ${data.type === 'invoice' ? data.dueDate || '—' : data.validUntil || '—'}`, cx + 12, M + 60, { size: 8, color: COLORS.white });
   const by = M + 94; pdf.fillColor(COLORS.soft).strokeColor(COLORS.line).lineWidth(0.6).roundedRect(M, by, CONTENT_W, 66, 3).fillAndStroke();
-  text(pdf, 'CUSTOMER', M + 10, by + 9, { font: 'bodyBold', size: 7.5, color: COLORS.accent }); text(pdf, data.customer.name, M + 10, by + 23, { font: 'bodyBold', size: 10.5, width: 240 });
+  text(pdf, 'CUSTOMER', M + 10, by + 9, { font: 'bold', size: 7.5, color: COLORS.accent }); text(pdf, data.customer.name, M + 10, by + 23, { font: 'bold', size: 10.5, width: 240 });
   const details = [data.customer.address, data.customer.phone, data.customer.email, data.customer.taxId ? `Tax ID: ${data.customer.taxId}` : ''].filter(Boolean).join(' · '); if (details) text(pdf, details, M + 10, by + 39, { size: 7.5, color: COLORS.muted, width: CONTENT_W - 20 });
-  const status = data.type === 'invoice' ? 'UNPAID' : 'VALID'; pdf.fillColor(COLORS.white).strokeColor(COLORS.accent).roundedRect(A4.width - M - 82, by + 9, 70, 20, 10).fillAndStroke(); text(pdf, status, A4.width - M - 78, by + 15, { font: 'bodyBold', size: 7, color: COLORS.accent, width: 62, align: 'center' });
+  const status = data.type === 'invoice' ? 'UNPAID' : 'VALID'; pdf.fillColor(COLORS.white).strokeColor(COLORS.accent).roundedRect(A4.width - M - 82, by + 9, 70, 20, 10).fillAndStroke(); text(pdf, status, A4.width - M - 78, by + 15, { font: 'bold', size: 7, color: COLORS.accent, width: 62, align: 'center' });
   return by + 80;
 }
 function tableHeader(pdf, y) {
   const h = 23; pdf.fillColor(COLORS.accent).rect(M, y, TABLE_W, h).fill(); let x = M;
-  text(pdf, 'Description', x + 6, y + 7, { font: 'bodyBold', size: 7.5, color: COLORS.white, width: COLS.description - 12 }); x += COLS.description;
-  for (const [label, w] of [['Qty', COLS.qty], ['Unit Price', COLS.unitPrice], ['Tax', COLS.tax], ['Amount', COLS.amount]]) { right(pdf, label, x, y + 7, w - 6, { font: 'bodyBold', size: 7.5, color: COLORS.white }); x += w; }
+  text(pdf, 'Description', x + 6, y + 7, { font: 'bold', size: 7.5, color: COLORS.white, width: COLS.description - 12 }); x += COLS.description;
+  for (const [label, w] of [['Qty', COLS.qty], ['Unit Price', COLS.unitPrice], ['Tax', COLS.tax], ['Amount', COLS.amount]]) { right(pdf, label, x, y + 7, w - 6, { font: 'bold', size: 7.5, color: COLORS.white }); x += w; }
   return y + h;
 }
 function row(pdf, item, y, i) {
   const h = rowHeight(pdf, item); if (i % 2) pdf.fillColor(COLORS.soft).rect(M, y, TABLE_W, h).fill(); pdf.strokeColor(COLORS.line).lineWidth(0.4).rect(M, y, TABLE_W, h).stroke(); let x = M;
   text(pdf, safeDescription(item.description), x + 6, y + 7, { size: ROW_FONT, width: COLS.description - 12 }); x += COLS.description;
   right(pdf, formatNumber(item.qty), x, y + 7, COLS.qty - 6, { size: ROW_FONT }); x += COLS.qty; right(pdf, formatMoney(moneyFromInput(item.unitPrice), item.currency), x, y + 7, COLS.unitPrice - 6, { size: ROW_FONT }); x += COLS.unitPrice;
-  right(pdf, `${item.taxRate.toFixed(2)}%`, x, y + 7, COLS.tax - 6, { size: ROW_FONT }); x += COLS.tax; right(pdf, formatMoney(itemTotals(item).total, item.currency), x, y + 7, COLS.amount - 6, { font: 'bodyBold', size: ROW_FONT }); return y + h;
+  right(pdf, `${item.taxRate.toFixed(2)}%`, x, y + 7, COLS.tax - 6, { size: ROW_FONT }); x += COLS.tax; right(pdf, formatMoney(itemTotals(item).total, item.currency), x, y + 7, COLS.amount - 6, { font: 'bold', size: ROW_FONT }); return y + h;
 }
-function totalsBlock(pdf, t, currency, y) { const w = 245, x = A4.width - M - w, h = 86; pdf.fillColor(COLORS.white).strokeColor(COLORS.line).lineWidth(0.7).rect(x, y, w, h).fillAndStroke(); [['Subtotal', t.subtotal], ['Discount', -t.discount], ['Tax', t.tax]].forEach(([label, value], i) => { const yy = y + h - 20 - i * 20; text(pdf, label, x + 12, yy, { size: 8.5, color: COLORS.muted }); right(pdf, formatMoney(value, currency), x + 100, yy, w - 112, { size: 8.5 }); }); pdf.fillColor(COLORS.accent).rect(x, y, w, 26).fill(); text(pdf, 'GRAND TOTAL', x + 12, y + 8, { font: 'bodyBold', size: 8.5, color: COLORS.white }); right(pdf, formatMoney(t.total, currency), x + 100, y + 7, w - 112, { font: 'bodyBold', size: 11, color: COLORS.white }); }
-function block(pdf, title, value, y) { if (!value) return 0; const h = wrapHeight(pdf, value, CONTENT_W - 20, 8) + 32; pdf.fillColor(COLORS.soft).strokeColor(COLORS.line).lineWidth(0.6).rect(M, y, CONTENT_W, h).fillAndStroke(); text(pdf, title, M + 10, y + 9, { font: 'bodyBold', size: 8, color: COLORS.accent }); text(pdf, value, M + 10, y + 22, { size: 8, color: COLORS.muted, width: CONTENT_W - 20 }); return h; }
+function totalsBlock(pdf, t, currency, y) { const w = 245, x = A4.width - M - w, h = 86; pdf.fillColor(COLORS.white).strokeColor(COLORS.line).lineWidth(0.7).rect(x, y, w, h).fillAndStroke(); [['Subtotal', t.subtotal], ['Discount', -t.discount], ['Tax', t.tax]].forEach(([label, value], i) => { const yy = y + h - 20 - i * 20; text(pdf, label, x + 12, yy, { size: 8.5, color: COLORS.muted }); right(pdf, formatMoney(value, currency), x + 100, yy, w - 112, { size: 8.5 }); }); pdf.fillColor(COLORS.accent).rect(x, y, w, 26).fill(); text(pdf, 'GRAND TOTAL', x + 12, y + 8, { font: 'bold', size: 8.5, color: COLORS.white }); right(pdf, formatMoney(t.total, currency), x + 100, y + 7, w - 112, { font: 'bold', size: 11, color: COLORS.white }); }
+function block(pdf, title, value, y) { if (!value) return 0; const h = wrapHeight(pdf, value, CONTENT_W - 20, 8) + 32; pdf.fillColor(COLORS.soft).strokeColor(COLORS.line).lineWidth(0.6).rect(M, y, CONTENT_W, h).fillAndStroke(); text(pdf, title, M + 10, y + 9, { font: 'bold', size: 8, color: COLORS.accent }); text(pdf, value, M + 10, y + 22, { size: 8, color: COLORS.muted, width: CONTENT_W - 20 }); return h; }
 function paginate(pdf, data) { const pages = []; let page = { rows: [], height: 0 }; for (const item of data.items) { const h = rowHeight(pdf, item); if (page.rows.length && page.height + h > ROW_AVAILABLE) { pages.push(page); page = { rows: [], height: 0 }; } page.rows.push(item); page.height += h; } pages.push(page); const last = pages[pages.length - 1]; const extras = 14 + 86 + 8 + (data.notes ? wrapHeight(pdf, data.notes, CONTENT_W, 8) + 32 + 8 : 0) + (data.terms ? wrapHeight(pdf, data.terms, CONTENT_W, 8) + 32 : 0); if (last.height + extras > ROW_AVAILABLE) pages.push({ rows: [], height: 0 }); return pages; }
 
 async function renderDocument({ type, doc: input, company }) {

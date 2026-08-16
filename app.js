@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { validateStartupEnv } = require("./scripts/validate-startup-env.cjs");
+const { FONT_DIR, assertFonts } = require("./server/pdf/fonts.cjs");
 const { loadIndex } = require("./server/pdf/bundle-loader.cjs");
 
 const envPath = path.join(__dirname, ".env");
@@ -34,6 +35,9 @@ if (!process.env.PORT) process.env.PORT = "8080";
 
 async function start() {
   try {
+    assertFonts();
+    console.log("[startup] PDF FONT_DIR:", FONT_DIR);
+    console.log("[startup] PDF FONT_DIR contents:", fs.readdirSync(FONT_DIR).sort());
     validateStartupEnv();
     const { bootstrapDatabaseIfNeeded } = require("./scripts/bootstrap-db.cjs");
     const result = await bootstrapDatabaseIfNeeded();
