@@ -29,9 +29,7 @@ function fixPdfHeaderLayout() {
   fs.writeFileSync(pdfRenderer, source.slice(0,start) + replacement + source.slice(end), 'utf8');
 }
 
-// Settings stores uploaded logos as /objects/uploads/<filename>. The PDF renderer
-// is server-side, so read that object directly instead of making an unauthenticated
-// HTTP request to /api/storage/objects/ and falling back to the built-in logo.
+// Keep the standalone PDF renderer aligned with the application's object storage.
 function fixPdfStoredLogoLoader() {
   if (!fs.existsSync(pdfRenderer)) return;
   const source = fs.readFileSync(pdfRenderer, 'utf8');
@@ -42,8 +40,17 @@ function fixPdfStoredLogoLoader() {
   fs.writeFileSync(pdfRenderer, source.slice(0,start) + replacement + source.slice(end), 'utf8');
 }
 
+function fixPdfLogoPayloadBridge() {
+  if (!fs.existsSync(pdfRenderer)) return;
+  const source = fs.readFileSync(pdfRenderer, 'utf8');
+  const old = 'async function renderPdfBuffer(payload,paper){return renderDocument(mapDocumentPayload(payload,paper));}';
+  const replacement = 'async function renderPdfBuffer(payload,paper){ const mapped=mapDocumentPayload(payload,paper); if(payload&&payload.__logoBuffer) mapped.company.logoBuffer=payload.__logoBuffer; return renderDocument(mapped); }';
+  if (source.includes(old)) fs.writeFileSync(pdfRenderer, source.replace(old, replacement), 'utf8');
+}
+
 fixPdfHeaderLayout();
 fixPdfStoredLogoLoader();
+fixPdfLogoPayloadBridge();
 
 const bundleAssets = path.join(root, 'build', 'assets', 'fonts');
 fs.mkdirSync(bundleAssets, { recursive: true });
@@ -62,7 +69,12 @@ function buildRuntimeBundle() {
   if (end == null) throw new Error('Bundled index.cjs does not expose the document preview route marker');
   let transformed = source.slice(0, start) +
     'async function renderPdfBuffer(payload, paper) {\n' +
-    '  return await require("./server/pdf/index.cjs").renderPdfBuffer(payload, paper);\n' +
+    '  let logoBuffer = null;\n' +
+    '  try {\n' +
+    '    const logoPath = payload && payload.settings ? (payload.settings.logoUrl || (payload.branch && payload.branch.logoUrl) || "") : "";\n' +
+    '    if (typeof loadStoredAssetBuffer === "function" && logoPath) logoBuffer = await loadStoredAssetBuffer(logoPath);\n' +
+    '  } catch (_error) {}\n' +
+    '  return await require("./server/pdf/index.cjs").renderPdfBuffer({ ...payload, __logoBuffer: logoBuffer }, paper);\n' +
     '}\n' +
     source.slice(end);
   const oldHeaders = 'const fileBase = `${type}-${payload.documentNumber || id}`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");\n    const disposition = String(req.query.disposition || "").toLowerCase() === "attachment" || String(req.query.download || "") === "1" ? "attachment" : "inline";\n    res.setHeader("Content-Type", "application/pdf");\n    res.setHeader("Content-Disposition", `${disposition}; filename="${fileBase}.pdf"`);';
