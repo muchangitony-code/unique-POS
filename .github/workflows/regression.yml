@@ -6,13 +6,6 @@ on:
   push:
     branches: [main, master]
 
-# Required secrets (set these in the repository Settings → Secrets and variables → Actions):
-#   POSTGRES_PASSWORD           – password for the test PostgreSQL service
-#   BOOTSTRAP_ADMIN_PASSWORD    – password seeded into the admin account
-#
-# The secrets are referenced below; the defaults shown in comments are
-# used only in forks / local act runs where secrets may not be set.
-
 jobs:
   regression:
     name: Full POS Regression
@@ -59,27 +52,30 @@ jobs:
 
       - name: Set DATABASE_URL
         run: |
-          # Construct the DATABASE_URL from individual parts so the URL itself
-          # does not appear literally in this file (avoids secret-scanner false positives).
           SCHEME="postgres"
           PG_PASS="${{ secrets.POSTGRES_PASSWORD || 'pospassword' }}"
           echo "DATABASE_URL=${SCHEME}://posuser:${PG_PASS}@localhost:5432/posdb" >> "$GITHUB_ENV"
 
       - name: Bootstrap database and start server
         run: |
-          node app.js &
+          node app.js > /tmp/uniquepos-server.log 2>&1 &
           echo $! > /tmp/server.pid
+          READY=0
           for i in $(seq 1 60); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/api/healthz || true)
-            if [ "$STATUS" = "200" ]; then
-              echo "Server ready (attempt $i)"
-              break
+            HEALTH=$(curl -fsS "http://localhost:$PORT/api/healthz" 2>/dev/null || true)
+            if [ -n "$HEALTH" ]; then
+              if printf '%s' "$HEALTH" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.exit(j.db_ok===true?0:1)}catch{process.exit(1)}})'; then
+                echo "Server and database ready (attempt $i)"
+                READY=1
+                break
+              fi
             fi
-            echo "Waiting... attempt $i (status=$STATUS)"
+            echo "Waiting... attempt $i"
             sleep 1
           done
-          if [ "$STATUS" != "200" ]; then
-            echo "Server did not start within 60 s"
+          if [ "$READY" != "1" ]; then
+            echo "Server/database health check did not pass within 60 s"
+            cat /tmp/uniquepos-server.log || true
             kill "$(cat /tmp/server.pid)" 2>/dev/null || true
             exit 1
           fi
