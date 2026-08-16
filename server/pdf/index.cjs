@@ -12,6 +12,7 @@ const FOOTER_Y = A4.height - 28;
 const COLORS = { text:'#111827', muted:'#667085', line:'#D7DDE5', soft:'#F6F8FB', accent:'#123D6A', orange:'#F7941D', white:'#FFFFFF' };
 const COLS = { description:220, qty:48, unitPrice:100, tax:55, amount:92 };
 const ROW_FONT = 8.5;
+const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 
 function text(pdf,value,x,y,o={}){ pdf.font(o.font||'body').fontSize(o.size||9).fillColor(o.color||COLORS.text).text(String(value??''),x,y,{width:o.width,align:o.align||'left',lineGap:o.lineGap||0}); }
 function right(pdf,value,x,y,w,o={}){ text(pdf,value,x,y,{...o,width:w,align:'right'}); }
@@ -21,8 +22,8 @@ function rowHeight(pdf,item){ return Math.max(27,wrapHeight(pdf,safeDescription(
 function itemTotals(item){ const gross=mulCents(moneyFromInput(item.unitPrice),item.qty); const discount=moneyFromInput(item.discount||'0'); const net=Math.max(0,gross-discount); const tax=taxCents(net,item.taxRate||0); return {gross,discount,tax,total:net+tax}; }
 function totals(items){ let subtotal=0,discount=0,tax=0,total=0; for(const item of items){const t=itemTotals(item);subtotal+=t.gross;discount+=t.discount;tax+=t.tax;total+=t.total;} return {subtotal,discount,tax,total}; }
 
-// Vector version of the Unique Solar Kenya mark. PDFKit polygon() expects point arrays, not raw coordinates.
-function drawLogo(pdf,x,y,size=62){
+// Vector fallback used only when the Settings logo cannot be loaded as a PDFKit-supported raster image.
+function drawFallbackLogo(pdf,x,y,size=62){
  const s=size/62; pdf.save();
  pdf.fillColor(COLORS.orange).circle(x+31*s,y+20*s,15*s).fill();
  pdf.fillColor(COLORS.white).rect(x+13*s,y+20*s,36*s,12*s).fill();
@@ -36,10 +37,46 @@ function drawLogo(pdf,x,y,size=62){
  pdf.strokeColor(COLORS.orange).lineWidth(2.4*s); pdf.moveTo(x+4*s,y+49*s).lineTo(x+31*s,y+44*s).lineTo(x+58*s,y+49*s).stroke(); pdf.restore();
 }
 
+async function loadLogoBuffer(logoUrl){
+ const raw=String(logoUrl||'').trim();
+ if(!raw || raw.startsWith('data:image/svg+xml')) return null;
+ try {
+   let url=raw;
+   if(url.startsWith('/')) {
+     const origin=String(process.env.PUBLIC_APP_URL||process.env.APP_URL||process.env.RAILWAY_STATIC_URL||'').trim().replace(/\/$/,'');
+     const publicDomain=String(process.env.RAILWAY_PUBLIC_DOMAIN||'').trim();
+     const base=origin || (publicDomain ? `https://${publicDomain}` : `http://127.0.0.1:${process.env.PORT||3000}`);
+     url=base+url;
+   }
+   if(!/^https?:\/\//i.test(url)) return null;
+   const response=await fetch(url,{redirect:'follow'});
+   if(!response.ok) return null;
+   const contentType=String(response.headers.get('content-type')||'').toLowerCase();
+   if(!/^image\/(png|jpeg|jpg)$/i.test(contentType)) return null;
+   const length=Number(response.headers.get('content-length')||0);
+   if(length && length>MAX_LOGO_BYTES) return null;
+   const buffer=Buffer.from(await response.arrayBuffer());
+   if(!buffer.length || buffer.length>MAX_LOGO_BYTES) return null;
+   return buffer;
+ } catch(_error) {
+   return null;
+ }
+}
+
+function drawLogo(pdf,x,y,size=62,logoBuffer=null){
+ if(logoBuffer){
+   try {
+     pdf.image(logoBuffer,x,y,{fit:[size,size],align:'center',valign:'center'});
+     return;
+   } catch(_error) {}
+ }
+ drawFallbackLogo(pdf,x,y,size);
+}
+
 function footer(pdf,n,total,data){ pdf.strokeColor(COLORS.line).lineWidth(.6).moveTo(M,FOOTER_Y-7).lineTo(A4.width-M,FOOTER_Y-7).stroke(); text(pdf,data.type==='invoice'?'Invoice':'Quotation',M,FOOTER_Y,{size:7.5,color:COLORS.muted}); right(pdf,`Page ${n} of ${total}`,A4.width-M-110,FOOTER_Y,110,{size:7.5,color:COLORS.muted}); }
 
 function header(pdf,data){
- const top=20; pdf.fillColor(COLORS.accent).rect(0,0,A4.width,5).fill(); drawLogo(pdf,M,top+1,62);
+ const top=20; pdf.fillColor(COLORS.accent).rect(0,0,A4.width,5).fill(); drawLogo(pdf,M,top+1,62,data.company.logoBuffer);
  const companyX=M+76, companyW=220;
  text(pdf,data.company.name||'Unique Solar Kenya Ltd',companyX,top+3,{font:'bold',size:13.5,color:COLORS.accent,width:companyW});
  if(data.company.address) text(pdf,data.company.address,companyX,top+24,{size:7.6,color:COLORS.muted,width:companyW});
@@ -79,6 +116,8 @@ function calculatePages(pdf,data){
 
 async function renderDocument({type,doc:input,company}){
  validateDocument(type,input,company); const data=normalizeDocument(type,input,company); const t=totals(data.items);
+ data.company.logoUrl=company.logoUrl||company.logo_url||'';
+ data.company.logoBuffer=await loadLogoBuffer(data.company.logoUrl);
  const pdf=new PDFDocument({size:'A4',margins:{top:M,bottom:M,left:M,right:M},autoFirstPage:false,bufferPages:true,info:{Title:`${type==='invoice'?'Invoice':'Quotation'} ${data.number}`,Author:company.name}}); registerFonts(pdf);
  const chunks=[]; const done=new Promise((resolve,reject)=>{pdf.on('data',c=>chunks.push(c));pdf.once('end',()=>resolve(Buffer.concat(chunks)));pdf.once('error',reject);});
  const pages=calculatePages(pdf,data), L=layout(pdf,data);
@@ -91,7 +130,7 @@ function moneyValue(value){ if(value==null||value==='')return '0'; if(typeof val
 function quantityValue(value){ if(value==null||value==='')return 0; if(typeof value==='number'&&Number.isFinite(value))return value; const n=Number(String(value).replace(/,/g,'').trim()); return Number.isFinite(n)?n:0; }
 function mapDocumentPayload(payload,paper){
  if(paper&&paper!=='a4')throw new Error('The invoice/quotation PDF API only supports A4 documents'); const source=payload&&typeof payload==='object'?payload:{}; const rawType=String(source.documentType||source.type||'').toLowerCase(); const type=rawType.includes('quotation')?'quotation':'invoice'; const rows=Array.isArray(source.rows)?source.rows:(Array.isArray(source.items)?source.items:[]); const customer=source.customer&&typeof source.customer==='object'?source.customer:{}; const company=source.company&&typeof source.company==='object'?source.company:{}; const settings=source.settings&&typeof source.settings==='object'?source.settings:{};
- return {type,doc:{number:source.documentNumber||source.number||'DOCUMENT',date:asDate(source.documentDate||source.date||new Date()),dueDate:asDate(source.dueDate),validUntil:asDate(source.validUntil||source.dueDate),customer:{name:source.customerName||source.partyName||customer.name||customer.customer_name||'Walk-in Customer',address:source.customerAddress||customer.address||'',phone:source.customerPhone||customer.phone||'',email:source.customerEmail||customer.email||'',taxId:source.customerTaxNumber||customer.taxNumber||customer.tax_id||''},items:rows.map(r=>({description:r.description||r.productName||r.product_name||'Item',qty:quantityValue(r.quantity??r.qty),unitPrice:moneyValue(r.unitPrice??r.unit_price??r.price),taxRate:quantityValue(r.taxRate??r.tax_rate??r.vatRate??r.vat_rate),discount:moneyValue(r.discount??r.discount_amount??'0')})),currency:String(source.currency||settings.currency||'KES').trim().toUpperCase(),notes:Array.isArray(source.notesSections)?source.notesSections.map(x=>Array.isArray(x)?x.join(': '):String(x)).join('\n'):String(source.notes||''),terms:Array.isArray(source.termsLines)?source.termsLines.join('\n'):String(source.terms||'')},company:{name:company.name||company.businessName||settings.businessName||'Unique Solar Kenya Ltd',address:company.address||company.businessAddress||settings.businessAddress||'',phone:company.phone||company.businessPhone||settings.businessPhone||'',email:company.email||company.businessEmail||settings.businessEmail||'',taxId:company.taxPin||company.taxId||settings.taxPin||settings.taxNumber||settings.tax_number||''}};
+ return {type,doc:{number:source.documentNumber||source.number||'DOCUMENT',date:asDate(source.documentDate||source.date||new Date()),dueDate:asDate(source.dueDate),validUntil:asDate(source.validUntil||source.dueDate),customer:{name:source.customerName||source.partyName||customer.name||customer.customer_name||'Walk-in Customer',address:source.customerAddress||customer.address||'',phone:source.customerPhone||customer.phone||'',email:source.customerEmail||customer.email||'',taxId:source.customerTaxNumber||customer.taxNumber||customer.tax_id||''},items:rows.map(r=>({description:r.description||r.productName||r.product_name||'Item',qty:quantityValue(r.quantity??r.qty),unitPrice:moneyValue(r.unitPrice??r.unit_price??r.price),taxRate:quantityValue(r.taxRate??r.tax_rate??r.vatRate??r.vat_rate),discount:moneyValue(r.discount??r.discount_amount??'0')})),currency:String(source.currency||settings.currency||'KES').trim().toUpperCase(),notes:Array.isArray(source.notesSections)?source.notesSections.map(x=>Array.isArray(x)?x.join(': '):String(x)).join('\n'):String(source.notes||''),terms:Array.isArray(source.termsLines)?source.termsLines.join('\n'):String(source.terms||'')},company:{name:company.name||company.businessName||settings.businessName||'Unique Solar Kenya Ltd',address:company.address||company.businessAddress||settings.businessAddress||'',phone:company.phone||company.businessPhone||settings.businessPhone||'',email:company.email||company.businessEmail||settings.businessEmail||'',taxId:company.taxPin||company.taxId||settings.taxPin||settings.taxNumber||settings.tax_number||'',logoUrl:company.logoUrl||company.logo_url||settings.logoUrl||settings.logo_url||''}};
 }
 async function renderPdfBuffer(payload,paper){return renderDocument(mapDocumentPayload(payload,paper));}
 module.exports={renderDocument,renderPdfBuffer,mapDocumentPayload};
