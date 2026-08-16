@@ -109,16 +109,15 @@
     root.querySelectorAll('[data-action="preview-quotation-before-sale"], [data-action="preview-invoice-before-sale"]').forEach(function (button) {
       if (button.dataset.documentDownloadFix === "1") return;
       var type = button.getAttribute("data-action").indexOf("quotation") >= 0 ? "quotation" : "invoice";
-      var clone = button.cloneNode(true);
-      clone.dataset.documentDownloadFix = "1";
-      clone.removeAttribute("data-action");
-      clone.innerHTML = '<i class="fa-solid fa-file-pdf"></i>Download ' + (type === "quotation" ? "Quote" : "Invoice");
-      clone.addEventListener("click", function (event) {
+      button.dataset.documentDownloadFix = "1";
+      button.dataset.documentDownloadType = type;
+      button.removeAttribute("data-action");
+      button.innerHTML = '<i class="fa-solid fa-file-pdf"></i>Download ' + (type === "quotation" ? "Quote" : "Invoice");
+      button.addEventListener("click", function (event) {
         event.preventDefault();
         event.stopImmediatePropagation();
         save(type);
       }, true);
-      button.insertAdjacentElement("afterend", clone);
     });
   }
 
