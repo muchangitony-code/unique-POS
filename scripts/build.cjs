@@ -31,13 +31,13 @@ function verifySharedBrandingEngine(source) {
 
 function patchDocumentDeletionRoutes(source) {
   let patched = source;
-  const quotationRoute = 'router11.delete("/quotations/:id", async (req, res) => {';
-  if (!patched.includes(quotationRoute)) {
+  const quotationMatch = patched.match(/\b(router[A-Za-z0-9_$]*)\.delete\("\/quotations\/:id", async \(req, res\) => \{/);
+  if (!quotationMatch) {
     throw new Error('Document deletion patch: could not locate quotation DELETE route');
   }
   patched = patched.replace(
-    quotationRoute,
-    'router11.delete("/quotations/:id", requireAuth, requireSuperAdmin, async (req, res) => {'
+    quotationMatch[0],
+    `${quotationMatch[1]}.delete("/quotations/:id", requireAuth, requireSuperAdmin, async (req, res) => {`
   );
   const quotationDeleteCheck = '  await db.delete(quotationItemsTable).where(eq(quotationItemsTable.quotationId, id));\n  await db.delete(quotationsTable).where(eq(quotationsTable.id, id));\n  res.sendStatus(204);\n});';
   if (!patched.includes(quotationDeleteCheck)) {
@@ -48,12 +48,14 @@ function patchDocumentDeletionRoutes(source) {
     '  if (existing.status === "converted") {\n    res.status(409).json({ error: "Converted quotations cannot be deleted. Delete or void the resulting invoice instead." });\n    return;\n  }\n  const { reason } = req.body ?? {};\n  await db.delete(quotationItemsTable).where(eq(quotationItemsTable.quotationId, id));\n  await db.delete(quotationsTable).where(eq(quotationsTable.id, id));\n  await logAudit(req, { action: "quotation.deleted", entityType: "quotation", entityId: id, description: `Permanently deleted quotation ${existing.quotationNumber}${reason ? " — Reason: " + reason : ""}`, metadata: { quotation: existing.quotationNumber, reason: reason ?? null } });\n  res.sendStatus(204);\n});'
   );
 
-  const invoicePayRoute = 'router12.post("/invoices/:id/pay", async (req, res) => {';
-  if (!patched.includes(invoicePayRoute)) {
+  const invoicePayMatch = patched.match(/\b(router[A-Za-z0-9_$]*)\.post\("\/invoices\/:id\/pay", async \(req, res\) => \{/);
+  if (!invoicePayMatch) {
     throw new Error('Document deletion patch: could not locate invoice payment route');
   }
+  const invoiceRouter = invoicePayMatch[1];
+  const invoicePayRoute = invoicePayMatch[0];
   const invoiceDeleteRoute = [
-    'router12.delete("/invoices/:id", requireAuth, requireSuperAdmin, async (req, res) => {',
+    `${invoiceRouter}.delete("/invoices/:id", requireAuth, requireSuperAdmin, async (req, res) => {`,
     '  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);',
     '  const [invoice] = await db.select().from(invoicesTable).where(eq(invoicesTable.id, id));',
     '  if (!invoice || !isBranchInScope(req, invoice.branchId)) {',
