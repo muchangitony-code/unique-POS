@@ -52,40 +52,42 @@ function patchDocumentDeletionRoutes(source) {
   if (!patched.includes(invoicePayRoute)) {
     throw new Error('Document deletion patch: could not locate invoice payment route');
   }
-  const invoiceDeleteRoute = `router12.delete("/invoices/:id", requireAuth, requireSuperAdmin, async (req, res) => {
-  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [invoice] = await db.select().from(invoicesTable).where(eq(invoicesTable.id, id));
-  if (!invoice || !isBranchInScope(req, invoice.branchId)) {
-    res.status(404).json({ error: "Invoice not found" });
-    return;
-  }
-  if (["partial", "paid"].includes(invoice.status)) {
-    res.status(409).json({ error: "Paid or partially paid invoices cannot be permanently deleted. Void or reverse the transaction instead." });
-    return;
-  }
-  const payments = await db.select().from(invoicePaymentsTable).where(eq(invoicePaymentsTable.invoiceId, id));
-  if (payments.length) {
-    res.status(409).json({ error: "This invoice has payment records and cannot be permanently deleted." });
-    return;
-  }
-  const { reason } = req.body ?? {};
-  const items = await db.select().from(invoiceItemsTable).where(eq(invoiceItemsTable.invoiceId, id));
-  if (invoice.status !== "draft") {
-    for (const item of items) {
-      const product = await db.select().from(productsTable).where(eq(productsTable.id, item.productId));
-      if (product.length) {
-        const { before, after } = await adjustBranchStock(invoice.branchId, item.productId, (b) => b + item.quantity);
-        await db.insert(stockMovementsTable).values({ branchId: invoice.branchId, productId: item.productId, type: "adjustment", quantity: item.quantity, quantityBefore: before, quantityAfter: after, reference: invoice.invoiceNumber, notes: `Stock restored after deletion of invoice ${invoice.invoiceNumber}` });
-      }
-    }
-  }
-  await db.delete(invoicePaymentsTable).where(eq(invoicePaymentsTable.invoiceId, id));
-  await db.delete(invoiceItemsTable).where(eq(invoiceItemsTable.invoiceId, id));
-  await db.delete(invoicesTable).where(eq(invoicesTable.id, id));
-  await logAudit(req, { action: "invoice.deleted", entityType: "invoice", entityId: id, description: `Permanently deleted invoice ${invoice.invoiceNumber}${reason ? " — Reason: " + reason : ""}`, metadata: { invoice: invoice.invoiceNumber, status: invoice.status, reason: reason ?? null } });
-  res.sendStatus(204);
-});
-`;
+  const invoiceDeleteRoute = [
+    'router12.delete("/invoices/:id", requireAuth, requireSuperAdmin, async (req, res) => {',
+    '  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);',
+    '  const [invoice] = await db.select().from(invoicesTable).where(eq(invoicesTable.id, id));',
+    '  if (!invoice || !isBranchInScope(req, invoice.branchId)) {',
+    '    res.status(404).json({ error: "Invoice not found" });',
+    '    return;',
+    '  }',
+    '  if (["partial", "paid"].includes(invoice.status)) {',
+    '    res.status(409).json({ error: "Paid or partially paid invoices cannot be permanently deleted. Void or reverse the transaction instead." });',
+    '    return;',
+    '  }',
+    '  const payments = await db.select().from(invoicePaymentsTable).where(eq(invoicePaymentsTable.invoiceId, id));',
+    '  if (payments.length) {',
+    '    res.status(409).json({ error: "This invoice has payment records and cannot be permanently deleted." });',
+    '    return;',
+    '  }',
+    '  const { reason } = req.body ?? {};',
+    '  const items = await db.select().from(invoiceItemsTable).where(eq(invoiceItemsTable.invoiceId, id));',
+    '  if (invoice.status !== "draft") {',
+    '    for (const item of items) {',
+    '      const product = await db.select().from(productsTable).where(eq(productsTable.id, item.productId));',
+    '      if (product.length) {',
+    '        const { before, after } = await adjustBranchStock(invoice.branchId, item.productId, (b) => b + item.quantity);',
+    '        await db.insert(stockMovementsTable).values({ branchId: invoice.branchId, productId: item.productId, type: "adjustment", quantity: item.quantity, quantityBefore: before, quantityAfter: after, reference: invoice.invoiceNumber, notes: `Stock restored after deletion of invoice ${invoice.invoiceNumber}` });',
+    '      }',
+    '    }',
+    '  }',
+    '  await db.delete(invoicePaymentsTable).where(eq(invoicePaymentsTable.invoiceId, id));',
+    '  await db.delete(invoiceItemsTable).where(eq(invoiceItemsTable.invoiceId, id));',
+    '  await db.delete(invoicesTable).where(eq(invoicesTable.id, id));',
+    '  await logAudit(req, { action: "invoice.deleted", entityType: "invoice", entityId: id, description: `Permanently deleted invoice ${invoice.invoiceNumber}${reason ? " — Reason: " + reason : ""}`, metadata: { invoice: invoice.invoiceNumber, status: invoice.status, reason: reason ?? null } });',
+    '  res.sendStatus(204);',
+    '});',
+    ''
+  ].join('\n');
   patched = patched.replace(invoicePayRoute, invoiceDeleteRoute + invoicePayRoute);
   return patched;
 }
