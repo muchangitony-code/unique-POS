@@ -46,6 +46,7 @@ function objectFirst(...values) {
 function adaptLegacyPayload(payload, paper) {
   const root = payload && typeof payload === 'object' ? payload : {};
   const source = objectFirst(root.doc, root.document, root.invoice, root.quotation, root);
+  const meta = objectFirst(source.meta, source.metadata, root.meta, root.metadata);
   const rawType = first(root.type, root.documentType, root.document_type, source.type, source.documentType, source.document_type);
   const type = String(rawType).toLowerCase().includes('quotation') || String(rawType).toLowerCase().includes('quote') ? 'quotation' : 'invoice';
 
@@ -66,9 +67,9 @@ function adaptLegacyPayload(payload, paper) {
     type,
     doc: {
       number: first(source.number, source.documentNumber, source.document_number, source.invoiceNumber, source.invoice_number, source.quotationNumber, source.quotation_number, source.quoteNumber, source.quote_number, root.number, root.documentNumber, root.invoiceNumber, root.quotationNumber),
-      date: isoDate(first(source.date, source.createdAt, source.created_at, source.issueDate, source.issue_date, root.date, root.documentDate, root.createdAt, root.created_at)),
-      dueDate: isoDate(first(source.dueDate, source.due_date, source.paymentDueDate, source.payment_due_date, root.dueDate, root.due_date)),
-      validUntil: isoDate(first(source.validUntil, source.valid_until, source.expiryDate, source.expiry_date, root.validUntil, root.valid_until)),
+      date: isoDate(first(source.date, source.createdAt, source.created_at, source.issueDate, source.issue_date, meta.date, meta.documentDate, meta.createdAt, meta.created_at, root.date, root.documentDate, root.createdAt, root.created_at)),
+      dueDate: isoDate(first(source.dueDate, source.due_date, source.paymentDueDate, source.payment_due_date, meta.dueDate, meta.due_date, meta.paymentDueDate, root.dueDate, root.due_date)),
+      validUntil: isoDate(first(source.validUntil, source.valid_until, source.expiryDate, source.expiry_date, meta.validUntil, meta.valid_until, meta.expiryDate, meta.expiry_date, root.validUntil, root.valid_until)),
       customer: {
         name: first(customer.name, customer.customer_name, customer.company, customer.companyName, root.customerName, 'Walk-in Customer'),
         address: first(customer.address, customer.customer_address, root.customerAddress),
@@ -78,8 +79,8 @@ function adaptLegacyPayload(payload, paper) {
       },
       items,
       currency: first(source.currency, root.currency, 'KES'),
-      notes: first(source.notes, source.note, root.notes),
-      terms: first(source.terms, source.paymentTerms, source.payment_terms, root.terms, root.paymentTerms, root.payment_terms)
+      notes: first(source.notes, source.note, meta.notes, root.notes),
+      terms: first(source.terms, source.paymentTerms, source.payment_terms, meta.terms, meta.paymentTerms, meta.payment_terms, root.terms, root.paymentTerms, root.payment_terms)
     },
     company: {
       name: first(company.name, company.business_name, company.businessName, root.companyName, root.businessName, 'Unique Solar Kenya Ltd'),
