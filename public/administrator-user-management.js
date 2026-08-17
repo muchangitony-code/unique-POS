@@ -21,7 +21,7 @@
   async function refresh(){try{render(await load())}catch(e){const root=document.getElementById('viewRoot');if(root)root.innerHTML=`<div class="card section-card"><h3>Unable to load User Management</h3><p>${esc(e.message)}</p><button class="btn btn-primary" data-user-action="refresh">Try Again</button></div>`}}
 
   function documentDeleteAllowed() {
-    return allowed();
+    return ['business_owner','super_admin'].includes(String(me().role||'').toLowerCase());
   }
 
   function documentDeleteButton(type, id) {
@@ -30,7 +30,7 @@
 
   function injectDocumentDeleteButtons() {
     if (!documentDeleteAllowed()) return;
-    const route = location.hash.replace(/^#/, '').split('?')[0];
+    const route = location.hash.replace(/^#/,'').split('?')[0];
     if (route === 'quotations') {
       document.querySelectorAll('[data-action="convert-quotation"]').forEach(button => {
         if (button.parentElement?.querySelector(`[data-document-delete="quotation"][data-id="${CSS.escape(button.dataset.id || '')}"]`)) return;
