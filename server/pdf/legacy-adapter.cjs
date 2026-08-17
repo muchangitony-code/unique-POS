@@ -9,10 +9,17 @@ function first(...values) {
   }
   return '';
 }
+
 function isoDate(value) {
+  if (value === undefined || value === null || value === '' || value === '—' || value === '-') return '';
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? '' : value.toISOString().slice(0, 10);
-  const s = String(value ?? '').trim();
-  if (!s || s === '—' || s === '-') return '';
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const ms = value < 1e12 ? value * 1000 : value;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+  }
+  const s = String(value).trim();
+  if (!s) return '';
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   const dmy = s.match(/^(\d{1,2})[\\/.-](\d{1,2})[\\/.-](\d{4})(?:\D.*)?$/);
   if (dmy) {
@@ -22,36 +29,98 @@ function isoDate(value) {
   const parsed = new Date(s);
   return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
 }
-function money(value) { if (value === undefined || value === null || value === '' || value === '—') return '0'; return String(value).replace(/,/g, '').replace(/^K(?:ES|Sh)\s*/i, '').trim() || '0'; }
-function number(value, fallback = 0) { const n = Number(String(value ?? '').replace(/,/g, '')); return Number.isFinite(n) ? n : fallback; }
+
+function money(value) {
+  if (value === undefined || value === null || value === '' || value === '—' || value === '-') return '0';
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return String(value).replace(/,/g, '').replace(/^K(?:ES|Sh)\s*/i, '').trim() || '0';
+}
+
+function number(value, fallback = 0) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
+  const n = Number(String(value ?? '').replace(/,/g, '').trim());
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function objectFirst(...values) {
+  return values.find((value) => value && typeof value === 'object' && !Array.isArray(value)) || {};
+}
 
 function adaptLegacyPayload(payload, paper) {
-  const source = payload?.doc || payload?.document || payload;
-  const type = source?.type === 'quotation' || payload?.type === 'quotation' ? 'quotation' : 'invoice';
-  const customer = source?.customer || payload?.customer || {};
-  const company = source?.company || payload?.company || payload?.business || {};
-  const rawItems = source?.items || source?.lineItems || source?.rows || payload?.items || payload?.rows || [];
-  const items = rawItems.map((item) => ({
-    description: first(item.description, item.product_name, item.itemName, item.name, 'Item'),
-    qty: number(first(item.qty, item.quantity, item.count), 0),
-    unitPrice: money(first(item.unitPrice, item.unit_price, item.selling_price, item.price, 0)),
-    taxRate: number(first(item.taxRate, item.vatRate, item.vat_rate, item.tax_rate), 0),
-    discount: money(first(item.discount, item.discount_amount, 0))
+  const root = payload && typeof payload === 'object' ? payload : {};
+  const source = objectFirst(root.doc, root.document, root.invoice, root.quotation, root);
+  const typeValue = first(root.type, root.documentType, root.document_type, source.type, source.documentType, source.document_type);
+  const type = String(typeValue).toLowerCase().includes('quotation') || String(typeValue).toLowerCase().includes('quote') ? 'quotation' : 'invoice';
+
+  const customer = objectFirst(source.customer, source.customerDetails, root.customer, root.customerDetails);
+  const company = objectFirst(source.company, source.business, root.company, root.business, root.settings);
+  const rawItems = first(
+    source.items,
+    source.lineItems,
+    source.line_items,
+    source.rows,
+    source.quotationItems,
+    source.invoiceItems,
+    root.items,
+    root.lineItems,
+    root.line_items,
+    root.rows,
+    root.quotationItems,
+    root.invoiceItems
+  );
+  const itemList = Array.isArray(rawItems) ? rawItems : [];
+
+  const items = itemList.map((item) => ({
+    description: first(item.description, item.product_name, item.productName, item.itemName, item.name, item.title, 'Item'),
+    qty: number(first(item.qty, item.quantity, item.count, item.units), 0),
+    unitPrice: money(first(item.unitPrice, item.unit_price, item.selling_price, item.sellingPrice, item.price, item.rate, 0)),
+    taxRate: number(first(item.taxRate, item.vatRate, item.vat_rate, item.tax_rate, item.taxPercent, 0), 0),
+    discount: money(first(item.discount, item.discount_amount, item.discountAmount, 0))
   }));
+
+  const documentNumber = first(
+    source.number,
+    source.documentNumber,
+    source.document_number,
+    source.invoiceNumber,
+    source.invoice_number,
+    source.quotationNumber,
+    source.quotation_number,
+    source.quoteNumber,
+    source.quote_number,
+    root.number,
+    root.documentNumber,
+    root.invoiceNumber,
+    root.quotationNumber
+  );
+
   return {
     type,
     doc: {
-      number: first(source?.number, source?.documentNumber, source?.invoiceNumber, source?.quotationNumber, payload?.number),
-      date: isoDate(first(source?.date, source?.createdAt, source?.created_at, payload?.date)),
-      dueDate: isoDate(first(source?.dueDate, source?.due_date, payload?.dueDate, payload?.due_date)),
-      validUntil: isoDate(first(source?.validUntil, source?.valid_until, payload?.validUntil, payload?.valid_until)),
-      customer: { name: first(customer.name, customer.customer_name, customer.company, 'Walk-in Customer'), address: first(customer.address, customer.customer_address), phone: first(customer.phone, customer.customer_phone), email: first(customer.email, customer.customer_email), taxId: first(customer.taxId, customer.tax_id, customer.tax_number, customer.kra_pin) },
+      number: documentNumber,
+      date: isoDate(first(source.date, source.createdAt, source.created_at, source.issueDate, source.issue_date, root.date, root.createdAt, root.created_at)),
+      dueDate: isoDate(first(source.dueDate, source.due_date, source.paymentDueDate, source.payment_due_date, root.dueDate, root.due_date)),
+      validUntil: isoDate(first(source.validUntil, source.valid_until, source.expiryDate, source.expiry_date, root.validUntil, root.valid_until)),
+      customer: {
+        name: first(customer.name, customer.customer_name, customer.company, customer.companyName, 'Walk-in Customer'),
+        address: first(customer.address, customer.customer_address),
+        phone: first(customer.phone, customer.customer_phone),
+        email: first(customer.email, customer.customer_email),
+        taxId: first(customer.taxId, customer.tax_id, customer.tax_number, customer.kra_pin, customer.kraPin)
+      },
       items,
-      currency: first(source?.currency, payload?.currency, 'KES'),
-      notes: first(source?.notes, payload?.notes),
-      terms: first(source?.terms, source?.paymentTerms, source?.payment_terms, payload?.terms, payload?.paymentTerms)
+      currency: first(source.currency, root.currency, 'KES'),
+      notes: first(source.notes, source.note, root.notes),
+      terms: first(source.terms, source.paymentTerms, source.payment_terms, root.terms, root.paymentTerms, root.payment_terms)
     },
-    company: { name: first(company.name, company.business_name, payload?.companyName, 'Unique Solar Kenya Ltd'), address: first(company.address, company.business_address), phone: first(company.phone, company.business_phone), email: first(company.email, company.business_email), taxId: first(company.taxId, company.tax_id, company.taxNumber, company.tax_number, company.pin_number), logoUrl: first(company.logoUrl, company.logo_url, company.logo) },
+    company: {
+      name: first(company.name, company.business_name, company.businessName, root.companyName, root.businessName, 'Unique Solar Kenya Ltd'),
+      address: first(company.address, company.business_address, company.businessAddress),
+      phone: first(company.phone, company.business_phone, company.businessPhone),
+      email: first(company.email, company.business_email, company.businessEmail),
+      taxId: first(company.taxId, company.tax_id, company.taxNumber, company.tax_number, company.pin_number, company.kra_pin, company.kraPin),
+      logoUrl: first(company.logoUrl, company.logo_url, company.logo, company.logoPath, company.logo_path)
+    },
     paper
   };
 }
@@ -60,6 +129,7 @@ async function renderLegacyDocumentPdf(payload, paper) {
   const adapted = adaptLegacyPayload(payload, paper);
   return renderDocument({ type: adapted.type, doc: adapted.doc, company: adapted.company });
 }
+
 async function renderLegacyReceiptPdf(payload, paper) {
   const adapted = adaptLegacyPayload(payload, paper);
   return renderReceiptDocument({ doc: adapted.doc, company: adapted.company, paper: paper === '58mm' ? '58mm' : '80mm' });
