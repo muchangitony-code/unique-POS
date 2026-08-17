@@ -46,6 +46,12 @@ function patchUserManagementRoutes(source) {
     return req.user?.role === 'business_owner';
   }
 
+  function userAdminCanAccess(req, res, next) {
+    const role = String(req.user?.role || '');
+    if (allowedUserRoles.has(role)) return next();
+    return res.status(403).json({ error: 'Only an administrator can manage users' });
+  }
+
   function userAdminRandomPassword() {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
     const bytes = require('node:crypto').randomBytes(16);
@@ -84,7 +90,7 @@ function patchUserManagementRoutes(source) {
     return value;
   }
 
-  ${appVar}.use('/api/admin/users', requireAuth, requireSuperAdmin);
+  ${appVar}.use('/api/admin/users', requireAuth, userAdminCanAccess);
 
   ${appVar}.patch('/api/admin/users/:id', async (req, res) => {
     try {
