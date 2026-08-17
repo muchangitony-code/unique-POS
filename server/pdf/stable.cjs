@@ -1,241 +1,38 @@
 'use strict';
-
 const PDFDocument = require('pdfkit');
 const { validateDocument, normalizeDocument } = require('./schema.cjs');
 const { moneyFromInput, mulCents, taxCents, formatMoney, formatNumber } = require('./format');
 const { registerFonts } = require('./fonts.cjs');
-
 const PAGE = { size: 'A4', margin: 40, width: 595.28, height: 841.89 };
 const CONTENT_W = PAGE.width - PAGE.margin * 2;
-const FOOTER_H = 24;
-const GAP = 12;
-const ROW_PADDING = 8;
-const BODY_SIZE = 8.5;
-const HEAD_SIZE = 7.5;
+const FOOTER_H = 24, GAP = 12, ROW_PADDING = 8, BODY_SIZE = 8.5, HEAD_SIZE = 7.5;
 const COLORS = { navy: '#0B4778', orange: '#F7941D', text: '#172033', muted: '#667085', line: '#D9E1EA', soft: '#F6F8FB', white: '#FFFFFF' };
-const COLUMNS = [
-  { key: 'no', w: 28, align: 'left' },
-  { key: 'description', w: 0, flex: true, align: 'left' },
-  { key: 'qty', w: 45, align: 'right' },
-  { key: 'unit', w: 70, align: 'right' },
-  { key: 'tax', w: 50, align: 'right' },
-  { key: 'total', w: 80, align: 'right' }
-];
+const COLUMNS = [{ key: 'no', w: 28, align: 'left' }, { key: 'description', w: 0, flex: true, align: 'left' }, { key: 'qty', w: 45, align: 'right' }, { key: 'unit', w: 70, align: 'right' }, { key: 'tax', w: 50, align: 'right' }, { key: 'total', w: 80, align: 'right' }];
 COLUMNS.find(c => c.flex).w = CONTENT_W - COLUMNS.filter(c => !c.flex).reduce((n, c) => n + c.w, 0);
-let nextX = PAGE.margin;
-for (const c of COLUMNS) { c.x = nextX; nextX += c.w; }
+let nextX = PAGE.margin; for (const c of COLUMNS) { c.x = nextX; nextX += c.w; }
 if (Math.abs(nextX - (PAGE.width - PAGE.margin)) > 0.01) throw new Error('PDF column geometry invariant failed');
-
-function text(pdf, value, box, y, options = {}) {
-  pdf.font(options.font || 'body').fontSize(options.size || BODY_SIZE).fillColor(options.color || COLORS.text);
-  pdf.text(String(value ?? ''), box.x, y, { width: box.w, align: box.align || 'left', lineBreak: options.lineBreak !== false, ellipsis: options.ellipsis === true, lineGap: options.lineGap || 0, continued: false });
-}
-function measure(pdf, value, width, size = BODY_SIZE, font = 'body') {
-  pdf.font(font).fontSize(size);
-  return pdf.heightOfString(String(value ?? ''), { width, lineGap: 0 });
-}
+function text(pdf, value, box, y, options = {}) { pdf.font(options.font || 'body').fontSize(options.size || BODY_SIZE).fillColor(options.color || COLORS.text); pdf.text(String(value ?? ''), box.x, y, { width: box.w, align: box.align || 'left', lineBreak: options.lineBreak !== false, ellipsis: options.ellipsis === true, lineGap: options.lineGap || 0, continued: false }); }
+function measure(pdf, value, width, size = BODY_SIZE, font = 'body') { pdf.font(font).fontSize(size); return pdf.heightOfString(String(value ?? ''), { width, lineGap: 0 }); }
 function clean(value) { return String(value ?? '').replace(/([^\s]{35})(?=[^\s])/g, '$1\u200b'); }
-function money(value, currency) { return formatMoney(value, currency); }
-function itemTotals(item) {
-  const gross = mulCents(moneyFromInput(item.unitPrice), item.qty);
-  const discount = moneyFromInput(item.discount || '0');
-  const net = Math.max(0, gross - discount);
-  const tax = taxCents(net, item.taxRate || 0);
-  return { gross, discount, tax, total: net + tax };
-}
-function documentTotals(items) {
-  return items.reduce((out, item) => { const t = itemTotals(item); out.subtotal += t.gross; out.discount += t.discount; out.tax += t.tax; out.total += t.total; return out; }, { subtotal: 0, discount: 0, tax: 0, total: 0 });
-}
-function rowText(item, key, index, currency) {
-  if (key === 'no') return String(index + 1);
-  if (key === 'description') return clean(item.description);
-  if (key === 'qty') return formatNumber(item.qty);
-  if (key === 'unit') return money(moneyFromInput(item.unitPrice), currency);
-  if (key === 'tax') return `${Number(item.taxRate || 0).toFixed(2)}%`;
-  return money(itemTotals(item).total, currency);
-}
-function rowHeight(pdf, item, currency) {
-  return Math.max(26, Math.max(...COLUMNS.map(c => measure(pdf, rowText(item, c.key, 0, currency), Math.max(1, c.w - 10), BODY_SIZE))) + ROW_PADDING * 2);
-}
+function itemTotals(item) { const gross = mulCents(moneyFromInput(item.unitPrice), item.qty); const discount = moneyFromInput(item.discount || '0'); const net = Math.max(0, gross - discount); const tax = taxCents(net, item.taxRate || 0); return { gross, discount, tax, total: net + tax }; }
+function documentTotals(items) { return items.reduce((out, item) => { const t = itemTotals(item); out.subtotal += t.gross; out.discount += t.discount; out.tax += t.tax; out.total += t.total; return out; }, { subtotal: 0, discount: 0, tax: 0, total: 0 }); }
+function rowText(item, key, index, currency) { if (key === 'no') return String(index + 1); if (key === 'description') return clean(item.description); if (key === 'qty') return formatNumber(item.qty); if (key === 'unit') return formatMoney(moneyFromInput(item.unitPrice), currency); if (key === 'tax') return `${Number(item.taxRate || 0).toFixed(2)}%`; return formatMoney(itemTotals(item).total, currency); }
+function rowHeight(pdf, item, currency) { return Math.max(26, Math.max(...COLUMNS.map(c => measure(pdf, rowText(item, c.key, 0, currency), Math.max(1, c.w - 10), BODY_SIZE))) + ROW_PADDING * 2); }
 function cellBox(c) { const inset = c.key === 'description' || c.key === 'no' ? 5 : 4; return { x: c.x + inset, w: c.w - inset * 2, align: c.align }; }
 function drawCell(pdf, value, c, y, options = {}) { text(pdf, value, cellBox(c), y, options); }
-
-function drawLogo(pdf, company, x, y, size) {
-  if (Buffer.isBuffer(company.logoBuffer)) {
-    try { pdf.image(company.logoBuffer, x, y, { fit: [size, size], align: 'center', valign: 'center' }); return; } catch (_) {}
-  }
-  pdf.save().fillColor(COLORS.orange).roundedRect(x, y, size, size, 8).fill();
-  text(pdf, 'US', { x, w: size, align: 'center' }, y + size * 0.27, { font: 'bold', size: 17, color: COLORS.white });
-  pdf.restore();
-}
-async function loadLogoBuffer(url) {
-  const raw = String(url || '').trim();
-  if (!raw || raw.startsWith('data:image/svg+xml')) return null;
-  try {
-    let target = raw;
-    if (target.startsWith('/')) {
-      const origin = String(process.env.PUBLIC_APP_URL || process.env.APP_URL || process.env.RAILWAY_STATIC_URL || '').replace(/\/$/, '');
-      const domain = String(process.env.RAILWAY_PUBLIC_DOMAIN || '').trim();
-      target = (origin || (domain ? `https://${domain}` : '')) + target;
-    }
-    if (!/^https?:\/\//i.test(target)) return null;
-    const response = await fetch(target, { redirect: 'follow' });
-    if (!response.ok) return null;
-    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-    if (!/^image\/(png|jpeg|jpg)$/.test(contentType)) return null;
-    const buffer = Buffer.from(await response.arrayBuffer());
-    return buffer.length && buffer.length <= 2 * 1024 * 1024 ? buffer : null;
-  } catch (_) { return null; }
-}
-
-function drawHeader(pdf, data) {
-  const y0 = PAGE.margin;
-  const logoSize = 56;
-  drawLogo(pdf, data.company, PAGE.margin, y0, logoSize);
-  const cardW = 190;
-  const cardX = PAGE.width - PAGE.margin - cardW;
-  const brandX = PAGE.margin + logoSize + 14;
-  const brandW = cardX - brandX - GAP;
-  const name = clean(data.company.name || 'Unique Solar Kenya Ltd');
-  let nameSize = 13;
-  while (nameSize > 9.5 && measure(pdf, name, brandW, nameSize, 'bold') > 31) nameSize -= 0.5;
-  text(pdf, name, { x: brandX, w: brandW, align: 'left' }, y0 + 2, { font: 'bold', size: nameSize, color: COLORS.navy });
-  let contactY = y0 + 5 + measure(pdf, name, brandW, nameSize, 'bold');
-  for (const value of [data.company.address, [data.company.phone, data.company.email].filter(Boolean).join(' · '), data.company.taxId ? `Tax ID: ${data.company.taxId}` : ''].filter(Boolean)) {
-    const cleanValue = clean(value);
-    text(pdf, cleanValue, { x: brandX, w: brandW, align: 'left' }, contactY, { size: 7.5, color: COLORS.muted });
-    contactY += measure(pdf, cleanValue, brandW, 7.5) + 3;
-  }
-  pdf.fillColor(COLORS.navy).roundedRect(cardX, y0, cardW, 82, 6).fill();
-  text(pdf, data.type === 'invoice' ? 'INVOICE' : 'QUOTATION', { x: cardX + 12, w: cardW - 24, align: 'left' }, y0 + 10, { font: 'bold', size: 14, color: COLORS.white });
-  text(pdf, data.number, { x: cardX + 12, w: cardW - 24, align: 'left' }, y0 + 32, { size: 8.5, color: COLORS.white });
-  text(pdf, `Date: ${data.date}`, { x: cardX + 12, w: cardW - 24, align: 'left' }, y0 + 47, { size: 8, color: COLORS.white });
-  const label = data.type === 'invoice' ? 'Due date' : 'Valid until';
-  const date = data.type === 'invoice' ? data.dueDate : data.validUntil;
-  text(pdf, `${label}: ${date || '—'}`, { x: cardX + 12, w: cardW - 24, align: 'left' }, y0 + 61, { size: 8, color: COLORS.white });
-  return Math.max(contactY, y0 + 82);
-}
-function drawCustomer(pdf, data, startY) {
-  const y = startY + GAP;
-  const statusW = 70;
-  const nameW = CONTENT_W - statusW - 36;
-  const name = clean(data.customer.name || 'Walk-in Customer');
-  const details = [data.customer.address, data.customer.phone, data.customer.email, data.customer.taxId ? `Tax ID: ${data.customer.taxId}` : ''].filter(Boolean).join(' · ');
-  const nameH = measure(pdf, name, nameW, 10.5, 'bold');
-  const detailH = details ? measure(pdf, clean(details), nameW, 7.3) : 0;
-  const h = Math.max(68, 18 + nameH + (details ? detailH + 5 : 0));
-  pdf.fillColor(COLORS.soft).strokeColor(COLORS.line).lineWidth(0.6).roundedRect(PAGE.margin, y, CONTENT_W, h, 5).fillAndStroke();
-  text(pdf, 'CUSTOMER', { x: PAGE.margin + 12, w: nameW, align: 'left' }, y + 9, { font: 'bold', size: 7.5, color: COLORS.navy });
-  text(pdf, name, { x: PAGE.margin + 12, w: nameW, align: 'left' }, y + 23, { font: 'bold', size: 10.5 });
-  if (details) text(pdf, clean(details), { x: PAGE.margin + 12, w: nameW, align: 'left' }, y + 23 + nameH + 3, { size: 7.3, color: COLORS.muted });
-  const sx = PAGE.width - PAGE.margin - statusW - 12;
-  pdf.fillColor(COLORS.white).strokeColor(COLORS.navy).roundedRect(sx, y + 18, statusW, 20, 10).fillAndStroke();
-  text(pdf, data.type === 'invoice' ? 'UNPAID' : 'VALID', { x: sx + 4, w: statusW - 8, align: 'center' }, y + 24, { font: 'bold', size: 6.8, color: COLORS.navy, ellipsis: true });
-  return y + h;
-}
-function drawTableHeader(pdf, y) {
-  const h = 25;
-  pdf.fillColor(COLORS.navy).rect(PAGE.margin, y, CONTENT_W, h).fill();
-  const labels = { no: 'No.', description: 'Description', qty: 'Qty', unit: 'Unit Price', tax: 'Tax', total: 'Amount' };
-  for (const c of COLUMNS) drawCell(pdf, labels[c.key], c, y + 7, { font: 'bold', size: HEAD_SIZE, color: COLORS.white, ellipsis: true });
-  return y + h;
-}
-function drawRow(pdf, item, y, index, currency) {
-  const h = rowHeight(pdf, item, currency);
-  if (index % 2) pdf.fillColor(COLORS.soft).rect(PAGE.margin, y, CONTENT_W, h).fill();
-  pdf.strokeColor(COLORS.line).lineWidth(0.4).rect(PAGE.margin, y, CONTENT_W, h).stroke();
-  for (const c of COLUMNS) drawCell(pdf, rowText(item, c.key, index, currency), c, y + ROW_PADDING, { font: c.key === 'total' ? 'bold' : 'body', size: BODY_SIZE });
-  return y + h;
-}
+function drawLogo(pdf, company, x, y, size) { if (Buffer.isBuffer(company.logoBuffer)) { try { pdf.image(company.logoBuffer, x, y, { fit: [size, size], align: 'center', valign: 'center' }); return; } catch (_) {} } pdf.save().fillColor(COLORS.orange).roundedRect(x, y, size, size, 8).fill(); text(pdf, 'US', { x, w: size, align: 'center' }, y + size * 0.27, { font: 'bold', size: 17, color: COLORS.white }); pdf.restore(); }
+async function loadLogoBuffer(url) { const raw = String(url || '').trim(); if (!raw || raw.startsWith('data:image/svg+xml')) return null; try { let target = raw; if (target.startsWith('/')) { const origin = String(process.env.PUBLIC_APP_URL || process.env.APP_URL || process.env.RAILWAY_STATIC_URL || '').replace(/\/$/, ''); const domain = String(process.env.RAILWAY_PUBLIC_DOMAIN || '').trim(); target = (origin || (domain ? `https://${domain}` : '')) + target; } if (!/^https?:\/\//i.test(target)) return null; const response = await fetch(target, { redirect: 'follow' }); if (!response.ok) return null; const contentType = String(response.headers.get('content-type') || '').toLowerCase(); if (!/^image\/(png|jpeg|jpg)$/.test(contentType)) return null; const buffer = Buffer.from(await response.arrayBuffer()); return buffer.length && buffer.length <= 2 * 1024 * 1024 ? buffer : null; } catch (_) { return null; } }
+function drawHeader(pdf, data) { const y0 = PAGE.margin, logoSize = 56; drawLogo(pdf, data.company, PAGE.margin, y0, logoSize); const cardW = 190, cardX = PAGE.width - PAGE.margin - cardW, brandX = PAGE.margin + logoSize + 14, brandW = cardX - brandX - GAP; const name = clean(data.company.name || 'Unique Solar Kenya Ltd'); let nameSize = 13; while (nameSize > 9.5 && measure(pdf, name, brandW, nameSize, 'bold') > 31) nameSize -= 0.5; text(pdf, name, { x: brandX, w: brandW, align: 'left' }, y0 + 2, { font: 'bold', size: nameSize, color: COLORS.navy }); let contactY = y0 + 5 + measure(pdf, name, brandW, nameSize, 'bold'); for (const value of [data.company.address, [data.company.phone, data.company.email].filter(Boolean).join(' · '), data.company.taxId ? `Tax ID: ${data.company.taxId}` : ''].filter(Boolean)) { const v = clean(value); text(pdf, v, { x: brandX, w: brandW, align: 'left' }, contactY, { size: 7.5, color: COLORS.muted }); contactY += measure(pdf, v, brandW, 7.5) + 3; } pdf.fillColor(COLORS.navy).roundedRect(cardX, y0, cardW, 82, 6).fill(); text(pdf, data.type === 'invoice' ? 'INVOICE' : 'QUOTATION', { x: cardX + 12, w: cardW - 24, align: 'left' }, y0 + 10, { font: 'bold', size: 14, color: COLORS.white }); text(pdf, data.number, { x: cardX + 12, w: cardW - 24, align: 'left' }, y0 + 32, { size: 8.5, color: COLORS.white }); text(pdf, `Date: ${data.date}`, { x: cardX + 12, w: cardW - 24, align: 'left' }, y0 + 47, { size: 8, color: COLORS.white }); const label = data.type === 'invoice' ? 'Due date' : 'Valid until'; const date = data.type === 'invoice' ? data.dueDate : data.validUntil; text(pdf, `${label}: ${date || '—'}`, { x: cardX + 12, w: cardW - 24, align: 'left' }, y0 + 61, { size: 8, color: COLORS.white }); return Math.max(contactY, y0 + 82); }
+function drawCustomer(pdf, data, startY) { const y = startY + GAP, statusW = 70, nameW = CONTENT_W - statusW - 36, name = clean(data.customer.name || 'Walk-in Customer'), details = [data.customer.address, data.customer.phone, data.customer.email, data.customer.taxId ? `Tax ID: ${data.customer.taxId}` : ''].filter(Boolean).join(' · '); const nameH = measure(pdf, name, nameW, 10.5, 'bold'), detailH = details ? measure(pdf, clean(details), nameW, 7.3) : 0, h = Math.max(68, 18 + nameH + (details ? detailH + 5 : 0)); pdf.fillColor(COLORS.soft).strokeColor(COLORS.line).lineWidth(0.6).roundedRect(PAGE.margin, y, CONTENT_W, h, 5).fillAndStroke(); text(pdf, 'CUSTOMER', { x: PAGE.margin + 12, w: nameW, align: 'left' }, y + 9, { font: 'bold', size: 7.5, color: COLORS.navy }); text(pdf, name, { x: PAGE.margin + 12, w: nameW, align: 'left' }, y + 23, { font: 'bold', size: 10.5 }); if (details) text(pdf, clean(details), { x: PAGE.margin + 12, w: nameW, align: 'left' }, y + 23 + nameH + 3, { size: 7.3, color: COLORS.muted }); const sx = PAGE.width - PAGE.margin - statusW - 12; pdf.fillColor(COLORS.white).strokeColor(COLORS.navy).roundedRect(sx, y + 18, statusW, 20, 10).fillAndStroke(); text(pdf, data.type === 'invoice' ? 'UNPAID' : 'VALID', { x: sx + 4, w: statusW - 8, align: 'center' }, y + 24, { font: 'bold', size: 6.8, color: COLORS.navy, ellipsis: true }); return y + h; }
+function drawTableHeader(pdf, y) { const h = 25; pdf.fillColor(COLORS.navy).rect(PAGE.margin, y, CONTENT_W, h).fill(); const labels = { no: 'No.', description: 'Description', qty: 'Qty', unit: 'Unit Price', tax: 'Tax', total: 'Amount' }; for (const c of COLUMNS) drawCell(pdf, labels[c.key], c, y + 7, { font: 'bold', size: HEAD_SIZE, color: COLORS.white, ellipsis: true }); return y + h; }
+function drawRow(pdf, item, y, index, currency) { const h = rowHeight(pdf, item, currency); if (index % 2) pdf.fillColor(COLORS.soft).rect(PAGE.margin, y, CONTENT_W, h).fill(); pdf.strokeColor(COLORS.line).lineWidth(0.4).rect(PAGE.margin, y, CONTENT_W, h).stroke(); for (const c of COLUMNS) drawCell(pdf, rowText(item, c.key, index, currency), c, y + ROW_PADDING, { font: c.key === 'total' ? 'bold' : 'body', size: BODY_SIZE }); return y + h; }
 function blockHeight(pdf, value) { return Math.max(42, measure(pdf, clean(value), CONTENT_W - 20, 8) + 31); }
-function drawBlock(pdf, title, value, y) {
-  if (!value) return y;
-  const h = blockHeight(pdf, value);
-  pdf.fillColor(COLORS.soft).strokeColor(COLORS.line).lineWidth(0.6).roundedRect(PAGE.margin, y, CONTENT_W, h, 4).fillAndStroke();
-  text(pdf, title, { x: PAGE.margin + 10, w: CONTENT_W - 20, align: 'left' }, y + 8, { font: 'bold', size: 8, color: COLORS.navy });
-  text(pdf, clean(value), { x: PAGE.margin + 10, w: CONTENT_W - 20, align: 'left' }, y + 21, { size: 8, color: COLORS.muted });
-  return y + h;
-}
+function drawBlock(pdf, title, value, y) { if (!value) return y; const h = blockHeight(pdf, value); pdf.fillColor(COLORS.soft).strokeColor(COLORS.line).lineWidth(0.6).roundedRect(PAGE.margin, y, CONTENT_W, h, 4).fillAndStroke(); text(pdf, title, { x: PAGE.margin + 10, w: CONTENT_W - 20, align: 'left' }, y + 8, { font: 'bold', size: 8, color: COLORS.navy }); text(pdf, clean(value), { x: PAGE.margin + 10, w: CONTENT_W - 20, align: 'left' }, y + 21, { size: 8, color: COLORS.muted }); return y + h; }
 function totalsHeight() { return 106; }
-function drawTotals(pdf, totals, currency, y) {
-  const w = 255, h = totalsHeight(), x = PAGE.width - PAGE.margin - w;
-  pdf.fillColor(COLORS.white).strokeColor(COLORS.line).lineWidth(0.7).roundedRect(x, y, w, h, 4).fillAndStroke();
-  for (const [i, [label, value]] of [['Subtotal', totals.subtotal], ['Discount', -totals.discount], ['Tax', totals.tax]].entries()) {
-    const yy = y + 13 + i * 20;
-    text(pdf, label, { x: x + 12, w: 105, align: 'left' }, yy, { size: 8.5, color: COLORS.muted });
-    text(pdf, money(value, currency), { x: x + 105, w: w - 117, align: 'right' }, yy, { size: 8.5 });
-  }
-  const gy = y + h - 31;
-  pdf.fillColor(COLORS.navy).roundedRect(x, gy, w, 31, 4).fill();
-  text(pdf, 'GRAND TOTAL', { x: x + 12, w: 105, align: 'left' }, gy + 9, { font: 'bold', size: 8.5, color: COLORS.white });
-  text(pdf, money(totals.total, currency), { x: x + 105, w: w - 117, align: 'right' }, gy + 7, { font: 'bold', size: 11, color: COLORS.white });
-  return y + h;
-}
-function drawFooter(pdf, pageNo, pageCount, type) {
-  const y = PAGE.height - PAGE.margin + 2;
-  pdf.strokeColor(COLORS.line).lineWidth(0.6).moveTo(PAGE.margin, y - 7).lineTo(PAGE.width - PAGE.margin, y - 7).stroke();
-  text(pdf, type === 'invoice' ? 'Invoice' : 'Quotation', { x: PAGE.margin, w: 120, align: 'left' }, y, { size: 7.5, color: COLORS.muted });
-  text(pdf, `Page ${pageNo} of ${pageCount}`, { x: PAGE.width - PAGE.margin - 100, w: 100, align: 'right' }, y, { size: 7.5, color: COLORS.muted });
-}
+function drawTotals(pdf, totals, currency, y) { const w = 255, h = totalsHeight(), x = PAGE.width - PAGE.margin - w; pdf.fillColor(COLORS.white).strokeColor(COLORS.line).lineWidth(0.7).roundedRect(x, y, w, h, 4).fillAndStroke(); for (const [i, [label, value]] of [['Subtotal', totals.subtotal], ['Discount', -totals.discount], ['Tax', totals.tax]].entries()) { const yy = y + 13 + i * 20; text(pdf, label, { x: x + 12, w: 105, align: 'left' }, yy, { size: 8.5, color: COLORS.muted }); text(pdf, formatMoney(value, currency), { x: x + 105, w: w - 117, align: 'right' }, yy, { size: 8.5 }); } const gy = y + h - 31; pdf.fillColor(COLORS.navy).roundedRect(x, gy, w, 31, 4).fill(); text(pdf, 'GRAND TOTAL', { x: x + 12, w: 105, align: 'left' }, gy + 9, { font: 'bold', size: 8.5, color: COLORS.white }); text(pdf, formatMoney(totals.total, currency), { x: x + 105, w: w - 117, align: 'right' }, gy + 7, { font: 'bold', size: 11, color: COLORS.white }); return y + h; }
+function drawFooter(pdf, pageNo, pageCount, type) { const y = PAGE.height - PAGE.margin + 2; pdf.strokeColor(COLORS.line).lineWidth(0.6).moveTo(PAGE.margin, y - 7).lineTo(PAGE.width - PAGE.margin, y - 7).stroke(); text(pdf, type === 'invoice' ? 'Invoice' : 'Quotation', { x: PAGE.margin, w: 120, align: 'left' }, y, { size: 7.5, color: COLORS.muted }); text(pdf, `Page ${pageNo} of ${pageCount}`, { x: PAGE.width - PAGE.margin - 100, w: 100, align: 'right' }, y, { size: 7.5, color: COLORS.muted }); }
 function drawPageHeading(pdf, data) { return drawCustomer(pdf, data, drawHeader(pdf, data)); }
 function contentBottom() { return PAGE.height - PAGE.margin - FOOTER_H; }
-function paginateRows(pdf, data, rowStart) {
-  const rowCapacity = contentBottom() - rowStart - 25;
-  const finalReserve = GAP + totalsHeight() + (data.notes ? GAP + blockHeight(pdf, data.notes) : 0) + (data.terms ? GAP + blockHeight(pdf, data.terms) : 0);
-  const finalCapacity = rowCapacity - finalReserve;
-  const heights = data.items.map(item => rowHeight(pdf, item, data.currency));
-  const pages = [];
-  let index = 0;
-  while (index < data.items.length) {
-    let target = rowCapacity;
-    const remaining = heights.slice(index).reduce((a, b) => a + b, 0);
-    if (remaining <= finalCapacity) target = finalCapacity;
-    else if (remaining - rowCapacity <= finalCapacity) target = remaining - finalCapacity;
-    const rows = [];
-    let used = 0;
-    while (index < data.items.length && used + heights[index] <= target) { rows.push(data.items[index]); used += heights[index]; index += 1; }
-    if (!rows.length) { rows.push(data.items[index]); used += heights[index]; index += 1; }
-    pages.push({ rows, height: used });
-  }
-  if (!pages.length) pages.push({ rows: [], height: 0 });
-  return pages;
-}
-
-async function renderDocument({ type, doc: input, company }) {
-  validateDocument(type, input, company);
-  const data = normalizeDocument(type, input, company);
-  data.company.logoUrl = company.logoUrl || company.logo_url || '';
-  data.company.logoBuffer = await loadLogoBuffer(data.company.logoUrl);
-  const totals = documentTotals(data.items);
-  const pdf = new PDFDocument({ size: PAGE.size, autoFirstPage: false, bufferPages: true, margins: { top: PAGE.margin, right: PAGE.margin, bottom: PAGE.margin, left: PAGE.margin }, info: { Title: `${type === 'invoice' ? 'Invoice' : 'Quotation'} ${data.number}`, Author: data.company.name } });
-  registerFonts(pdf);
-  const chunks = [];
-  const done = new Promise((resolve, reject) => { pdf.on('data', c => chunks.push(c)); pdf.once('end', () => resolve(Buffer.concat(chunks))); pdf.once('error', reject); });
-  const probe = new PDFDocument({ size: PAGE.size, autoFirstPage: false, margins: { top: PAGE.margin, right: PAGE.margin, bottom: PAGE.margin, left: PAGE.margin } });
-  registerFonts(probe);
-  probe.addPage({ size: PAGE.size, margins: { top: PAGE.margin, right: PAGE.margin, bottom: PAGE.margin, left: PAGE.margin } });
-  const rowStart = drawPageHeading(probe, data) + GAP;
-  const pages = paginateRows(probe, data, rowStart);
-  probe.end();
-
-  for (let p = 0; p < pages.length; p += 1) {
-    pdf.addPage({ size: PAGE.size, margins: { top: PAGE.margin, right: PAGE.margin, bottom: PAGE.margin, left: PAGE.margin } });
-    let y = drawPageHeading(pdf, data) + GAP;
-    y = drawTableHeader(pdf, y) + 5;
-    for (let i = 0; i < pages[p].rows.length; i += 1) y = drawRow(pdf, pages[p].rows[i], y, i, data.currency);
-    if (p === pages.length - 1) {
-      const reserve = GAP + totalsHeight() + (data.notes ? GAP + blockHeight(pdf, data.notes) : 0) + (data.terms ? GAP + blockHeight(pdf, data.terms) : 0);
-      if (y + reserve > contentBottom()) throw new Error('PDF layout invariant failed: final page totals do not fit');
-      y += GAP;
-      y = drawTotals(pdf, totals, data.currency, y) + GAP;
-      if (data.notes) y = drawBlock(pdf, 'Notes', data.notes, y) + GAP;
-      if (data.terms) y = drawBlock(pdf, type === 'invoice' ? 'Terms & Conditions' : 'Quotation Terms', data.terms, y);
-    }
-  }
-  const range = pdf.bufferedPageRange();
-  for (let i = range.start; i < range.start + range.count; i += 1) drawFooter(pdf, i + 1, range.count, data.type);
-  pdf.end();
-  return done;
-}
-
+function paginateRows(pdf, data, rowStart) { const rowCapacity = contentBottom() - rowStart - 25; const finalReserve = GAP + totalsHeight() + (data.notes ? GAP + blockHeight(pdf, data.notes) : 0) + (data.terms ? GAP + blockHeight(pdf, data.terms) : 0); const finalCapacity = rowCapacity - finalReserve; const heights = data.items.map(item => rowHeight(pdf, item, data.currency)); const pages = []; let index = 0; while (index < data.items.length) { const rows = []; let used = 0; while (index < data.items.length && used + heights[index] <= rowCapacity) { const remainingAfter = heights.slice(index + 1).reduce((a, b) => a + b, 0); rows.push(data.items[index]); used += heights[index]; index += 1; if (remainingAfter <= finalCapacity) break; } pages.push({ rows, height: used }); } if (!pages.length) pages.push({ rows: [], height: 0 }); return pages; }
+async function renderDocument({ type, doc: input, company }) { validateDocument(type, input, company); const data = normalizeDocument(type, input, company); data.company.logoUrl = company.logoUrl || company.logo_url || ''; data.company.logoBuffer = await loadLogoBuffer(data.company.logoUrl); const totals = documentTotals(data.items); const pdf = new PDFDocument({ size: PAGE.size, autoFirstPage: false, bufferPages: true, margins: { top: PAGE.margin, right: PAGE.margin, bottom: PAGE.margin, left: PAGE.margin }, info: { Title: `${type === 'invoice' ? 'Invoice' : 'Quotation'} ${data.number}`, Author: data.company.name } }); registerFonts(pdf); const chunks = []; const done = new Promise((resolve, reject) => { pdf.on('data', c => chunks.push(c)); pdf.once('end', () => resolve(Buffer.concat(chunks))); pdf.once('error', reject); }); const probe = new PDFDocument({ size: PAGE.size, autoFirstPage: false, margins: { top: PAGE.margin, right: PAGE.margin, bottom: PAGE.margin, left: PAGE.margin } }); registerFonts(probe); probe.addPage({ size: PAGE.size, margins: { top: PAGE.margin, right: PAGE.margin, bottom: PAGE.margin, left: PAGE.margin } }); const rowStart = drawPageHeading(probe, data) + GAP; const pages = paginateRows(probe, data, rowStart); probe.end(); for (let p = 0; p < pages.length; p += 1) { pdf.addPage({ size: PAGE.size, margins: { top: PAGE.margin, right: PAGE.margin, bottom: PAGE.margin, left: PAGE.margin } }); let y = drawPageHeading(pdf, data) + GAP; y = drawTableHeader(pdf, y) + 5; for (let i = 0; i < pages[p].rows.length; i += 1) y = drawRow(pdf, pages[p].rows[i], y, i, data.currency); if (p === pages.length - 1) { const reserve = GAP + totalsHeight() + (data.notes ? GAP + blockHeight(pdf, data.notes) : 0) + (data.terms ? GAP + blockHeight(pdf, data.terms) : 0); if (y + reserve > contentBottom()) throw new Error('PDF layout invariant failed: final page totals do not fit'); y += GAP; y = drawTotals(pdf, totals, data.currency, y) + GAP; if (data.notes) y = drawBlock(pdf, 'Notes', data.notes, y) + GAP; if (data.terms) y = drawBlock(pdf, type === 'invoice' ? 'Terms & Conditions' : 'Quotation Terms', data.terms, y); } } const range = pdf.bufferedPageRange(); for (let i = range.start; i < range.start + range.count; i += 1) drawFooter(pdf, i + 1, range.count, data.type); pdf.end(); return done; }
 module.exports = { renderDocument, PAGE, CONTENT_W, COLUMNS };
