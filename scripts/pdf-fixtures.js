@@ -1,7 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { renderDocument } = require('../server/pdf/stable.cjs');
+const { renderDocument } = require('../server/pdf/index.cjs');
 const out = path.join(process.cwd(), 'out');
 fs.mkdirSync(out, { recursive: true });
 const company = { name: 'Unique Solar & General Supplies Limited', address: 'Eastern Bypass, Kiambu, Kenya', phone: '+254 733 573089', email: 'info@uniquesolarkenya.co.ke', taxId: 'P052303835W' };
