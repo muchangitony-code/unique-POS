@@ -1,24 +1,27 @@
 'use strict';
 
-const path = require('node:path');
-const fs = require('node:fs');
-
-const FONT_DIR = path.join(__dirname, '..', '..', 'assets', 'fonts');
-const REGULAR = path.join(FONT_DIR, 'DejaVuSans.ttf');
-const BOLD = path.join(FONT_DIR, 'DejaVuSans-Bold.ttf');
+// PDFKit's built-in Type1 fonts are intentionally used here.
+// The previous implementation registered local TTF files through fontkit.
+// Production logs showed fontkit failing with `Cannot read properties of undefined
+// (reading 'offsets')` while PDFKit measured text. Built-in Helvetica fonts avoid
+// fontkit parsing entirely and are stable on Railway/Linux containers.
+const FONT_DIR = null;
+const REGULAR = 'Helvetica';
+const BOLD = 'Helvetica-Bold';
 
 function assertFonts() {
-  for (const file of [REGULAR, BOLD]) {
-    if (!fs.existsSync(file)) throw new Error(`Missing PDF font: ${file}`);
-    const stat = fs.statSync(file);
-    if (!stat.isFile() || stat.size === 0) throw new Error(`Invalid PDF font: ${file}`);
-  }
+  return true;
 }
 
 function registerFonts(doc) {
-  assertFonts();
-  doc.registerFont('body', REGULAR);
-  doc.registerFont('bold', BOLD);
+  if (!doc || typeof doc.font !== 'function') throw new TypeError('PDF document is required');
+
+  const originalFont = doc.font.bind(doc);
+  doc.font = function stableFont(name, size, options) {
+    const mapped = name === 'body' ? 'Helvetica' : name === 'bold' ? 'Helvetica-Bold' : name;
+    return originalFont(mapped, size, options);
+  };
+
   return doc;
 }
 
