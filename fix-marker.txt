@@ -1,1 +1,0 @@
-PDF startup now uses built-in PDFKit fonts; no filesystem font directory is required.
