@@ -1,14 +1,58 @@
 'use strict';
 
-/** Build-time patch for the bundled Express server. */
+/**
+ * Build-time patch for the bundled Express server.
+ *
+ * Supports both the original source form:
+ *   const app = express();
+ * and the current esbuild output:
+ *   var app = (0, import_express.default)();
+ *   var app_default = app;
+ */
 function patchUserManagementRoutes(source) {
   if (source.includes('USER_MANAGEMENT_PATCH_V1')) return source;
-  const expressMatch = source.match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*express\(\)/);
-  if (!expressMatch) throw new Error('User management patch: could not locate Express application variable');
+
+  // Match an unbundled Express app first, then the esbuild-generated form.
+  const expressMatch = source.match(
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*express\(\)/
+  ) || source.match(
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(0,\s*[A-Za-z_$][\w$]*\.default\)\(\)/
+  );
+
+  if (!expressMatch) {
+    throw new Error('User management patch: could not locate Express application variable');
+  }
+
   const appVar = expressMatch[1];
-  const listenMarker = `${appVar}.listen(`;
-  const listenIndex = source.lastIndexOf(listenMarker);
-  if (listenIndex < 0) throw new Error(`User management patch: could not locate ${listenMarker}`);
+
+  // In the current esbuild bundle the exported app is aliased before listen():
+  //   var app_default = app;
+  //   app_default.listen(...)
+  // Inject before that listen call. The route registration still uses appVar,
+  // which is the actual Express application object.
+  let listenMarker = `${appVar}.listen(`;
+  let listenIndex = source.lastIndexOf(listenMarker);
+
+  if (listenIndex < 0) {
+    const aliasRegex = new RegExp(
+      `\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${appVar}\\s*;`
+    );
+    const aliasMatches = [...source.matchAll(aliasRegex)];
+
+    if (aliasMatches.length) {
+      const aliasVar = aliasMatches[aliasMatches.length - 1][1];
+      const aliasMarker = `${aliasVar}.listen(`;
+      const aliasListenIndex = source.lastIndexOf(aliasMarker);
+      if (aliasListenIndex >= 0) {
+        listenMarker = aliasMarker;
+        listenIndex = aliasListenIndex;
+      }
+    }
+  }
+
+  if (listenIndex < 0) {
+    throw new Error(`User management patch: could not locate ${listenMarker}`);
+  }
 
   const injected = [
     '// USER_MANAGEMENT_PATCH_V1',
@@ -30,8 +74,8 @@ function patchUserManagementRoutes(source) {
     '    return Number(rows(result)[0]?.count ?? 0);',
     '  }',
     "  function validRole(role) { const value = String(role || '').trim(); return allowedUserRoles.has(value) ? value : null; }",
-    "  ${APPVAR}.use('/api/admin/users', requireAuth, canAccess);",
-    "  ${APPVAR}.patch('/api/admin/users/:id', async (req, res) => {",
+    `  ${appVar}.use('/api/admin/users', requireAuth, canAccess);`,
+    `  ${appVar}.patch('/api/admin/users/:id', async (req, res) => {`,
     '    try {',
     "      const id = idOf(req); if (!id) return res.status(400).json({ error: 'Valid user id is required' });",
     "      const target = await getUser(id); if (!target) return res.status(404).json({ error: 'User not found' });",
@@ -56,7 +100,7 @@ function patchUserManagementRoutes(source) {
     '      return res.json(updated);',
     "    } catch (error) { console.error('[admin/users] update failed', error); return res.status(500).json({ error: 'Unable to update user' }); }",
     '  });',
-    "  ${APPVAR}.post('/api/admin/users/:id/reset-password', async (req, res) => {",
+    `  ${appVar}.post('/api/admin/users/:id/reset-password', async (req, res) => {`,
     '    try {',
     "      const id = idOf(req); if (!id) return res.status(400).json({ error: 'Valid user id is required' });",
     "      const target = await getUser(id); if (!target) return res.status(404).json({ error: 'User not found' });",
@@ -69,7 +113,7 @@ function patchUserManagementRoutes(source) {
     '      return res.json({ success:true, user_id:id, temporary_password:password });',
     "    } catch (error) { console.error('[admin/users] password reset failed', error); return res.status(500).json({ error: 'Unable to reset user password' }); }",
     '  });',
-    "  ${APPVAR}.delete('/api/admin/users/:id', async (req, res) => {",
+    `  ${appVar}.delete('/api/admin/users/:id', async (req, res) => {`,
     '    try {',
     "      const id = idOf(req); if (!id) return res.status(400).json({ error: 'Valid user id is required' });",
     "      const target = await getUser(id); if (!target) return res.status(404).json({ error: 'User not found' });",
@@ -84,7 +128,7 @@ function patchUserManagementRoutes(source) {
     '  });',
     '})();',
     ''
-  ].join('\n').replaceAll('${APPVAR}', appVar);
+  ].join('\n');
 
   return source.slice(0, listenIndex) + injected + source.slice(listenIndex);
 }
