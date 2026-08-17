@@ -14,8 +14,7 @@ function isoDate(value) {
   if (value === undefined || value === null || value === '' || value === '—' || value === '-') return '';
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? '' : value.toISOString().slice(0, 10);
   if (typeof value === 'number' && Number.isFinite(value)) {
-    const ms = value < 1e12 ? value * 1000 : value;
-    const d = new Date(ms);
+    const d = new Date(value < 1e12 ? value * 1000 : value);
     return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
   }
   const s = String(value).trim();
@@ -32,13 +31,11 @@ function isoDate(value) {
 
 function money(value) {
   if (value === undefined || value === null || value === '' || value === '—' || value === '-') return '0';
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  return String(value).replace(/,/g, '').replace(/^K(?:ES|Sh)\s*/i, '').trim() || '0';
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : String(value).replace(/,/g, '').replace(/^K(?:ES|Sh)\s*/i, '').trim() || '0';
 }
 
 function number(value, fallback = 0) {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
-  const n = Number(String(value ?? '').replace(/,/g, '').trim());
+  const n = typeof value === 'number' ? value : Number(String(value ?? '').replace(/,/g, '').trim());
   return Number.isFinite(n) ? n : fallback;
 }
 
@@ -49,25 +46,12 @@ function objectFirst(...values) {
 function adaptLegacyPayload(payload, paper) {
   const root = payload && typeof payload === 'object' ? payload : {};
   const source = objectFirst(root.doc, root.document, root.invoice, root.quotation, root);
-  const typeValue = first(root.type, root.documentType, root.document_type, source.type, source.documentType, source.document_type);
-  const type = String(typeValue).toLowerCase().includes('quotation') || String(typeValue).toLowerCase().includes('quote') ? 'quotation' : 'invoice';
+  const rawType = first(root.type, root.documentType, root.document_type, source.type, source.documentType, source.document_type);
+  const type = String(rawType).toLowerCase().includes('quotation') || String(rawType).toLowerCase().includes('quote') ? 'quotation' : 'invoice';
 
   const customer = objectFirst(source.customer, source.customerDetails, root.customer, root.customerDetails);
   const company = objectFirst(source.company, source.business, root.company, root.business, root.settings);
-  const rawItems = first(
-    source.items,
-    source.lineItems,
-    source.line_items,
-    source.rows,
-    source.quotationItems,
-    source.invoiceItems,
-    root.items,
-    root.lineItems,
-    root.line_items,
-    root.rows,
-    root.quotationItems,
-    root.invoiceItems
-  );
+  const rawItems = first(source.items, source.lineItems, source.line_items, source.rows, source.quotationItems, source.invoiceItems, root.items, root.lineItems, root.line_items, root.rows, root.quotationItems, root.invoiceItems);
   const itemList = Array.isArray(rawItems) ? rawItems : [];
 
   const items = itemList.map((item) => ({
@@ -78,35 +62,19 @@ function adaptLegacyPayload(payload, paper) {
     discount: money(first(item.discount, item.discount_amount, item.discountAmount, 0))
   }));
 
-  const documentNumber = first(
-    source.number,
-    source.documentNumber,
-    source.document_number,
-    source.invoiceNumber,
-    source.invoice_number,
-    source.quotationNumber,
-    source.quotation_number,
-    source.quoteNumber,
-    source.quote_number,
-    root.number,
-    root.documentNumber,
-    root.invoiceNumber,
-    root.quotationNumber
-  );
-
   return {
     type,
     doc: {
-      number: documentNumber,
-      date: isoDate(first(source.date, source.createdAt, source.created_at, source.issueDate, source.issue_date, root.date, root.createdAt, root.created_at)),
+      number: first(source.number, source.documentNumber, source.document_number, source.invoiceNumber, source.invoice_number, source.quotationNumber, source.quotation_number, source.quoteNumber, source.quote_number, root.number, root.documentNumber, root.invoiceNumber, root.quotationNumber),
+      date: isoDate(first(source.date, source.createdAt, source.created_at, source.issueDate, source.issue_date, root.date, root.documentDate, root.createdAt, root.created_at)),
       dueDate: isoDate(first(source.dueDate, source.due_date, source.paymentDueDate, source.payment_due_date, root.dueDate, root.due_date)),
       validUntil: isoDate(first(source.validUntil, source.valid_until, source.expiryDate, source.expiry_date, root.validUntil, root.valid_until)),
       customer: {
-        name: first(customer.name, customer.customer_name, customer.company, customer.companyName, 'Walk-in Customer'),
-        address: first(customer.address, customer.customer_address),
-        phone: first(customer.phone, customer.customer_phone),
-        email: first(customer.email, customer.customer_email),
-        taxId: first(customer.taxId, customer.tax_id, customer.tax_number, customer.kra_pin, customer.kraPin)
+        name: first(customer.name, customer.customer_name, customer.company, customer.companyName, root.customerName, 'Walk-in Customer'),
+        address: first(customer.address, customer.customer_address, root.customerAddress),
+        phone: first(customer.phone, customer.customer_phone, root.customerPhone),
+        email: first(customer.email, customer.customer_email, root.customerEmail),
+        taxId: first(customer.taxId, customer.tax_id, customer.tax_number, customer.kra_pin, customer.kraPin, root.customerTaxId)
       },
       items,
       currency: first(source.currency, root.currency, 'KES'),
@@ -118,8 +86,8 @@ function adaptLegacyPayload(payload, paper) {
       address: first(company.address, company.business_address, company.businessAddress),
       phone: first(company.phone, company.business_phone, company.businessPhone),
       email: first(company.email, company.business_email, company.businessEmail),
-      taxId: first(company.taxId, company.tax_id, company.taxNumber, company.tax_number, company.pin_number, company.kra_pin, company.kraPin),
-      logoUrl: first(company.logoUrl, company.logo_url, company.logo, company.logoPath, company.logo_path)
+      taxId: first(company.taxId, company.tax_id, company.taxNumber, company.tax_number, company.pin_number, company.kra_pin, company.kraPin, company.taxPin, root.companyTaxId, root.taxPin),
+      logoUrl: first(company.logoUrl, company.logo_url, company.logo, company.logoPath, company.logo_path, root.logoUrl, root.logo)
     },
     paper
   };
