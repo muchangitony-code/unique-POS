@@ -28,10 +28,12 @@ function patchPdfRenderer(source) {
   const end = findFunctionEnd(source, start);
   const replacement = `async function renderPdfBuffer(payload, paper) {
   const { renderLegacyDocumentPdf, renderLegacyReceiptPdf } = require('./server/pdf/legacy-adapter.cjs');
-  const requestedType = payload && (payload.type || payload.documentType || (payload.doc && payload.doc.type));
-  if (requestedType === 'invoice' || requestedType === 'quotation') return renderLegacyDocumentPdf(payload, paper);
-  if (requestedType === 'receipt' || requestedType === 'sale') return renderLegacyReceiptPdf(payload, paper);
-  throw new Error('Unsupported PDF document type');
+  const rawType = payload && (payload.type || payload.documentType || payload.document_type || (payload.doc && (payload.doc.type || payload.doc.documentType || payload.doc.document_type)) || (payload.document && (payload.document.type || payload.document.documentType || payload.document.document_type)));
+  const normalizedType = String(rawType || '').trim().toLowerCase().replace(/[\\s_-]+/g, '');
+  if (['invoice', 'invoicedocument', 'invoicepdf'].includes(normalizedType)) return renderLegacyDocumentPdf(payload, paper);
+  if (['quotation', 'quote', 'quotationdocument', 'quotationpdf', 'quotepdf'].includes(normalizedType)) return renderLegacyDocumentPdf(payload, paper);
+  if (['receipt', 'sale', 'saledocument', 'receiptpdf'].includes(normalizedType)) return renderLegacyReceiptPdf(payload, paper);
+  throw new Error(\`Unsupported PDF document type: \${String(rawType || '(missing)')}\`);
 }`;
   return source.slice(0, start) + replacement + source.slice(end);
 }
