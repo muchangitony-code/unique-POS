@@ -1,6 +1,6 @@
 'use strict';
 
-const { renderDocument } = require('./index.cjs');
+const { renderDocument } = require('./stable.cjs');
 
 function first(...values) {
   for (const value of values) {
@@ -20,9 +20,7 @@ function isoDate(value) {
     const month = Number(dmy[2]);
     const year = Number(dmy[3]);
     const d = new Date(Date.UTC(year, month - 1, day));
-    if (d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day) {
-      return d.toISOString().slice(0, 10);
-    }
+    if (d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day) return d.toISOString().slice(0, 10);
   }
   const parsed = new Date(s);
   return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
@@ -32,7 +30,6 @@ function money(value) {
   if (value === undefined || value === null || value === '' || value === '—') return '0';
   return String(value).replace(/,/g, '').replace(/^K(?:ES|Sh)\s*/i, '').trim() || '0';
 }
-
 function number(value, fallback = 0) {
   const n = Number(String(value ?? '').replace(/,/g, ''));
   return Number.isFinite(n) ? n : fallback;
@@ -44,7 +41,6 @@ function adaptLegacyPayload(payload, paper) {
   const customer = source?.customer || payload?.customer || {};
   const company = source?.company || payload?.company || payload?.business || {};
   const rawItems = source?.items || source?.lineItems || source?.rows || payload?.items || payload?.rows || [];
-
   const items = rawItems.map((item) => ({
     description: first(item.description, item.product_name, item.itemName, item.name, 'Item'),
     qty: number(first(item.qty, item.quantity, item.count), 0),
@@ -52,7 +48,6 @@ function adaptLegacyPayload(payload, paper) {
     taxRate: number(first(item.taxRate, item.vatRate, item.vat_rate, item.tax_rate), 0),
     discount: money(first(item.discount, item.discount_amount, 0))
   }));
-
   return {
     type,
     doc: {
