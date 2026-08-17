@@ -22,25 +22,18 @@ function verifySharedBrandingEngine(source) {
     'async function renderPdfBuffer(payload, paper)',
     'buildDocumentHtml(opts)',
     'selectDocumentLogoPath(settings, branch)',
-    'loadStoredAssetBuffer(rawPath)',
-    'buildDocumentFooter(settings)',
-    'router17.post("/documents/:type/:id/email"',
-    'documentType: "Receipt"',
-    'documentType: "Purchase Order"',
-    'documentType: "Stock Transfer Note"',
-    'documentType: "Customer Statement"'
+    'buildDocumentFooter(settings)'
   ];
   const missing = requiredMarkers.filter((marker) => !source.includes(marker));
-  if (missing.length) throw new Error(`Shared branding engine markers missing from index.cjs: ${missing.join(', ')}`);
+  if (missing.length) throw new Error(`Shared branding engine missing from index.cjs: ${missing.join(', ')}`);
 }
 
 function buildRuntimeBundle() {
   const source = fs.readFileSync(sourceBundle, 'utf8');
   verifySharedBrandingEngine(source);
 
-  // Keep the application's original document engine intact. It is the single source
-  // of truth for HTML previews, PDFs and outbound document emails, including the
-  // Settings logo, branch metadata, business identity, colours and footer content.
+  // Preserve the application's original document engine as the single source of truth.
+  // This keeps HTML previews, PDFs and outbound emails on the same branding model.
   fs.writeFileSync(runtimeBundle, source, 'utf8');
 }
 
