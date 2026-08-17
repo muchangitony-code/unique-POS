@@ -3,7 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { validateStartupEnv } = require("./scripts/validate-startup-env.cjs");
-const { FONT_DIR, assertFonts } = require("./server/pdf/fonts.cjs");
+const { assertFonts } = require("./server/pdf/fonts.cjs");
 const { loadIndex } = require("./server/pdf/bundle-loader.cjs");
 
 const envPath = path.join(__dirname, ".env");
@@ -14,7 +14,7 @@ if (fs.existsSync(envPath)) {
     const eq = t.indexOf("=");
     if (eq === -1) continue;
     const key = t.slice(0, eq).trim();
-    let val = t.slice(eq + 1).trim();
+    let val = line.slice(eq + 1).trim();
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) val = val.slice(1, -1);
     if (key === "DATABASE_URL") continue;
     if (!(key in process.env)) process.env[key] = val;
@@ -43,9 +43,10 @@ function ensureRuntimeBundle() {
 
 async function start() {
   try {
+    // PDF generation uses PDFKit built-in Helvetica / Helvetica-Bold fonts.
+    // There is intentionally no filesystem PDF font directory to inspect.
     assertFonts();
-    console.log("[startup] PDF FONT_DIR:", FONT_DIR);
-    console.log("[startup] PDF FONT_DIR contents:", fs.readdirSync(FONT_DIR).sort());
+    console.log("[startup] PDF fonts: PDFKit built-in Helvetica / Helvetica-Bold");
     validateStartupEnv();
     ensureRuntimeBundle();
     const { bootstrapDatabaseIfNeeded } = require("./scripts/bootstrap-db.cjs");
