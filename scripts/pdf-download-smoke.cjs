@@ -7,8 +7,9 @@ const { renderPdfBuffer } = require('../server/pdf/index.cjs');
 const out = path.join(process.cwd(), 'out');
 fs.mkdirSync(out, { recursive: true });
 
-const company = {
+const settings = {
   name: 'Unique Solar & General Supplies Limited',
+  businessName: 'Unique Solar & General Supplies Limited',
   address: 'Eastern Bypass Kiambu, Kenya',
   phone: '+254 733 573089',
   email: 'info@uniquesolarkenya.co.ke',
@@ -17,18 +18,29 @@ const company = {
 
 function payload(type) {
   return {
-    documentType: type,
+    settings,
+    branch: { name: 'Main Branch' },
+    documentType: type === 'invoice' ? 'Invoice' : 'Quotation',
     documentNumber: type === 'invoice' ? 'INV-2026-000005' : 'QUO-2026-000005',
-    // Deliberately exercise the human-readable date shape visible in the POS preview.
-    documentDate: '16/08/2026, 09:17:23',
-    dueDate: type === 'invoice' ? '—' : undefined,
-    validUntil: type === 'quotation' ? '30/08/2026' : undefined,
-    customerName: 'Walk-in Customer',
+    customer: {
+      name: 'Walk-in Customer',
+      company: '',
+      address: '',
+      phone: '',
+      email: '',
+      taxNumber: ''
+    },
+    meta: {
+      // This is the same nesting used by resolveDocumentPayload() in index.cjs.
+      date: '16/08/2026, 09:17:23',
+      dueDate: type === 'invoice' ? '—' : '30/08/2026',
+      validUntil: type === 'quotation' ? '30/08/2026' : undefined,
+      paymentTerms: 'Due on receipt'
+    },
     currency: 'KES',
     rows: [
       { productName: 'PDF download smoke-test item', quantity: '2', unitPrice: '2,500.00', taxRate: '16', discount: '0' }
-    ],
-    company
+    ]
   };
 }
 
