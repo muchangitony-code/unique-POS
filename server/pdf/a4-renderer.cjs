@@ -1,16 +1,17 @@
 'use strict';
 
 /*
- * AUTHORITATIVE INVOICE / QUOTATION A4 TEMPLATE
+ * AUTHORITATIVE A4 INVOICE / QUOTATION RENDERER
  *
- * This renderer is intentionally rebuilt from the supplied
- * "POS Invoice / Quotation Template.html". The old A4 renderer is not used.
- * Both document types share one layout; only document labels, status and
- * quotation/invoice-specific dates/notes change.
+ * Rebuilt from the supplied POS Invoice / Quotation Template.html.
+ * This file is the only A4 renderer for invoices and quotations.
+ * The HTML sample is a visual specification; live POS data is injected
+ * through the existing document adapter/schema.
  */
 const fs = require('node:fs');
 const path = require('node:path');
 const PDFDocument = require('pdfkit');
+const bwipjs = require('bwip-js');
 const { validateDocument, normalizeDocument } = require('./schema.cjs');
 const { moneyFromInput, mulCents, taxCents, formatMoney, formatNumber } = require('./format');
 const { registerFonts } = require('./fonts.cjs');
@@ -18,26 +19,34 @@ const { adaptDocumentPayload } = require('./document-adapter.cjs');
 
 const A4 = { width: 595.28, height: 841.89 };
 const M = 40;
-const W = A4.width - M * 2;
-const FOOTER_Y = A4.height - 30;
+const W = A4.width - (M * 2);
+const FOOTER_Y = A4.height - 31;
 const MAX_LOGO = 2 * 1024 * 1024;
 
-// Exact palette from the supplied HTML template.
+// Palette copied from the supplied HTML template.
 const C = {
-  ink: '#16213A',
-  paper: '#EEF1ED',
+  ink: '#14284A',
+  ink2: '#1E3F73',
+  paper: '#EEF1F4',
   card: '#FFFFFF',
-  line: '#CBD2C8',
-  lineSoft: '#E3E7E1',
-  muted: '#6B7280',
-  amber: '#C7810A',
-  teal: '#1E6E67',
+  line: '#C9D2DE',
+  lineSoft: '#E4E9F0',
+  muted: '#5C6B85',
+  orange: '#EF8A17',
+  orangeDeep: '#D9740A',
+  orangeSoft: '#FCEBD6',
   danger: '#B3402A',
   white: '#FFFFFF'
 };
 
-// Exact five-column structure from the supplied ledger table.
-const COL = { index: 34, item: 238, qty: 55, unit: 105, amount: W - 34 - 238 - 55 - 105 };
+// The supplied template is a five-column ledger: # / Item / Qty / Unit price / Amount.
+const COL = {
+  index: 34,
+  item: 238,
+  qty: 55,
+  unit: 105,
+  amount: W - 34 - 238 - 55 - 105
+};
 
 function text(pdf, value, x, y, options = {}) {
   pdf.font(options.font || 'body')
@@ -47,6 +56,7 @@ function text(pdf, value, x, y, options = {}) {
       width: options.width,
       align: options.align || 'left',
       lineGap: options.lineGap || 0,
+      characterSpacing: options.characterSpacing || 0,
       continued: false
     });
 }
@@ -61,7 +71,7 @@ function measured(pdf, value, width, size = 9, font = 'body') {
 }
 
 function wrap(value) {
-  return String(value ?? '').replace(/([^\s]{30})(?=[^\s])/g, '$1\u200b');
+  return String(value ?? '').replace(/([^\s]{28})(?=[^\s])/g, '$1\u200b');
 }
 
 function imageBuffer(value) {
@@ -126,11 +136,42 @@ async function loadLogo(source) {
   }
 }
 
-function drawLogo(pdf, x, y, size, buffer) {
-  if (!buffer) return;
+async function makeQrBuffer(url) {
+  const target = String(url || '').trim();
+  if (!target) return null;
   try {
-    pdf.image(buffer, x, y, { fit: [size, size], align: 'center', valign: 'center' });
-  } catch (_) {}
+    return await bwipjs.toBuffer({
+      bcid: 'qrcode',
+      text: target,
+      scale: 3,
+      padding: 0,
+      includetext: false
+    });
+  } catch (_) {
+    return null;
+  }
+}
+
+function drawLogo(pdf, x, y, size, buffer) {
+  pdf.save();
+  pdf.strokeColor(C.orangeSoft).lineWidth(.7).roundedRect(x, y, size, size, 7).stroke();
+  if (buffer) {
+    try {
+      pdf.image(buffer, x + 4, y + 4, { fit: [size - 8, size - 8], align: 'center', valign: 'center' });
+    } catch (_) {}
+  }
+  pdf.restore();
+}
+
+function drawTopBar(pdf) {
+  const h = 4.5;
+  const segments = [C.ink, C.ink2, C.orange];
+  const widths = [W * .45, W * .35, W * .20];
+  let x = M;
+  segments.forEach((color, i) => {
+    pdf.fillColor(color).rect(x, 0, widths[i], h).fill();
+    x += widths[i];
+  });
 }
 
 function displayDate(value) {
@@ -161,52 +202,67 @@ function totals(items) {
   }, { subtotal: 0, discount: 0, tax: 0, total: 0 });
 }
 
+function companyWebsite(doc) {
+  return String(doc.company.website || doc.company.websiteUrl || 'https://uniquesolarltd.co.ke/').trim();
+}
+
 function drawHeader(pdf, doc) {
+  drawTopBar(pdf);
+
   const top = 34;
-  const logoSize = 60;
+  const logoSize = 48; // 64 CSS px at print scale.
   const brandX = M + logoSize + 14;
-  const metaW = 185;
+  const metaW = 178;
   const metaX = A4.width - M - metaW;
-  const brandW = Math.max(190, metaX - brandX - 24);
-  const accent = doc.type === 'quotation' ? C.amber : C.teal;
+  const brandW = Math.max(175, metaX - brandX - 22);
+  const accent = doc.type === 'quotation' ? C.orangeDeep : C.ink2;
 
   drawLogo(pdf, M, top, logoSize, doc.company.logo);
 
-  let brandY = top;
+  let brandY = top - 1;
   const companyName = String(doc.company.name || '');
-  text(pdf, companyName, brandX, brandY, { font: 'bold', size: 17, width: brandW });
-  brandY += Math.max(22, measured(pdf, companyName, brandW, 17, 'bold')) + 4;
+  text(pdf, companyName, brandX, brandY, {
+    font: 'bold', size: 14.25, width: brandW
+  });
+  brandY += Math.max(18, measured(pdf, companyName, brandW, 14.25, 'bold')) + 2;
+
+  const tagline = String(doc.company.tagline || 'Solar Energy & General Supplies');
+  text(pdf, tagline, brandX, brandY, {
+    font: 'bold', size: 7.8, color: C.orangeDeep, width: brandW, characterSpacing: .65
+  });
+  brandY += 12;
 
   const meta = [
     doc.company.address,
     [doc.company.phone, doc.company.email].filter(Boolean).join('  ·  '),
     doc.company.taxId ? `PIN: ${doc.company.taxId}` : ''
   ].filter(Boolean);
-
   for (const value of meta) {
-    const h = measured(pdf, value, brandW, 8.5);
-    text(pdf, value, brandX, brandY, { size: 8.5, color: C.muted, width: brandW });
-    brandY += h + 3;
+    text(pdf, value, brandX, brandY, { size: 8.3, color: C.muted, width: brandW });
+    brandY += measured(pdf, value, brandW, 8.3) + 2;
   }
 
-  const type = doc.type === 'quotation' ? 'Quotation' : 'Invoice';
-  text(pdf, type, metaX, top, { font: 'bold', size: 23, width: metaW, align: 'right' });
-  right(pdf, `No. ${doc.number}`, metaX, top + 28, metaW, { size: 9, color: C.muted });
-  right(pdf, `Issued    ${displayDate(doc.date)}`, metaX, top + 48, metaW, { size: 8.5, color: C.muted });
-  right(pdf, `${doc.type === 'quotation' ? 'Valid until' : 'Due'}    ${displayDate(doc.type === 'quotation' ? doc.validUntil : doc.dueDate)}`, metaX, top + 62, metaW, { size: 8.5, color: C.muted });
-  if (doc.servedBy) right(pdf, `Served by    ${doc.servedBy}`, metaX, top + 76, metaW, { size: 8.2, color: C.muted });
+  text(pdf, doc.type === 'quotation' ? 'Quotation' : 'Invoice', metaX, top - 2, {
+    font: 'bold', size: 20, width: metaW, align: 'right'
+  });
+  right(pdf, `No. ${doc.number}`, metaX, top + 24, metaW, { size: 9.1, color: C.muted });
+  right(pdf, `Issued    ${displayDate(doc.date)}`, metaX, top + 42, metaW, { size: 8.4, color: C.muted });
+  right(pdf, `${doc.type === 'quotation' ? 'Valid until' : 'Due'}    ${displayDate(doc.type === 'quotation' ? doc.validUntil : doc.dueDate)}`, metaX, top + 56, metaW, { size: 8.4, color: C.muted });
+  if (doc.servedBy) right(pdf, `Served by    ${doc.servedBy}`, metaX, top + 70, metaW, { size: 8.2, color: C.muted });
 
-  const bottom = Math.max(brandY, top + 90) + 20;
+  const bottom = Math.max(brandY, top + 86) + 17;
   pdf.strokeColor(C.ink).lineWidth(1.1).moveTo(M, bottom).lineTo(A4.width - M, bottom).stroke();
 
-  // Exact corner stamp treatment from the supplied template.
+  // Signature element from the supplied template: rotated dashed status stamp.
   pdf.save();
-  pdf.translate(A4.width - M - 35, top + 3);
+  pdf.translate(A4.width - M + 3, top + 5);
   pdf.rotate(9);
   pdf.strokeColor(accent).lineWidth(1.1).dash(4, { space: 3 });
-  pdf.moveTo(-95, 0).lineTo(95, 0).stroke();
-  pdf.moveTo(-95, 24).lineTo(95, 24).stroke();
-  text(pdf, type, -95, 7, { font: 'bold', size: 9.5, color: accent, width: 190, align: 'center' });
+  pdf.moveTo(-90, 0).lineTo(90, 0).stroke();
+  pdf.moveTo(-90, 22).lineTo(90, 22).stroke();
+  text(pdf, doc.type === 'quotation' ? 'Quotation' : 'Invoice', -90, 6, {
+    font: 'bold', size: 9, color: accent, width: 180, align: 'center', characterSpacing: 1.8
+  });
   pdf.restore();
 
   return bottom + 1;
@@ -218,27 +274,31 @@ function drawParties(pdf, doc, y) {
   const leftX = M;
   const rightX = M + colW + gap;
 
-  text(pdf, 'BILLED TO', leftX, y, { font: 'bold', size: 7.5, color: C.muted, width: colW });
-  text(pdf, doc.customer.name, leftX, y + 16, { font: 'bold', size: 10.5, width: colW });
+  text(pdf, 'BILLED TO', leftX, y, { font: 'bold', size: 7.4, color: C.muted, width: colW, characterSpacing: .8 });
+  text(pdf, doc.customer.name, leftX, y + 16, { font: 'bold', size: 10.6, width: colW });
 
-  let leftY = y + 31;
-  for (const value of [doc.customer.address, doc.customer.phone, doc.customer.email, doc.customer.taxId ? `PIN: ${doc.customer.taxId}` : ''].filter(Boolean)) {
-    text(pdf, value, leftX, leftY, { size: 8.2, color: C.muted, width: colW });
-    leftY += measured(pdf, value, colW, 8.2) + 2;
+  let leftY = y + 32;
+  for (const value of [
+    doc.customer.address,
+    doc.customer.phone,
+    doc.customer.email,
+    doc.customer.taxId ? `PIN: ${doc.customer.taxId}` : ''
+  ].filter(Boolean)) {
+    text(pdf, value, leftX, leftY, { size: 8.5, color: C.muted, width: colW });
+    leftY += measured(pdf, value, colW, 8.5) + 2;
   }
 
-  text(pdf, 'ORDER REFERENCE', rightX, y, { font: 'bold', size: 7.5, color: C.muted, width: colW });
-  text(pdf, doc.orderReference || '—', rightX, y + 16, { font: 'bold', size: 10.5, width: colW });
+  text(pdf, 'ORDER REFERENCE', rightX, y, { font: 'bold', size: 7.4, color: C.muted, width: colW, characterSpacing: .8 });
+  text(pdf, doc.orderReference || '—', rightX, y + 16, { font: 'bold', size: 10.6, width: colW });
 
-  let rightY = y + 31;
-  const status = doc.status || (doc.type === 'quotation' ? 'Pending approval' : 'Awaiting payment');
+  let rightY = y + 32;
   for (const value of [
     doc.channel ? `Channel: ${doc.channel}` : '',
     doc.paymentMethod ? `Payment method: ${doc.paymentMethod}` : '',
-    `Status: ${status}`
+    `Status: ${doc.status || (doc.type === 'quotation' ? 'Pending approval' : 'Awaiting payment')}`
   ].filter(Boolean)) {
-    text(pdf, value, rightX, rightY, { size: 8.2, color: C.muted, width: colW });
-    rightY += measured(pdf, value, colW, 8.2) + 2;
+    text(pdf, value, rightX, rightY, { size: 8.5, color: C.muted, width: colW });
+    rightY += measured(pdf, value, colW, 8.5) + 2;
   }
 
   const bottom = Math.max(leftY, rightY) + 15;
@@ -255,85 +315,75 @@ function drawTableHeader(pdf, y) {
     ['Unit price', COL.unit, true],
     ['Amount', COL.amount, true]
   ];
-
   let x = M;
-  for (const [label, width, isRight] of columns) {
-    if (isRight) right(pdf, label, x, y, width, { font: 'bold', size: 7.3, color: C.muted });
-    else text(pdf, label, x, y, { font: 'bold', size: 7.3, color: C.muted, width });
+  for (const [label, width, numeric] of columns) {
+    if (numeric) right(pdf, label, x, y, width, { font: 'bold', size: 7.4, color: C.muted, characterSpacing: .6 });
+    else text(pdf, label, x, y, { font: 'bold', size: 7.4, color: C.muted, width, characterSpacing: .6 });
     x += width;
   }
-
   pdf.strokeColor(C.ink).lineWidth(1).moveTo(M, y + h).lineTo(A4.width - M, y + h).stroke();
   return y + h + 1;
 }
 
 function itemHeight(pdf, item) {
   const itemW = COL.item - 12;
-  const nameH = measured(pdf, wrap(item.description), itemW, 8.7, 'bold');
-  const subH = item.sub ? measured(pdf, wrap(item.sub), itemW, 7.4) : 0;
-  return Math.max(30, nameH + subH + 15);
+  const nameH = measured(pdf, wrap(item.description), itemW, 9.1, 'bold');
+  const subH = item.sub ? measured(pdf, wrap(item.sub), itemW, 7.8) : 0;
+  return Math.max(31, nameH + subH + 15);
 }
 
-function drawItem(pdf, item, y, index, currency) {
+function drawItem(pdf, item, y, index, currency, last = false) {
   const h = itemHeight(pdf, item);
   let x = M;
 
-  text(pdf, String(index + 1).padStart(2, '0'), x + 4, y + 8, { size: 7.5, color: C.muted, width: COL.index - 8 });
+  text(pdf, String(index + 1).padStart(2, '0'), x + 4, y + 8, {
+    font: 'bold', size: 7.8, color: C.orangeDeep, width: COL.index - 8
+  });
   x += COL.index;
 
-  text(pdf, wrap(item.description), x + 4, y + 7, { font: 'bold', size: 8.7, width: COL.item - 12 });
-  if (item.sub) text(pdf, wrap(item.sub), x + 4, y + 20, { size: 7.4, color: C.muted, width: COL.item - 12 });
+  text(pdf, wrap(item.description), x + 4, y + 7, {
+    font: 'bold', size: 9.1, width: COL.item - 12
+  });
+  if (item.sub) text(pdf, wrap(item.sub), x + 4, y + 21, {
+    size: 7.8, color: C.muted, width: COL.item - 12
+  });
   x += COL.item;
 
-  right(pdf, formatNumber(item.qty), x, y + 8, COL.qty - 7, { size: 8.2 });
+  right(pdf, formatNumber(item.qty), x, y + 8, COL.qty - 7, { size: 8.5 });
   x += COL.qty;
-  right(pdf, formatMoney(moneyFromInput(item.unitPrice), currency), x, y + 8, COL.unit - 7, { size: 8.2 });
+  right(pdf, formatMoney(moneyFromInput(item.unitPrice), currency), x, y + 8, COL.unit - 7, { size: 8.5 });
   x += COL.unit;
-  right(pdf, formatMoney(lineTotal(item).total, currency), x, y + 8, COL.amount - 7, { font: 'bold', size: 8.2 });
+  right(pdf, formatMoney(lineTotal(item).total, currency), x, y + 8, COL.amount - 7, { font: 'bold', size: 8.5 });
 
-  pdf.strokeColor(C.lineSoft).lineWidth(.55).moveTo(M, y + h).lineTo(A4.width - M, y + h).stroke();
+  pdf.strokeColor(last ? C.ink : C.lineSoft).lineWidth(last ? 1 : .55).moveTo(M, y + h).lineTo(A4.width - M, y + h).stroke();
   return y + h;
 }
 
 function drawTotals(pdf, doc, values, y) {
-  const width = 280;
+  const width = 210;
   const x = A4.width - M - width;
   let cy = y;
-
   const line = (label, value, color = C.ink) => {
-    text(pdf, label, x, cy, { size: 8.5, color: C.muted, width: width - 125 });
-    right(pdf, value, x + 120, cy, width - 120, { size: 8.5, color });
-    cy += 18;
+    text(pdf, label, x, cy, { size: 8.4, color: C.muted, width: width - 95 });
+    right(pdf, value, x + 90, cy, width - 90, { size: 8.4, color });
+    cy += 17;
   };
 
   line('Subtotal', formatMoney(values.subtotal, doc.currency));
-  line('VAT', formatMoney(values.tax, doc.currency));
+  const taxLabel = `VAT (${doc.items.length ? Math.round((values.tax / Math.max(1, values.subtotal - values.discount)) * 100) : 0}%)`;
+  line(taxLabel, formatMoney(values.tax, doc.currency));
   if (values.discount) line('Discount', `- ${formatMoney(values.discount, doc.currency)}`, C.danger);
 
-  const grandLabel = doc.type === 'quotation' ? 'Estimated total' : 'Total due';
-  pdf.fillColor(C.ink).roundedRect(x, cy + 2, width, 34, 6).fill();
-  text(pdf, grandLabel, x + 14, cy + 12, { font: 'bold', size: 8.8, color: C.white, width: 120 });
-  right(pdf, formatMoney(values.total, doc.currency), x + 120, cy + 10, width - 134, { font: 'bold', size: 12.5, color: C.white });
-  return cy + 36;
+  const label = doc.type === 'quotation' ? 'Estimated total' : 'Total due';
+  pdf.fillColor(C.ink).roundedRect(x, cy + 1, width, 36, 6).fill();
+  pdf.fillColor(C.orange).rect(x, cy + 1, 4, 36).fill();
+  text(pdf, label, x + 13, cy + 12, { font: 'bold', size: 8.7, color: C.white, width: 95, characterSpacing: .3 });
+  right(pdf, formatMoney(values.total, doc.currency), x + 92, cy + 10, width - 105, { font: 'bold', size: 12.5, color: C.white });
+  return cy + 39;
 }
 
-function drawQrPlaceholder(pdf, x, y, size) {
-  pdf.save();
-  pdf.strokeColor(C.ink).lineWidth(.8).roundedRect(x, y, size, size, 6).stroke();
-  const cell = 4;
-  const count = Math.floor((size - 8) / cell);
-  for (let row = 0; row < count; row += 1) {
-    for (let col = 0; col < count; col += 1) {
-      if (((row * 17 + col * 31 + row * col) % 7) < 2) {
-        pdf.fillColor(C.ink).rect(x + 4 + col * cell, y + 4 + row * cell, cell, cell).fill();
-      }
-    }
-  }
-  pdf.restore();
-}
-
-function drawFooter(pdf, doc, y) {
-  const leftW = 300;
+function drawFooter(pdf, doc, y, qrBuffer) {
+  const leftW = 285;
   const gap = 28;
   const rightX = M + leftW + gap;
   const rightW = W - leftW - gap;
@@ -341,68 +391,76 @@ function drawFooter(pdf, doc, y) {
     ? 'This quotation is valid for 14 days from the issue date. Prices are subject to stock availability at time of order confirmation.'
     : 'Goods once sold are exchangeable within 7 days with receipt. Prices include VAT where applicable. Thank you for shopping with us.');
   const noteText = doc.terms ? `${note}\n${doc.terms}` : note;
-
-  const leftH = measured(pdf, noteText, leftW, 8.2) + 45;
   const payment = doc.paymentDetails || {};
-  const paymentRows = [
+  const rows = [
     ['M-Pesa Paybill', payment.paybill],
     ['Till', payment.till],
     ['Account', payment.account],
     ['Bank', payment.bank]
   ].filter(([, value]) => value);
-  const rightH = 45 + paymentRows.length * 15 + (payment.qr ? 78 : 0);
+
+  const leftH = measured(pdf, noteText, leftW, 8.3) + 40;
+  const qrH = qrBuffer ? 92 : 0;
+  const rightH = 35 + rows.length * 17 + qrH;
   const height = Math.max(leftH, rightH);
 
   pdf.strokeColor(C.lineSoft).lineWidth(.7).moveTo(M, y).lineTo(A4.width - M, y).stroke();
-  text(pdf, 'NOTES & TERMS', M, y + 12, { font: 'bold', size: 7.3, color: C.muted, width: leftW });
-  text(pdf, noteText, M, y + 27, { size: 8.2, width: leftW, lineGap: 2 });
+  text(pdf, 'NOTES & TERMS', M, y + 12, { font: 'bold', size: 7.4, color: C.muted, width: leftW, characterSpacing: .7 });
+  text(pdf, noteText, M, y + 27, { size: 8.3, width: leftW, lineGap: 2 });
 
-  text(pdf, 'PAYMENT DETAILS', rightX, y + 12, { font: 'bold', size: 7.3, color: C.muted, width: rightW });
-  let paymentY = y + 27;
-  for (const [label, value] of paymentRows) {
-    text(pdf, label, rightX, paymentY, { size: 7.8, color: C.muted, width: rightW * .55 });
-    right(pdf, value, rightX + rightW * .55, paymentY, rightW * .45, { size: 7.8 });
-    paymentY += 15;
+  text(pdf, 'PAYMENT DETAILS', rightX, y + 12, { font: 'bold', size: 7.4, color: C.muted, width: rightW, characterSpacing: .7 });
+  let py = y + 28;
+  for (const [label, value] of rows) {
+    text(pdf, label, rightX, py, { size: 8.1, color: C.muted, width: rightW * .52 });
+    right(pdf, value, rightX + rightW * .48, py, rightW * .52, { size: 8.1 });
+    pdf.strokeColor(C.line).lineWidth(.4).dash(2, { space: 2 }).moveTo(rightX, py + 12).lineTo(rightX + rightW, py + 12).stroke();
+    pdf.undash();
+    py += 17;
   }
-  if (payment.qr) drawQrPlaceholder(pdf, rightX, paymentY + 3, 60);
 
-  return y + height + 12;
+  if (qrBuffer) {
+    try {
+      pdf.image(qrBuffer, rightX, py + 5, { fit: [56, 56] });
+    } catch (_) {}
+    text(pdf, 'Scan to visit uniquesolarltd.co.ke', rightX + 64, py + 21, { size: 7.1, color: C.muted, width: rightW - 64 });
+  }
+
+  return y + height + 13;
 }
 
 function drawSignatures(pdf, doc, y) {
   const gap = 24;
   const width = (W - gap) / 2;
-
-  pdf.strokeColor(C.ink).lineWidth(.6);
-  pdf.moveTo(M, y + 28).lineTo(M + width, y + 28).stroke();
-  pdf.moveTo(M + width + gap, y + 28).lineTo(A4.width - M, y + 28).stroke();
-
-  text(pdf, doc.preparedBy ? `Prepared by: ${doc.preparedBy}` : 'Prepared by', M, y + 34, { size: 7.5, color: C.muted, width, align: 'center' });
-  text(pdf, doc.customerAcknowledgement || 'Customer acknowledgement', M + width + gap, y + 34, { size: 7.5, color: C.muted, width, align: 'center' });
-  return y + 50;
+  const lineY = y + 30;
+  pdf.strokeColor(C.ink).lineWidth(.65).moveTo(M, lineY).lineTo(M + width, lineY).stroke();
+  pdf.moveTo(M + width + gap, lineY).lineTo(A4.width - M, lineY).stroke();
+  text(pdf, doc.preparedBy ? `Prepared by: ${doc.preparedBy}` : 'Prepared by', M, lineY + 6, { size: 7.5, color: C.muted, width, align: 'center' });
+  text(pdf, doc.customerAcknowledgement || 'Customer acknowledgement', M + width + gap, lineY + 6, { size: 7.5, color: C.muted, width, align: 'center' });
+  return lineY + 22;
 }
 
 function drawPageFooter(pdf, doc, pageNumber, pageCount) {
-  pdf.strokeColor(C.lineSoft).lineWidth(.6).moveTo(M, FOOTER_Y - 8).lineTo(A4.width - M, FOOTER_Y - 8).stroke();
-  text(pdf, doc.type === 'quotation' ? 'Quotation' : 'Invoice', M, FOOTER_Y, { size: 7, color: C.muted, width: 100 });
-  right(pdf, `Page ${pageNumber} of ${pageCount}`, A4.width - M - 100, FOOTER_Y, 100, { size: 7, color: C.muted });
+  pdf.strokeColor(C.lineSoft).lineWidth(.6).moveTo(M, FOOTER_Y - 9).lineTo(A4.width - M, FOOTER_Y - 9).stroke();
+  text(pdf, 'Generated by Uniques Solar & General Supplies POS  ·  uniquesolarltd.co.ke', M, FOOTER_Y, { size: 6.8, color: C.muted, width: W - 110 });
+  right(pdf, `Page ${pageNumber} of ${pageCount}`, A4.width - M - 90, FOOTER_Y, 90, { size: 6.8, color: C.muted });
 }
 
-function paginate(pdf, doc, firstTableY, reserve) {
-  const capacity = FOOTER_Y - 18 - firstTableY - reserve;
+function estimateRowsPerPage(pdf, doc, firstTableY, reserve) {
+  const capacity = FOOTER_Y - firstTableY - reserve;
   const pages = [];
-  let page = { rows: [], height: 0 };
-
+  let current = [];
+  let used = 0;
   for (const item of doc.items) {
-    const height = itemHeight(pdf, item);
-    if (page.rows.length && page.height + height > capacity) {
-      pages.push(page);
-      page = { rows: [], height: 0 };
+    const h = itemHeight(pdf, item);
+    if (current.length && used + h > capacity) {
+      pages.push(current);
+      current = [];
+      used = 0;
     }
-    page.rows.push(item);
-    page.height += height;
+    current.push(item);
+    used += h;
   }
-  if (page.rows.length || !pages.length) pages.push(page);
+  if (current.length || !pages.length) pages.push(current);
   return pages;
 }
 
@@ -414,7 +472,11 @@ async function renderDocument({ type, doc: input, company }) {
   const normalizedCompany = { ...company, logo };
   validateDocument(type, input, normalizedCompany);
   const doc = normalizeDocument(type, input, normalizedCompany);
+  doc.company.tagline = String(company.tagline || company.brandTagline || 'Solar Energy & General Supplies');
+  doc.company.website = String(company.website || company.websiteUrl || company.website_url || 'https://uniquesolarltd.co.ke/');
+
   const calculated = totals(doc.items);
+  const qrBuffer = await makeQrBuffer(companyWebsite(doc));
 
   const pdf = new PDFDocument({
     size: 'A4',
@@ -430,46 +492,42 @@ async function renderDocument({ type, doc: input, company }) {
 
   const chunks = [];
   const done = new Promise((resolve, reject) => {
-    pdf.on('data', (chunk) => chunks.push(chunk));
+    pdf.on('data', chunk => chunks.push(chunk));
     pdf.once('end', () => resolve(Buffer.concat(chunks)));
     pdf.once('error', reject);
   });
 
-  // The last-page reserve is deliberately based on the actual supplied layout:
-  // totals, notes/payment details, signatures and footer all remain together.
+  // Probe the exact template geometry before writing real pages.
   const probe = new PDFDocument({ size: 'A4' });
   registerFonts(probe);
   const headerY = drawHeader(probe, doc);
   const partiesY = drawParties(probe, doc, headerY + 18);
-  const tableY = drawTableHeader(probe, partiesY + 18) + 2;
-  const footerReserve = 175;
-  const pages = paginate(probe, doc, tableY, footerReserve);
+  const tableY = drawTableHeader(probe, partiesY + 18) + 1;
+  const pages = estimateRowsPerPage(probe, doc, tableY, 190);
   probe.end();
 
-  pages.forEach((page, pageIndex) => {
+  pages.forEach((rows, pageIndex) => {
     pdf.addPage({ size: 'A4', margins: { top: M, bottom: M, left: M, right: M } });
-
     const currentHeader = drawHeader(pdf, doc);
     const currentParties = drawParties(pdf, doc, currentHeader + 18);
-    let y = drawTableHeader(pdf, currentParties + 18) + 2;
+    let y = drawTableHeader(pdf, currentParties + 18) + 1;
 
-    page.rows.forEach((item, index) => {
-      y = drawItem(pdf, item, y, index, doc.currency);
+    rows.forEach((item, rowIndex) => {
+      y = drawItem(pdf, item, y, doc.items.indexOf(item), doc.currency, rowIndex === rows.length - 1);
     });
 
     if (pageIndex === pages.length - 1) {
-      y += 14;
-      const totalsY = Math.min(y, FOOTER_Y - footerReserve - 12);
-      const afterTotals = drawTotals(pdf, doc, calculated, totalsY);
-      const afterFooter = drawFooter(pdf, doc, afterTotals + 18);
-      drawSignatures(pdf, doc, Math.min(afterFooter + 8, FOOTER_Y - 58));
+      y += 18;
+      y = drawTotals(pdf, doc, calculated, y) + 15;
+      y = drawFooter(pdf, doc, y, qrBuffer) + 8;
+      drawSignatures(pdf, doc, Math.min(y, FOOTER_Y - 57));
     }
   });
 
   const range = pdf.bufferedPageRange();
-  for (let index = range.start; index < range.start + range.count; index += 1) {
-    pdf.switchToPage(index);
-    drawPageFooter(pdf, doc, index + 1, range.count);
+  for (let i = range.start; i < range.start + range.count; i += 1) {
+    pdf.switchToPage(i);
+    drawPageFooter(pdf, doc, i + 1, range.count);
   }
 
   pdf.end();
@@ -484,8 +542,4 @@ async function renderPdfBuffer(payload, paper = 'a4') {
   return renderDocument({ type: adapted.type, doc: adapted.doc, company: adapted.company });
 }
 
-module.exports = {
-  renderDocument,
-  renderPdfBuffer,
-  mapDocumentPayload: adaptDocumentPayload
-};
+module.exports = { renderDocument, renderPdfBuffer };
