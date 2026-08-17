@@ -1,0 +1,71 @@
+(function () {
+  'use strict';
+  const STATUS_MESSAGES = {
+    1032: 'The customer cancelled the M-Pesa payment.',
+    2001: 'The customer entered an incorrect M-Pesa PIN.',
+    1: 'The customer’s M-Pesa account has insufficient funds.',
+    1037: 'The M-Pesa request timed out or the customer’s phone could not be reached.'
+  };
+
+  function esc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function findId(el) {
+    let node = el;
+    for (let i = 0; i < 5 && node; i++, node = node.parentElement) {
+      for (const key of ['data-id','data-invoice-id','data-document-id']) if (node.getAttribute?.(key)) return node.getAttribute(key);
+      const html = node.outerHTML || '';
+      const m = html.match(/(?:invoice|document)[-_]?id=["']([^"']+)["']/i);
+      if (m) return m[1];
+    }
+    return null;
+  }
+  function getText(el) { return (el?.textContent || '').replace(/\s+/g, ' ').trim(); }
+  async function api(url, options) {
+    const r = await fetch(url, { credentials: 'same-origin', ...options, headers: { 'Content-Type':'application/json', ...(options?.headers || {}) } });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || data.message || `Request failed (${r.status})`);
+    return data;
+  }
+  function openMpesa(invoiceId, invoiceNumber, balance, customerPhone) {
+    const overlay = document.getElementById('modalOverlay'), title = document.getElementById('modalTitle'), sub = document.getElementById('modalSubtitle'), body = document.getElementById('modalBody'), actions = document.getElementById('modalActions');
+    if (!overlay || !body) { alert('M-Pesa payment window is unavailable.'); return; }
+    title.textContent = 'Request M-Pesa Payment'; sub.textContent = invoiceNumber ? `Invoice ${invoiceNumber}` : 'Invoice payment'; actions.innerHTML = '';
+    body.innerHTML = `<div class="stack-form"><label><span>Amount due</span><input value="KES ${Number(balance || 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}" readonly></label><label><span>Customer phone</span><input id="mpesaPhoneInput" inputmode="tel" value="${esc(customerPhone || '')}" placeholder="0712345678"></label><div id="mpesaStatus" class="inline-message hidden" aria-live="polite"></div><button id="mpesaSendBtn" class="btn btn-primary btn-block" type="button">Send Payment Prompt</button></div>`;
+    overlay.classList.remove('hidden');
+    const status = document.getElementById('mpesaStatus'), send = document.getElementById('mpesaSendBtn');
+    function show(message, type='info') { status.className = `inline-message ${type}`; status.textContent = message; status.classList.remove('hidden'); }
+    send.onclick = async () => {
+      send.disabled = true; show('Sending payment prompt…');
+      try {
+        const phone = document.getElementById('mpesaPhoneInput').value.trim();
+        const started = await api(`/api/invoices/${encodeURIComponent(invoiceId)}/mpesa/stk-push`, { method:'POST', body:JSON.stringify({ phone }) });
+        show(`Prompt sent to ${started.maskedPhone || 'the customer'}. Ask the customer to enter their M-Pesa PIN.`, 'info');
+        let elapsed = 0;
+        const checkout = started.checkoutRequestId;
+        const timer = setInterval(async () => {
+          elapsed += 3;
+          if (elapsed > 90) { clearInterval(timer); show('The M-Pesa request timed out. You can send the prompt again.', 'error'); send.disabled = false; return; }
+          try {
+            const s = await api(`/api/invoices/${encodeURIComponent(invoiceId)}/mpesa/status?checkoutRequestId=${encodeURIComponent(checkout)}`);
+            if (s.status === 'success') { clearInterval(timer); show(`Payment received: KES ${Number(s.amount || 0).toLocaleString(undefined,{minimumFractionDigits:2})}. M-Pesa receipt: ${esc(s.mpesaReceiptNumber || '—')}`, 'success'); send.textContent='Payment Received'; window.setTimeout(() => window.location.reload(), 1200); }
+            else if (s.status !== 'pending') { clearInterval(timer); const msg = STATUS_MESSAGES[s.resultCode] || s.message || 'M-Pesa payment failed.'; show(msg, 'error'); send.disabled = false; send.textContent='Resend Prompt'; }
+          } catch (e) { if (elapsed >= 90) { clearInterval(timer); show(e.message, 'error'); send.disabled = false; } }
+        }, 3000);
+      } catch (e) { show(e.message, 'error'); send.disabled = false; }
+    };
+  }
+
+  function injectButtons() {
+    const candidates = [...document.querySelectorAll('button,[role="button"]')].filter(b => /^(pay|record payment|payment)$/i.test(getText(b)) || /pay invoice/i.test(getText(b)));
+    for (const button of candidates) {
+      if (button.dataset.mpesaAdded) continue;
+      const id = findId(button); if (!id) continue;
+      const mp = document.createElement('button'); mp.type='button'; mp.className='btn btn-secondary'; mp.innerHTML='<i class="fa-solid fa-mobile-screen-button"></i> Request M-Pesa Payment'; mp.dataset.mpesaAdded='1';
+      mp.addEventListener('click', () => { const row = button.closest('tr,[data-id],[data-invoice-id]'); const text = getText(row || button.parentElement); const number = (text.match(/INV[-A-Z0-9]+/i)||[])[0] || ''; const money = (text.match(/(?:KES|KSh)\s*[\d,]+(?:\.\d+)?/i)||[])[0] || ''; const balance = Number(money.replace(/[^0-9.]/g,'')) || 0; openMpesa(id, number, balance, ''); });
+      button.parentElement?.appendChild(mp);
+    }
+  }
+  const observer = new MutationObserver(injectButtons);
+  observer.observe(document.body, { childList:true, subtree:true });
+  document.addEventListener('DOMContentLoaded', injectButtons);
+  window.uniquePosMpesa = { openMpesa };
+})();
