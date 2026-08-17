@@ -4,7 +4,7 @@
   const ROLES=[['cashier','Cashier'],['sales_cashier','Sales Cashier'],['sales_rep','Sales Representative'],['storekeeper','Storekeeper'],['inventory_manager','Inventory Manager'],['branch_manager','Branch Manager'],['manager','Manager'],['administrator','Administrator']];
   const token=()=>localStorage.getItem(TOKEN_KEY)||'';
   const me=()=>{try{return JSON.parse(localStorage.getItem(USER_KEY)||'{}')}catch(_){return {}}};
-  const esc=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const esc=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;');
   async function api(path,opt={}){const o={...opt,headers:{'Content-Type':'application/json',...(opt.headers||{})}};if(token())o.headers.Authorization='Bearer '+token();const r=await fetch(path,o);const t=await r.text();let b=null;try{b=t?JSON.parse(t):null}catch(_){b=t}if(!r.ok)throw new Error(b?.error||`Request failed (${r.status})`);return b}
   function allowed(){return ['administrator','business_owner','super_admin'].includes(String(me().role||'').toLowerCase())}
   function usersFrom(v){return Array.isArray(v)?v:(Array.isArray(v?.users)?v.users:[])}
@@ -19,6 +19,75 @@
   async function remove(u){if(!confirm(`Delete ${u.name}? This cannot be undone.`))return;const reason=prompt('Reason for deletion (required):');if(!reason?.trim())return;try{await api('/api/admin/users/'+u.id,{method:'DELETE',body:JSON.stringify({reason})});await refresh();alert('User deleted successfully.')}catch(e){alert(e.message)}}
   async function resetAll(){const staff=cache.filter(u=>!['super_admin','business_owner'].includes(u.role)&&String(u.id)!==String(me().id||me().user_id));if(!staff.length)return alert('No eligible staff users found.');if(!confirm(`Generate new temporary passwords for ${staff.length} staff users?`))return;try{const r=await api('/api/admin/users/reset-all',{method:'POST'});const text=(r.users||[]).map(x=>`${x.name}: ${x.temporaryPassword}`).join('\n');alert('Temporary passwords — save these securely:\n\n'+text)}catch(e){alert(e.message)}}
   async function refresh(){try{render(await load())}catch(e){const root=document.getElementById('viewRoot');if(root)root.innerHTML=`<div class="card section-card"><h3>Unable to load User Management</h3><p>${esc(e.message)}</p><button class="btn btn-primary" data-user-action="refresh">Try Again</button></div>`}}
-  document.addEventListener('click',async e=>{const b=e.target.closest('[data-user-action]');if(!b)return;const a=b.dataset.userAction;if(a==='add')return userForm();if(a==='refresh')return refresh();if(a==='reset-all')return resetAll();const u=cache.find(x=>String(x.id)===String(b.dataset.id));if(!u)return;if(a==='edit')return userForm(u);if(a==='password')return changePassword(u);if(a==='toggle')return toggle(u);if(a==='delete')return remove(u)});
-  function watch(){if(allowed()&&location.hash.replace(/^#/,'')==='users')refresh()}window.addEventListener('hashchange',watch);setTimeout(watch,800);
+
+  function documentDeleteAllowed() {
+    return allowed();
+  }
+
+  function documentDeleteButton(type, id) {
+    return `<button type="button" class="btn btn-danger" data-document-delete="${esc(type)}" data-id="${esc(id)}"><i class="fa-solid fa-trash"></i> Delete</button>`;
+  }
+
+  function injectDocumentDeleteButtons() {
+    if (!documentDeleteAllowed()) return;
+    const route = location.hash.replace(/^#/, '').split('?')[0];
+    if (route === 'quotations') {
+      document.querySelectorAll('[data-action="convert-quotation"]').forEach(button => {
+        if (button.parentElement?.querySelector(`[data-document-delete="quotation"][data-id="${CSS.escape(button.dataset.id || '')}"]`)) return;
+        const row = button.closest('tr');
+        if (row && /\bconverted\b/i.test(row.textContent || '')) return;
+        button.insertAdjacentHTML('afterend', documentDeleteButton('quotation', button.dataset.id));
+      });
+    }
+    if (route === 'invoices') {
+      document.querySelectorAll('[data-action="record-invoice-payment"]').forEach(button => {
+        if (button.parentElement?.querySelector(`[data-document-delete="invoice"][data-id="${CSS.escape(button.dataset.id || '')}"]`)) return;
+        const row = button.closest('tr');
+        if (row && /\b(partial|paid)\b/i.test(row.textContent || '')) return;
+        button.insertAdjacentHTML('afterend', documentDeleteButton('invoice', button.dataset.id));
+      });
+    }
+  }
+
+  async function deleteDocument(type, id, button) {
+    if (!documentDeleteAllowed()) {
+      alert('Only Super Admin or Business Owner can delete documents.');
+      return;
+    }
+    const label = type === 'quotation' ? 'quotation' : 'invoice';
+    if (!confirm(`Permanently delete this ${label}? This cannot be undone.`)) return;
+    const reason = prompt(`Reason for deleting this ${label} (required):`);
+    if (!reason || !reason.trim()) return;
+    button.disabled = true;
+    try {
+      await api(`/api/${type === 'quotation' ? 'quotations' : 'invoices'}/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ reason: reason.trim() })
+      });
+      const row = button.closest('tr');
+      if (row) row.remove();
+      alert(`${label.charAt(0).toUpperCase()+label.slice(1)} deleted successfully.`);
+      window.dispatchEvent(new Event('hashchange'));
+    } catch (e) {
+      button.disabled = false;
+      alert(e.message || `Unable to delete ${label}.`);
+    }
+  }
+
+  document.addEventListener('click',async e=>{
+    const b=e.target.closest('[data-user-action]');
+    if(b){const a=b.dataset.userAction;if(a==='add')return userForm();if(a==='refresh')return refresh();if(a==='reset-all')return resetAll();const u=cache.find(x=>String(x.id)===String(b.dataset.id));if(!u)return;if(a==='edit')return userForm(u);if(a==='password')return changePassword(u);if(a==='toggle')return toggle(u);if(a==='delete')return remove(u)}
+    const doc=e.target.closest('[data-document-delete]');
+    if(doc)return deleteDocument(doc.dataset.documentDelete,doc.dataset.id,doc);
+  });
+
+  const observer = new MutationObserver(() => injectDocumentDeleteButtons());
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  function watch(){
+    if(allowed()&&location.hash.replace(/^#/,'')==='users')refresh();
+    setTimeout(injectDocumentDeleteButtons, 50);
+    setTimeout(injectDocumentDeleteButtons, 400);
+  }
+  window.addEventListener('hashchange',watch);setTimeout(watch,800);
 })();
