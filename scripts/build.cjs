@@ -33,7 +33,11 @@ function patchDocumentDeletionRoutes(source) {
   const quotationDeleteCheck = '  await db.delete(quotationItemsTable).where(eq(quotationItemsTable.quotationId, id));\n  await db.delete(quotationsTable).where(eq(quotationsTable.id, id));\n  res.sendStatus(204);\n});';
   if (!patched.includes(quotationDeleteCheck)) throw new Error('Document deletion patch: could not locate quotation DELETE body');
   patched = patched.replace(quotationDeleteCheck, '  if (existing.status === "converted") {\n    res.status(409).json({ error: "Converted quotations cannot be deleted. Delete or void the resulting invoice instead." });\n    return;\n  }\n  const { reason } = req.body ?? {};\n  await db.delete(quotationItemsTable).where(eq(quotationItemsTable.quotationId, id));\n  await db.delete(quotationsTable).where(eq(quotationsTable.id, id));\n  await logAudit(req, { action: "quotation.deleted", entityType: "quotation", entityId: id, description: `Permanently deleted quotation ${existing.quotationNumber}${reason ? " — Reason: " + reason : ""}`, metadata: { quotation: existing.quotationNumber, reason: reason ?? null } });\n  res.sendStatus(204);\n});');
-  const invoicePayMatch = patched.match(/\b(router[A-Za-z0-9_$]*)\.post\("\/invoices\/:id\/pay", async \(req, res) => \{/);
+
+  // Match the payment route without relying on a brittle literal whitespace shape.
+  // This is intentionally kept readable because build.cjs itself is parsed by Node
+  // before any of the runtime patches can execute.
+  const invoicePayMatch = patched.match(/\b(router[A-Za-z0-9_$]*)\.post\("\/invoices\/:id\/pay",\s*async\s*\(req,\s*res\)\s*=>\s*\{/);
   if (!invoicePayMatch) throw new Error('Document deletion patch: could not locate invoice payment route');
   const invoiceRouter = invoicePayMatch[1];
   const invoicePayRoute = invoicePayMatch[0];
@@ -118,4 +122,3 @@ for (const file of requiredFiles.filter((file) => file.endsWith('.js') || file.e
   const result = spawnSync(process.execPath, ['--check', path.join(root, file)], { stdio: 'inherit' });
   if (result.status !== 0) process.exit(result.status || 1);
 }
-console.log('[build] Stable receipt, invoice and quotation PDF renderers installed; shared branding engine preserved; user-management routes patched when supported; document deletion routes patched; M-Pesa routes patched; deterministic runtime bundle generated at index.runtime.cjs');
