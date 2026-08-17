@@ -2,7 +2,7 @@
 
 function findFunctionEnd(source, start) {
   const open = source.indexOf('{', start);
-  if (open < 0) throw new Error('PDF renderer migration: function body opening brace not found');
+  if (open < 0) throw new Error('PDF renderer patch: function body opening brace not found');
   let depth = 0, quote = null, template = false, lineComment = false, blockComment = false, escaped = false;
   for (let i = open; i < source.length; i += 1) {
     const ch = source[i];
@@ -18,28 +18,26 @@ function findFunctionEnd(source, start) {
     if (ch === '{') depth += 1;
     else if (ch === '}') { depth -= 1; if (depth === 0) return i + 1; }
   }
-  throw new Error('PDF renderer migration: unterminated renderPdfBuffer function');
+  throw new Error('PDF renderer patch: unterminated renderPdfBuffer function');
 }
 
 function patchPdfRenderer(source) {
   const marker = 'async function renderPdfBuffer(payload, paper)';
   const start = source.indexOf(marker);
-  if (start < 0) throw new Error('PDF renderer migration: could not locate renderPdfBuffer');
+  if (start < 0) throw new Error('PDF renderer patch: could not locate renderPdfBuffer');
   const end = findFunctionEnd(source, start);
   const replacement = `async function renderPdfBuffer(payload, paper) {
-  const { renderLegacyDocumentPdf, renderLegacyReceiptPdf } = require('./server/pdf/legacy-adapter.cjs');
-  const root = payload && typeof payload === 'object' ? payload : {};
-  const rawType = root.type || root.documentType || root.document_type || root.docType || root.kind ||
-    (root.doc && (root.doc.type || root.doc.documentType || root.doc.document_type || root.doc.docType || root.doc.kind)) ||
-    (root.document && (root.document.type || root.document.documentType || root.document.document_type || root.document.docType || root.document.kind));
-  const normalizedType = String(rawType || '').trim().toLowerCase().replace(/[\\s_-]+/g, '');
-  const looksLikeInvoice = normalizedType.includes('invoice') || root.invoice || root.invoiceId || root.invoiceNumber || root.invoice_number;
-  const looksLikeQuotation = normalizedType.includes('quotation') || normalizedType.includes('quote') || root.quotation || root.quotationId || root.quotationNumber || root.quotation_number;
-  const looksLikeReceipt = normalizedType.includes('receipt') || normalizedType.includes('sale') || root.receipt || root.receiptId || root.saleId;
-  if (looksLikeInvoice && !looksLikeQuotation) return renderLegacyDocumentPdf(payload, paper);
-  if (looksLikeQuotation && !looksLikeInvoice) return renderLegacyDocumentPdf(payload, paper);
-  if (looksLikeReceipt) return renderLegacyReceiptPdf(payload, paper);
-  throw new Error(\`Unsupported PDF document type: \${String(rawType || '(missing)')}\`);
+  const { renderDocument } = require('./server/pdf/index.cjs');
+  const { renderReceiptDocument } = require('./server/pdf/receipt.cjs');
+  const { adaptDocumentPayload } = require('./server/pdf/document-adapter.cjs');
+  const adapted = adaptDocumentPayload(payload, paper);
+  if (adapted.type === 'invoice' || adapted.type === 'quotation') {
+    return renderDocument({ type: adapted.type, doc: adapted.doc, company: adapted.company });
+  }
+  if (adapted.type === 'receipt') {
+    return renderReceiptDocument({ doc: adapted.doc, company: adapted.company, paper: paper === '58mm' ? '58mm' : '80mm' });
+  }
+  throw new Error(\`Unsupported PDF document type: \${adapted.type}\`);
 }`;
   return source.slice(0, start) + replacement + source.slice(end);
 }
