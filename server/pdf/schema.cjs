@@ -6,6 +6,22 @@ function str(v, path, required = false) { if (v == null || String(v).trim() === 
 function dateLike(v, path, required = false) { const s = str(v, path, required); if (!s) return ''; if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) bad(path, 'must be YYYY-MM-DD'); return s; }
 function nonNegativeNumber(v, path, required = false) { if (v == null || v === '') { if (required) bad(path, 'is required'); return 0; } const n = Number(v); if (!Number.isFinite(n) || n < 0) bad(path, 'must be a non-negative number'); return n; }
 function normalizeCustomer(c) { if (!c || typeof c !== 'object') bad('customer', 'must be an object'); return { name: str(c.name, 'customer.name', true), address: str(c.address), phone: str(c.phone), email: str(c.email), taxId: str(c.taxId) }; }
+function normalizeLogo(value) {
+  if (Buffer.isBuffer(value)) return value;
+  if (typeof value !== 'string') return null;
+  const source = value.trim();
+  if (!source) return null;
+  if (source.startsWith('data:image/')) {
+    const comma = source.indexOf(',');
+    if (comma > 0) {
+      try {
+        const buffer = Buffer.from(source.slice(comma + 1), 'base64');
+        if (buffer.length > 4) return buffer;
+      } catch (_) {}
+    }
+  }
+  return source;
+}
 function validateDocument(type, doc, company) {
   if (!TYPES.has(type)) bad('type', 'must be invoice or quotation');
   if (!doc || typeof doc !== 'object') bad('doc', 'must be an object');
@@ -25,7 +41,7 @@ function normalizeDocument(type, doc, company) {
     currency: String(doc.currency).trim().toUpperCase(), notes: str(doc.notes), terms: str(doc.terms),
     orderReference: str(doc.orderReference), channel: str(doc.channel), servedBy: str(doc.servedBy), paymentMethod: str(doc.paymentMethod), status: str(doc.status), preparedBy: str(doc.preparedBy), customerAcknowledgement: str(doc.customerAcknowledgement),
     paymentDetails: doc.paymentDetails && typeof doc.paymentDetails === 'object' ? { paybill: str(doc.paymentDetails.paybill), till: str(doc.paymentDetails.till), account: str(doc.paymentDetails.account), bank: str(doc.paymentDetails.bank), qr: str(doc.paymentDetails.qr) } : {},
-    company: { name: str(company.name, 'company.name', true), address: str(company.address), phone: str(company.phone), email: str(company.email), taxId: str(company.taxId), logo: Buffer.isBuffer(company.logo) ? company.logo : (typeof company.logo === 'string' && company.logo.startsWith('data:image/') ? Buffer.from(company.logo.split(',')[1], 'base64') : null) }
+    company: { name: str(company.name, 'company.name', true), address: str(company.address), phone: str(company.phone), email: str(company.email), taxId: str(company.taxId), logo: normalizeLogo(company.logo ?? company.logoUrl) }
   };
 }
 module.exports = { validateDocument, normalizeDocument };
