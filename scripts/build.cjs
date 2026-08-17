@@ -24,7 +24,7 @@ function verifySharedBrandingEngine(source) {
     'selectDocumentLogoPath(settings, branch)',
     'loadStoredAssetBuffer(rawPath)',
     'buildDocumentFooter(settings)',
-    'router17.post(\\"/documents/:type/:id/email\\"',
+    'router17.post("/documents/:type/:id/email"',
     'documentType: "Receipt"',
     'documentType: "Purchase Order"',
     'documentType: "Stock Transfer Note"',
