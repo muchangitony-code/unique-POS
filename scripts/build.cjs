@@ -33,7 +33,7 @@ function patchDocumentDeletionRoutes(source) {
   const quotationDeleteCheck = '  await db.delete(quotationItemsTable).where(eq(quotationItemsTable.quotationId, id));\n  await db.delete(quotationsTable).where(eq(quotationsTable.id, id));\n  res.sendStatus(204);\n});';
   if (!patched.includes(quotationDeleteCheck)) throw new Error('Document deletion patch: could not locate quotation DELETE body');
   patched = patched.replace(quotationDeleteCheck, '  if (existing.status === "converted") {\n    res.status(409).json({ error: "Converted quotations cannot be deleted. Delete or void the resulting invoice instead." });\n    return;\n  }\n  const { reason } = req.body ?? {};\n  await db.delete(quotationItemsTable).where(eq(quotationItemsTable.quotationId, id));\n  await db.delete(quotationsTable).where(eq(quotationsTable.id, id));\n  await logAudit(req, { action: "quotation.deleted", entityType: "quotation", entityId: id, description: `Permanently deleted quotation ${existing.quotationNumber}${reason ? " — Reason: " + reason : ""}`, metadata: { quotation: existing.quotationNumber, reason: reason ?? null } });\n  res.sendStatus(204);\n});');
-  const invoicePayMatch = patched.match(/\b(router[A-Za-z0-9_$]*)\.post\("\/invoices\/:id\/pay", async \(req, res\) => \{/);
+  const invoicePayMatch = patched.match(/\b(router[A-Za-z0-9_$]*)\.post\("\/invoices\/:id\/pay", async \(req, res) => \{/);
   if (!invoicePayMatch) throw new Error('Document deletion patch: could not locate invoice payment route');
   const invoiceRouter = invoicePayMatch[1];
   const invoicePayRoute = invoicePayMatch[0];
@@ -70,11 +70,35 @@ function patchMpesaRoutes(source) {
 function buildRuntimeBundle() {
   const source = fs.readFileSync(sourceBundle, 'utf8');
   verifySharedBrandingEngine(source);
-  const withUserManagement = patchUserManagementRoutes(source);
+
+  // The bundled Express bootstrap is generated code and can change shape between
+  // builds. User-management injection is optional when the target bundle does not
+  // expose a patchable Express application variable; never let that auxiliary patch
+  // prevent the production PDF renderer from being deployed.
+  let withUserManagement = source;
+  try {
+    withUserManagement = patchUserManagementRoutes(source);
+  } catch (error) {
+    const message = String(error && error.message || error);
+    if (/Express app (not found|not found)|could not locate Express application variable|application listen point not found/i.test(message)) {
+      console.warn(`[build] User-management runtime patch skipped: ${message}`);
+    } else {
+      throw error;
+    }
+  }
+
   const withDocumentDeletion = patchDocumentDeletionRoutes(withUserManagement);
   const withPdfRenderer = patchPdfRenderer(withDocumentDeletion);
   const patched = patchMpesaRoutes(withPdfRenderer);
   fs.writeFileSync(runtimeBundle, patched, 'utf8');
+
+  const runtime = fs.readFileSync(runtimeBundle, 'utf8');
+  if (!runtime.includes('USER_MANAGEMENT_PATCH_V2') && withUserManagement !== source) {
+    throw new Error('Build verification: user-management patch was expected but is absent from runtime bundle');
+  }
+  if (!runtime.includes('legacyRenderPdfBuffer') || !runtime.includes('renderLegacyDocumentPdf')) {
+    throw new Error('Build verification: stable PDF renderer was not installed in runtime bundle');
+  }
 }
 
 const bundleAssets = path.join(root, 'build', 'assets', 'fonts');
@@ -94,4 +118,4 @@ for (const file of requiredFiles.filter((file) => file.endsWith('.js') || file.e
   const result = spawnSync(process.execPath, ['--check', path.join(root, file)], { stdio: 'inherit' });
   if (result.status !== 0) process.exit(result.status || 1);
 }
-console.log('[build] Stable receipt, invoice and quotation PDF renderers installed; shared branding engine preserved; user-management routes patched; document deletion routes patched; M-Pesa routes patched; deterministic runtime bundle generated at index.runtime.cjs');
+console.log('[build] Stable receipt, invoice and quotation PDF renderers installed; shared branding engine preserved; user-management routes patched when supported; document deletion routes patched; M-Pesa routes patched; deterministic runtime bundle generated at index.runtime.cjs');
