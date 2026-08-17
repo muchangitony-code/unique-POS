@@ -15,14 +15,10 @@ function assertFonts() {
   }
 }
 
-// Use PDFKit's built-in standard fonts for the production renderer.
-// This deliberately avoids fontkit/TTF parsing in Railway, which was the
-// source of the runtime `...reading 'offsets'` failure. The aliases keep the
-// renderer API unchanged while eliminating the fragile embedded-font path.
 function registerFonts(doc) {
   assertFonts();
-  doc.registerFont('body', 'Helvetica');
-  doc.registerFont('bold', 'Helvetica-Bold');
+  doc.registerFont('body', REGULAR);
+  doc.registerFont('bold', BOLD);
   return doc;
 }
 
