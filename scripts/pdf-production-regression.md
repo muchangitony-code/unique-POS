@@ -1,0 +1,1 @@
+Production PDF regression coverage is implemented in `scripts/pdf-production-regression.cjs`. It validates the real metadata shape (`meta.date`, `meta.validUntil`) and the runtime PDF type detection used by the bundled renderer.
