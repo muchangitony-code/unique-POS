@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { patchUserManagementRoutes } = require('./user-management-server.cjs');
 
 const root = path.resolve(__dirname, '..');
 const fontDir = path.join(root, 'assets', 'fonts');
@@ -32,9 +33,13 @@ function buildRuntimeBundle() {
   const source = fs.readFileSync(sourceBundle, 'utf8');
   verifySharedBrandingEngine(source);
 
+  // Apply server-side no-code user-management routes to the runtime bundle.
+  // index.cjs remains the canonical generated application bundle.
+  const patched = patchUserManagementRoutes(source);
+
   // Preserve the application's original document engine as the single source of truth.
   // This keeps HTML previews, PDFs and outbound emails on the same branding model.
-  fs.writeFileSync(runtimeBundle, source, 'utf8');
+  fs.writeFileSync(runtimeBundle, patched, 'utf8');
 }
 
 const bundleAssets = path.join(root, 'build', 'assets', 'fonts');
@@ -44,9 +49,9 @@ for (const file of [regular, bold]) fs.copyFileSync(file, path.join(bundleAssets
 buildRuntimeBundle();
 
 const requiredFiles = [
-  'app.js', 'index.cjs', 'product-bulk.cjs', 'public/index.html', 'public/app.js', 'public/styles.css', 'public/quotation-custom-items.js',
+  'app.js', 'index.cjs', 'product-bulk.cjs', 'public/index.html', 'public/app.js', 'public/user-management.js', 'public/styles.css', 'public/quotation-custom-items.js',
   'server/pdf/index.cjs', 'server/pdf/schema.cjs', 'server/pdf/format.js', 'server/pdf/fonts.cjs', 'server/pdf/bundle-loader.cjs',
-  'scripts/bootstrap-db.cjs', 'scripts/database-url.cjs', 'scripts/run-migrations.cjs', 'scripts/schema-config.cjs', 'scripts/sql-utils.cjs', 'scripts/validate-startup-env.cjs',
+  'scripts/bootstrap-db.cjs', 'scripts/database-url.cjs', 'scripts/run-migrations.cjs', 'scripts/schema-config.cjs', 'scripts/sql-utils.cjs', 'scripts/validate-startup-env.cjs', 'scripts/user-management-server.cjs',
   'assets/fonts/DejaVuSans.ttf', 'assets/fonts/DejaVuSans-Bold.ttf', 'assets/fonts/LICENSE.txt', 'index.runtime.cjs'
 ];
 for (const file of requiredFiles) if (!fs.existsSync(path.join(root, file))) throw new Error(`Missing required runtime file: ${file}`);
@@ -54,4 +59,4 @@ for (const file of requiredFiles.filter((file) => file.endsWith('.js') || file.e
   const result = spawnSync(process.execPath, ['--check', path.join(root, file)], { stdio: 'inherit' });
   if (result.status !== 0) process.exit(result.status || 1);
 }
-console.log('[build] Shared branded document engine preserved; deterministic runtime bundle generated at index.runtime.cjs');
+console.log('[build] Shared branded document engine preserved; user-management routes patched; deterministic runtime bundle generated at index.runtime.cjs');
