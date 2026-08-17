@@ -3,7 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { validateStartupEnv } = require("./scripts/validate-startup-env.cjs");
-const { FONT_DIR, assertFonts } = require("./server/pdf/fonts.cjs");
+const { assertFonts } = require("./server/pdf/fonts.cjs");
 const { loadIndex } = require("./server/pdf/bundle-loader.cjs");
 
 const envPath = path.join(__dirname, ".env");
@@ -43,9 +43,11 @@ function ensureRuntimeBundle() {
 
 async function start() {
   try {
+    // PDF generation now uses PDFKit's built-in Helvetica fonts. There is no
+    // filesystem font directory to inspect; assertFonts() remains a compatibility
+    // check for older callers and intentionally performs no TTF validation.
     assertFonts();
-    console.log("[startup] PDF FONT_DIR:", FONT_DIR);
-    console.log("[startup] PDF FONT_DIR contents:", fs.readdirSync(FONT_DIR).sort());
+    console.log("[startup] PDF fonts: PDFKit built-in Helvetica / Helvetica-Bold");
     validateStartupEnv();
     ensureRuntimeBundle();
     const { bootstrapDatabaseIfNeeded } = require("./scripts/bootstrap-db.cjs");
