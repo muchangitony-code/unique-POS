@@ -34,9 +34,6 @@ function patchDocumentDeletionRoutes(source) {
   if (!patched.includes(quotationDeleteCheck)) throw new Error('Document deletion patch: could not locate quotation DELETE body');
   patched = patched.replace(quotationDeleteCheck, '  if (existing.status === "converted") {\n    res.status(409).json({ error: "Converted quotations cannot be deleted. Delete or void the resulting invoice instead." });\n    return;\n  }\n  const { reason } = req.body ?? {};\n  await db.delete(quotationItemsTable).where(eq(quotationItemsTable.quotationId, id));\n  await db.delete(quotationsTable).where(eq(quotationsTable.id, id));\n  await logAudit(req, { action: "quotation.deleted", entityType: "quotation", entityId: id, description: `Permanently deleted quotation ${existing.quotationNumber}${reason ? " — Reason: " + reason : ""}`, metadata: { quotation: existing.quotationNumber, reason: reason ?? null } });\n  res.sendStatus(204);\n});');
 
-  // Match the payment route without relying on a brittle literal whitespace shape.
-  // This is intentionally kept readable because build.cjs itself is parsed by Node
-  // before any of the runtime patches can execute.
   const invoicePayMatch = patched.match(/\b(router[A-Za-z0-9_$]*)\.post\("\/invoices\/:id\/pay",\s*async\s*\(req,\s*res\)\s*=>\s*\{/);
   if (!invoicePayMatch) throw new Error('Document deletion patch: could not locate invoice payment route');
   const invoiceRouter = invoicePayMatch[1];
@@ -74,11 +71,6 @@ function patchMpesaRoutes(source) {
 function buildRuntimeBundle() {
   const source = fs.readFileSync(sourceBundle, 'utf8');
   verifySharedBrandingEngine(source);
-
-  // The bundled Express bootstrap is generated code and can change shape between
-  // builds. User-management injection is optional when the target bundle does not
-  // expose a patchable Express application variable; never let that auxiliary patch
-  // prevent the production PDF renderer from being deployed.
   let withUserManagement = source;
   try {
     withUserManagement = patchUserManagementRoutes(source);
@@ -112,7 +104,7 @@ buildRuntimeBundle();
 
 const requiredFiles = [
   'app.js', 'index.cjs', 'product-bulk.cjs', 'public/index.html', 'public/app.js', 'public/mpesa.js', 'public/user-management.js', 'public/administrator-user-management.js', 'public/quotation-custom-items.js',
-  'server/pdf/index.cjs', 'server/pdf/stable.cjs', 'server/pdf/receipt.cjs', 'server/pdf/schema.cjs', 'server/pdf/format.js', 'server/pdf/fonts.cjs', 'server/pdf/bundle-loader.cjs', 'server/pdf/legacy-adapter.cjs',
+  'server/pdf/index.cjs', 'server/pdf/stable.cjs', 'server/pdf/clean.cjs', 'server/pdf/receipt.cjs', 'server/pdf/schema.cjs', 'server/pdf/format.js', 'server/pdf/fonts.cjs', 'server/pdf/bundle-loader.cjs', 'server/pdf/legacy-adapter.cjs',
   'server/services/mpesa/index.cjs', 'server/services/mpesa/auth.cjs', 'server/services/mpesa/stkPush.cjs', 'server/services/mpesa/query.cjs', 'server/services/mpesa/phone.cjs', 'server/services/mpesa/runtime-routes.cjs',
   'scripts/bootstrap-db.cjs', 'scripts/database-url.cjs', 'scripts/run-migrations.cjs', 'scripts/schema-config.cjs', 'scripts/sql-utils.cjs', 'scripts/validate-startup-env.cjs', 'scripts/user-management-server.cjs', 'scripts/patch-pdf-renderer.cjs', 'scripts/pdf-fixtures.js', 'scripts/pdf-receipt-smoke.cjs',
   'assets/fonts/DejaVuSans.ttf', 'assets/fonts/DejaVuSans-Bold.ttf', 'assets/fonts/LICENSE.txt', 'index.runtime.cjs'
