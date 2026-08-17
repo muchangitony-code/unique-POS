@@ -28,11 +28,17 @@ function patchPdfRenderer(source) {
   const end = findFunctionEnd(source, start);
   const replacement = `async function renderPdfBuffer(payload, paper) {
   const { renderLegacyDocumentPdf, renderLegacyReceiptPdf } = require('./server/pdf/legacy-adapter.cjs');
-  const rawType = payload && (payload.type || payload.documentType || payload.document_type || (payload.doc && (payload.doc.type || payload.doc.documentType || payload.doc.document_type)) || (payload.document && (payload.document.type || payload.document.documentType || payload.document.document_type)));
+  const root = payload && typeof payload === 'object' ? payload : {};
+  const rawType = root.type || root.documentType || root.document_type || root.docType || root.kind ||
+    (root.doc && (root.doc.type || root.doc.documentType || root.doc.document_type || root.doc.docType || root.doc.kind)) ||
+    (root.document && (root.document.type || root.document.documentType || root.document.document_type || root.document.docType || root.document.kind));
   const normalizedType = String(rawType || '').trim().toLowerCase().replace(/[\\s_-]+/g, '');
-  if (['invoice', 'invoicedocument', 'invoicepdf'].includes(normalizedType)) return renderLegacyDocumentPdf(payload, paper);
-  if (['quotation', 'quote', 'quotationdocument', 'quotationpdf', 'quotepdf'].includes(normalizedType)) return renderLegacyDocumentPdf(payload, paper);
-  if (['receipt', 'sale', 'saledocument', 'receiptpdf'].includes(normalizedType)) return renderLegacyReceiptPdf(payload, paper);
+  const looksLikeInvoice = normalizedType.includes('invoice') || root.invoice || root.invoiceId || root.invoiceNumber || root.invoice_number;
+  const looksLikeQuotation = normalizedType.includes('quotation') || normalizedType.includes('quote') || root.quotation || root.quotationId || root.quotationNumber || root.quotation_number;
+  const looksLikeReceipt = normalizedType.includes('receipt') || normalizedType.includes('sale') || root.receipt || root.receiptId || root.saleId;
+  if (looksLikeInvoice && !looksLikeQuotation) return renderLegacyDocumentPdf(payload, paper);
+  if (looksLikeQuotation && !looksLikeInvoice) return renderLegacyDocumentPdf(payload, paper);
+  if (looksLikeReceipt) return renderLegacyReceiptPdf(payload, paper);
   throw new Error(\`Unsupported PDF document type: \${String(rawType || '(missing)')}\`);
 }`;
   return source.slice(0, start) + replacement + source.slice(end);
