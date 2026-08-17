@@ -1,6 +1,6 @@
 'use strict';
 
-const { renderDocument } = require('./stable.cjs');
+const { renderDocument } = require('./clean.cjs');
 const { renderReceiptDocument } = require('./receipt.cjs');
 
 function first(...values) {
