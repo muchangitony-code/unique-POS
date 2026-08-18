@@ -7,18 +7,17 @@ function str(v, path, required = false) { if (v == null || String(v).trim() === 
 function dateLike(v, path, required = false) { const s = str(v, path, required); if (!s) return ''; if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) bad(path, 'must be YYYY-MM-DD'); return s; }
 function nonNegativeNumber(v, path, required = false) { if (v == null || v === '') { if (required) bad(path, 'is required'); return 0; } const n = Number(v); if (!Number.isFinite(n) || n < 0) bad(path, 'must be a non-negative number'); return n; }
 function normalizeCustomer(c) { if (!c || typeof c !== 'object') bad('customer', 'must be an object'); return { name: str(c.name, 'customer.name', true), address: str(c.address), phone: str(c.phone), email: str(c.email), taxId: str(c.taxId) }; }
-function normalizeLogo(value) {
-  if (Buffer.isBuffer(value)) return value;
-  if (typeof value !== 'string') return BRAND.logo;
-  const source = value.trim();
-  if (!source) return BRAND.logo;
-  if (source.startsWith('data:image/')) {
-    const comma = source.indexOf(',');
-    if (comma > 0) {
-      try { const buffer = Buffer.from(source.slice(comma + 1), 'base64'); if (buffer.length > 4) return buffer; } catch (_) {}
-    }
-  }
-  return source;
+function normalizeDocument(type, doc, company) {
+  return {
+    type, number: String(doc.number).trim(), date: String(doc.date).trim(), dueDate: str(doc.dueDate), validUntil: str(doc.validUntil),
+    customer: normalizeCustomer(doc.customer),
+    items: doc.items.map((it) => ({ description: String(it.description).trim(), sub: str(it.sub), qty: Number(it.qty), unitPrice: String(it.unitPrice), taxRate: Number(it.taxRate || 0), discount: String(it.discount == null ? '0' : it.discount), currency: doc.currency })),
+    currency: String(doc.currency).trim().toUpperCase(), notes: str(doc.notes), terms: str(doc.terms),
+    orderReference: str(doc.orderReference), channel: str(doc.channel), servedBy: str(doc.servedBy), paymentMethod: str(doc.paymentMethod), status: str(doc.status), preparedBy: str(doc.preparedBy), customerAcknowledgement: str(doc.customerAcknowledgement),
+    paymentDetails: doc.paymentDetails && typeof doc.paymentDetails === 'object' ? { paybill: str(doc.paymentDetails.paybill), till: str(doc.paymentDetails.till), account: str(doc.paymentDetails.account), bank: str(doc.paymentDetails.bank), qr: str(doc.paymentDetails.qr) } : {},
+    // Customer-facing identity and logo are canonical; settings cannot silently substitute a different production logo.
+    company: { name: BRAND.legalName, tagline: BRAND.tagline, address: BRAND.address, phone: BRAND.phone, website: BRAND.website, email: str(company.email), taxId: str(company.taxId), logo: BRAND.logo }
+  };
 }
 function validateDocument(type, doc, company) {
   if (!TYPES.has(type)) bad('type', 'must be invoice or quotation');
@@ -30,16 +29,5 @@ function validateDocument(type, doc, company) {
   if (!Array.isArray(doc.items) || doc.items.length === 0) bad('items', 'must contain at least one item');
   doc.items.forEach((it, i) => { if (!it || typeof it !== 'object') bad(`items[${i}]`, 'must be an object'); str(it.description, `items[${i}].description`, true); nonNegativeNumber(it.qty, `items[${i}].qty`, true); nonNegativeNumber(it.unitPrice, `items[${i}].unitPrice`, true); nonNegativeNumber(it.taxRate, `items[${i}].taxRate`); nonNegativeNumber(it.discount, `items[${i}].discount`); });
   str(doc.currency, 'currency', true); str(doc.notes); str(doc.terms);
-}
-function normalizeDocument(type, doc, company) {
-  return {
-    type, number: String(doc.number).trim(), date: String(doc.date).trim(), dueDate: str(doc.dueDate), validUntil: str(doc.validUntil),
-    customer: normalizeCustomer(doc.customer),
-    items: doc.items.map((it) => ({ description: String(it.description).trim(), sub: str(it.sub), qty: Number(it.qty), unitPrice: String(it.unitPrice), taxRate: Number(it.taxRate || 0), discount: String(it.discount == null ? '0' : it.discount), currency: doc.currency })),
-    currency: String(doc.currency).trim().toUpperCase(), notes: str(doc.notes), terms: str(doc.terms),
-    orderReference: str(doc.orderReference), channel: str(doc.channel), servedBy: str(doc.servedBy), paymentMethod: str(doc.paymentMethod), status: str(doc.status), preparedBy: str(doc.preparedBy), customerAcknowledgement: str(doc.customerAcknowledgement),
-    paymentDetails: doc.paymentDetails && typeof doc.paymentDetails === 'object' ? { paybill: str(doc.paymentDetails.paybill), till: str(doc.paymentDetails.till), account: str(doc.paymentDetails.account), bank: str(doc.paymentDetails.bank), qr: str(doc.paymentDetails.qr) } : {},
-    company: { name: BRAND.legalName, tagline: BRAND.tagline, address: BRAND.address, phone: BRAND.phone, website: BRAND.website, email: str(company.email), taxId: str(company.taxId), logo: normalizeLogo(company.logo ?? company.logoUrl) }
-  };
 }
 module.exports = { validateDocument, normalizeDocument };
