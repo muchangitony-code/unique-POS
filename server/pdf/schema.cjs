@@ -1,5 +1,6 @@
 'use strict';
 
+const BRAND = require('../server/branding.config.cjs');
 const TYPES = new Set(['invoice', 'quotation']);
 function bad(path, message) { const e = new Error(`${path}: ${message}`); e.statusCode = 400; throw e; }
 function str(v, path, required = false) { if (v == null || String(v).trim() === '') { if (required) bad(path, 'is required'); return ''; } return String(v).trim(); }
@@ -8,9 +9,9 @@ function nonNegativeNumber(v, path, required = false) { if (v == null || v === '
 function normalizeCustomer(c) { if (!c || typeof c !== 'object') bad('customer', 'must be an object'); return { name: str(c.name, 'customer.name', true), address: str(c.address), phone: str(c.phone), email: str(c.email), taxId: str(c.taxId) }; }
 function normalizeLogo(value) {
   if (Buffer.isBuffer(value)) return value;
-  if (typeof value !== 'string') return null;
+  if (typeof value !== 'string') return BRAND.logo;
   const source = value.trim();
-  if (!source) return null;
+  if (!source) return BRAND.logo;
   if (source.startsWith('data:image/')) {
     const comma = source.indexOf(',');
     if (comma > 0) {
@@ -31,7 +32,7 @@ function validateDocument(type, doc, company) {
   normalizeCustomer(doc.customer);
   if (!Array.isArray(doc.items) || doc.items.length === 0) bad('items', 'must contain at least one item');
   doc.items.forEach((it, i) => { if (!it || typeof it !== 'object') bad(`items[${i}]`, 'must be an object'); str(it.description, `items[${i}].description`, true); nonNegativeNumber(it.qty, `items[${i}].qty`, true); nonNegativeNumber(it.unitPrice, `items[${i}].unitPrice`, true); nonNegativeNumber(it.taxRate, `items[${i}].taxRate`); nonNegativeNumber(it.discount, `items[${i}].discount`); });
-  str(doc.currency, 'currency', true); str(doc.notes); str(doc.terms); str(company.name, 'company.name', true);
+  str(doc.currency, 'currency', true); str(doc.notes); str(doc.terms);
 }
 function normalizeDocument(type, doc, company) {
   return {
@@ -41,7 +42,16 @@ function normalizeDocument(type, doc, company) {
     currency: String(doc.currency).trim().toUpperCase(), notes: str(doc.notes), terms: str(doc.terms),
     orderReference: str(doc.orderReference), channel: str(doc.channel), servedBy: str(doc.servedBy), paymentMethod: str(doc.paymentMethod), status: str(doc.status), preparedBy: str(doc.preparedBy), customerAcknowledgement: str(doc.customerAcknowledgement),
     paymentDetails: doc.paymentDetails && typeof doc.paymentDetails === 'object' ? { paybill: str(doc.paymentDetails.paybill), till: str(doc.paymentDetails.till), account: str(doc.paymentDetails.account), bank: str(doc.paymentDetails.bank), qr: str(doc.paymentDetails.qr) } : {},
-    company: { name: str(company.name, 'company.name', true), address: str(company.address), phone: str(company.phone), email: str(company.email), taxId: str(company.taxId), logo: normalizeLogo(company.logo ?? company.logoUrl) }
+    company: {
+      name: BRAND.legalName,
+      tagline: BRAND.tagline,
+      address: BRAND.address,
+      phone: BRAND.phone,
+      website: BRAND.website,
+      email: str(company.email),
+      taxId: str(company.taxId),
+      logo: normalizeLogo(company.logo ?? company.logoUrl)
+    }
   };
 }
 module.exports = { validateDocument, normalizeDocument };
