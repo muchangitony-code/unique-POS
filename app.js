@@ -35,16 +35,13 @@ if (!process.env.PORT) process.env.PORT = "8080";
 
 function ensureRuntimeBundle() {
   const runtimeBundle = path.join(__dirname, "index.runtime.cjs");
-  if (fs.existsSync(runtimeBundle)) return;
-  console.log("[startup] Generated runtime bundle is missing; running deterministic build step");
+  console.log("[startup] Rebuilding deterministic runtime bundle");
   require("./scripts/build.cjs");
   if (!fs.existsSync(runtimeBundle)) throw new Error(`Build completed without creating ${runtimeBundle}`);
 }
 
 async function start() {
   try {
-    // PDF generation uses PDFKit built-in Helvetica / Helvetica-Bold fonts.
-    // There is intentionally no filesystem PDF font directory to inspect.
     assertFonts();
     console.log("[startup] PDF fonts: PDFKit built-in Helvetica / Helvetica-Bold");
     validateStartupEnv();
