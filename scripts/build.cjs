@@ -45,6 +45,17 @@ function patchA4RendererLogoSupport() {
   let source = fs.readFileSync(rendererPath, 'utf8');
   if (source.includes('PDF_SVG_LOGO_PATCH_V1')) return;
 
+  const brandingRequire = "const BRAND = require('../branding.config.cjs');\n";
+  if (!source.includes("require('../branding.config.cjs')")) {
+    const marker = "const { adaptDocumentPayload } = require('./document-adapter.cjs');\n";
+    if (!source.includes(marker)) throw new Error('PDF branding patch: could not locate A4 imports');
+    source = source.replace(marker, marker + brandingRequire);
+  }
+
+  const paletteMatch = source.match(/const C = \{[\s\S]*?\n\};/);
+  if (!paletteMatch) throw new Error('PDF branding patch: could not locate A4 palette');
+  source = source.replace(paletteMatch[0], 'const C = BRAND.colors;');
+
   const loadMarker = 'async function loadLogo(source)';
   const loadStart = source.indexOf(loadMarker);
   if (loadStart < 0) throw new Error('PDF logo patch: could not locate loadLogo');
@@ -120,6 +131,7 @@ function patchA4RendererLogoSupport() {
   const drawReplacement = `function drawLogo(pdf, x, y, size, buffer) {
   pdf.save();
   pdf.strokeColor(C.orangeSoft).lineWidth(.7).roundedRect(x, y, size, size, 7).stroke();
+  if (!buffer) console.warn('[pdf] Branding logo missing; document will not be considered customer-ready');
   if (typeof buffer === 'string' && /^\\s*<svg(?:\\s|>)/i.test(buffer)) {
     try {
       const SVGtoPDF = require('@leduard/svg-to-pdfkit');
@@ -128,17 +140,28 @@ function patchA4RendererLogoSupport() {
         height: size - 8,
         preserveAspectRatio: 'xMidYMid meet'
       });
-    } catch (_) {}
+    } catch (error) {
+      console.warn('[pdf] Branding SVG logo render failed:', error?.message || error);
+    }
   } else if (buffer) {
     try {
       pdf.image(buffer, x + 4, y + 4, { fit: [size - 8, size - 8], align: 'center', valign: 'center' });
-    } catch (_) {}
+    } catch (error) {
+      console.warn('[pdf] Branding raster logo render failed:', error?.message || error);
+    }
   }
   pdf.restore();
 }`;
   source = source.slice(0, drawStart) + drawReplacement + source.slice(drawEnd);
+
+  // The website is a mandatory customer-facing field on every A4 invoice/quotation.
+  const metaMarker = '    doc.company.address,\n    [doc.company.phone, doc.company.email].filter(Boolean).join(\'  ·  \'),';
+  if (source.includes(metaMarker) && !source.includes('doc.company.website,\n    doc.company.address')) {
+    source = source.replace(metaMarker, '    doc.company.website,\n    doc.company.address,\n    [doc.company.phone, doc.company.email].filter(Boolean).join(\'  ·  \'),');
+  }
+
   fs.writeFileSync(rendererPath, source, 'utf8');
-  console.log('[build] PDF SVG logo support installed');
+  console.log('[build] PDF SVG logo and shared branding support installed');
 }
 
 function installUnifiedPdfEngine(source) {
@@ -157,7 +180,7 @@ function installUnifiedPdfEngine(source) {
   if (adapted.type === 'receipt') {
     return renderReceiptDocument({ doc: adapted.doc, company: adapted.company, paper: paper === '58mm' ? '58mm' : '80mm' });
   }
-  throw new Error(\`Unsupported PDF document type: \${adapted.type}\`);
+  throw new Error(`Unsupported PDF document type: ${adapted.type}`);
 }`;
   return source.slice(0, start) + replacement + source.slice(end);
 }
@@ -245,6 +268,7 @@ buildRuntimeBundle();
 
 const requiredFiles = [
   'app.js', 'index.cjs', 'product-bulk.cjs', 'public/index.html', 'public/app.js', 'public/mpesa.js', 'public/user-management.js', 'public/administrator-user-management.js', 'public/quotation-custom-items.js',
+  'server/branding.config.cjs', 'public/assets/branding/logo.svg', 'public/assets/branding/logo-monochrome.svg',
   'server/pdf/index.cjs', 'server/pdf/a4-renderer.cjs', 'server/pdf/receipt.cjs', 'server/pdf/schema.cjs', 'server/pdf/format.js', 'server/pdf/fonts.cjs', 'server/pdf/bundle-loader.cjs', 'server/pdf/document-adapter.cjs',
   'server/services/mpesa/index.cjs', 'server/services/mpesa/auth.cjs', 'server/services/mpesa/stkPush.cjs', 'server/services/mpesa/query.cjs', 'server/services/mpesa/phone.cjs', 'server/services/mpesa/runtime-routes.cjs',
   'scripts/bootstrap-db.cjs', 'scripts/database-url.cjs', 'scripts/run-migrations.cjs', 'scripts/schema-config.cjs', 'scripts/sql-utils.cjs', 'scripts/validate-startup-env.cjs', 'scripts/user-management-server.cjs', 'scripts/pdf-fixtures.js', 'scripts/pdf-receipt-smoke.cjs',
