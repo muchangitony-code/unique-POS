@@ -4,10 +4,10 @@
   "private": true,
   "main": "app.js",
   "engines": { "node": ">=22" },
-  "files": ["assets/fonts/"],
+  "files": ["assets/fonts/"] ,
   "scripts": {
-    "build": "node scripts/build.cjs && node scripts/invoice-performance-patch.cjs",
-    "prestart": "node scripts/build.cjs && node scripts/invoice-performance-patch.cjs",
+    "build": "node scripts/build.cjs && node scripts/invoice-performance-patch.cjs && node scripts/invoice-page-hardening.cjs",
+    "prestart": "node scripts/build.cjs && node scripts/invoice-performance-patch.cjs && node scripts/invoice-page-hardening.cjs",
     "start": "node app.js",
     "db:init": "node scripts/bootstrap-db.cjs",
     "db:migrate": "node scripts/run-migrations.cjs",
