@@ -6,8 +6,8 @@
   "engines": { "node": ">=22" },
   "files": ["assets/fonts/"],
   "scripts": {
-    "build": "node scripts/build.cjs",
-    "prestart": "node scripts/build.cjs",
+    "build": "node scripts/build.cjs && node scripts/invoice-performance-patch.cjs",
+    "prestart": "node scripts/build.cjs && node scripts/invoice-performance-patch.cjs",
     "start": "node app.js",
     "db:init": "node scripts/bootstrap-db.cjs",
     "db:migrate": "node scripts/run-migrations.cjs",
