@@ -6,8 +6,8 @@
   "engines": { "node": ">=22" },
   "files": ["assets/fonts/"],
   "scripts": {
-    "build": "node scripts/build-safe.cjs",
-    "prestart": "node scripts/build-safe.cjs",
+    "build": "node scripts/build.cjs",
+    "prestart": "node scripts/build.cjs",
     "start": "node app.js",
     "db:init": "node scripts/bootstrap-db.cjs",
     "db:migrate": "node scripts/run-migrations.cjs",
@@ -17,7 +17,8 @@
     "pdf:sample": "node scripts/pdf-fixtures.js",
     "pdf:qa": "node scripts/pdf-fixtures.js && node tests/pdf-structural.cjs",
     "pdf:receipt-smoke": "node scripts/pdf-receipt-smoke.cjs",
-    "pdf:download-smoke": "node scripts/pdf-download-smoke.cjs"
+    "pdf:download-smoke": "node scripts/pdf-download-smoke.cjs",
+    "pdf:production-regression": "node scripts/pdf-production-regression.cjs"
   },
   "dependencies": {
     "@leduard/svg-to-pdfkit": "^0.1.10",
