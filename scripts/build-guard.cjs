@@ -13,7 +13,7 @@ function patchPdfRenderer() {
   if (source.includes(BUILD_MARKER)) return;
 
   const loadReplacement = String.raw`async function loadLogo(source) {
-  // ${BUILD_MARKER}: SVG/PNG/JPEG logo loading is implemented in the source renderer.
+  // PDF_SVG_LOGO_PATCH_V1 / PDF_SVG_LOGO_PATCH_V2: safe SVG/PNG/JPEG logo loading.
   const svgText = (value) => {
     const text = Buffer.isBuffer(value) ? value.toString('utf8') : String(value || '');
     return /^\s*<svg(?:\s|>)/i.test(text) && Buffer.byteLength(text, 'utf8') <= MAX_LOGO ? text : null;
