@@ -20,6 +20,7 @@
     "pdf:download-smoke": "node scripts/pdf-download-smoke.cjs"
   },
   "dependencies": {
+    "@leduard/svg-to-pdfkit": "^0.1.10",
     "bcryptjs": "^3.0.3",
     "bwip-js": "^4.11.2",
     "drizzle-orm": "^0.45.2",
