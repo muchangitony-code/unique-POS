@@ -6,6 +6,10 @@ const runtime = path.join(root, 'index.runtime.cjs');
 let source = fs.readFileSync(runtime, 'utf8');
 const old = 'const rows = await db.select().from(invoicesTable).where(where).orderBy(sql`${invoicesTable.createdAt} desc`).limit(l).offset(offset);';
 const replacement = 'const rows = await db.select({ id: invoicesTable.id, invoiceNumber: invoicesTable.invoiceNumber, branchId: invoicesTable.branchId, customerId: invoicesTable.customerId, subtotal: invoicesTable.subtotal, discountAmount: invoicesTable.discountAmount, taxAmount: invoicesTable.taxAmount, total: invoicesTable.total, amountPaid: invoicesTable.amountPaid, balanceDue: invoicesTable.balanceDue, status: invoicesTable.status, dueDate: invoicesTable.dueDate, notes: invoicesTable.notes, createdAt: invoicesTable.createdAt }).from(invoicesTable).where(where).orderBy(sql`${invoicesTable.createdAt} desc`).limit(Math.min(l, 50)).offset(offset);';
+if (source.includes(replacement)) {
+  console.log('[build] Invoice page hardening already applied');
+  process.exit(0);
+}
 if (!source.includes(old)) throw new Error('Invoice hardening: list query not found');
 source = source.replace(old, replacement);
 fs.writeFileSync(runtime, source, 'utf8');
