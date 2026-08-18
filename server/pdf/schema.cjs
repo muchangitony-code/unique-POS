@@ -1,6 +1,6 @@
 'use strict';
 
-const BRAND = require('../server/branding.config.cjs');
+const BRAND = require('../branding.config.cjs');
 const TYPES = new Set(['invoice', 'quotation']);
 function bad(path, message) { const e = new Error(`${path}: ${message}`); e.statusCode = 400; throw e; }
 function str(v, path, required = false) { if (v == null || String(v).trim() === '') { if (required) bad(path, 'is required'); return ''; } return String(v).trim(); }
@@ -15,10 +15,7 @@ function normalizeLogo(value) {
   if (source.startsWith('data:image/')) {
     const comma = source.indexOf(',');
     if (comma > 0) {
-      try {
-        const buffer = Buffer.from(source.slice(comma + 1), 'base64');
-        if (buffer.length > 4) return buffer;
-      } catch (_) {}
+      try { const buffer = Buffer.from(source.slice(comma + 1), 'base64'); if (buffer.length > 4) return buffer; } catch (_) {}
     }
   }
   return source;
@@ -42,16 +39,7 @@ function normalizeDocument(type, doc, company) {
     currency: String(doc.currency).trim().toUpperCase(), notes: str(doc.notes), terms: str(doc.terms),
     orderReference: str(doc.orderReference), channel: str(doc.channel), servedBy: str(doc.servedBy), paymentMethod: str(doc.paymentMethod), status: str(doc.status), preparedBy: str(doc.preparedBy), customerAcknowledgement: str(doc.customerAcknowledgement),
     paymentDetails: doc.paymentDetails && typeof doc.paymentDetails === 'object' ? { paybill: str(doc.paymentDetails.paybill), till: str(doc.paymentDetails.till), account: str(doc.paymentDetails.account), bank: str(doc.paymentDetails.bank), qr: str(doc.paymentDetails.qr) } : {},
-    company: {
-      name: BRAND.legalName,
-      tagline: BRAND.tagline,
-      address: BRAND.address,
-      phone: BRAND.phone,
-      website: BRAND.website,
-      email: str(company.email),
-      taxId: str(company.taxId),
-      logo: normalizeLogo(company.logo ?? company.logoUrl)
-    }
+    company: { name: BRAND.legalName, tagline: BRAND.tagline, address: BRAND.address, phone: BRAND.phone, website: BRAND.website, email: str(company.email), taxId: str(company.taxId), logo: normalizeLogo(company.logo ?? company.logoUrl) }
   };
 }
 module.exports = { validateDocument, normalizeDocument };
