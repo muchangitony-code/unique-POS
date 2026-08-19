@@ -14,8 +14,10 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" defer></script>
     <script src="/quotation-custom-items.js" defer></script>
     <script src="/receipt-logo-fix.js" defer></script>
-    <script src="/app.js?v=20260819-1" defer></script>
-    <script src="/invoice-page-guard.js?v=20260819-2" defer></script>
+    <!-- Invoice fallback is intentionally loaded BEFORE app.js so it can intercept the invoice hash route before the legacy route renderer runs. -->
+    <script src="/invoice-route-fallback.js?v=20260819-1" defer></script>
+    <script src="/app.js?v=20260819-2" defer></script>
+    <script src="/invoice-page-guard.js?v=20260819-3" defer></script>
     <script src="/user-management.js" defer></script>
     <script src="/administrator-user-management.js" defer></script>
     <script src="/receipt-print-payment-fix.js" defer></script>
