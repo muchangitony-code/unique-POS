@@ -2,7 +2,7 @@ name: PDF QA
 
 on:
   push:
-    branches: ["main", "fresh-invoice-quotation-pdf"]
+    branches: ["main"]
   pull_request:
     branches: ["main"]
 
@@ -21,12 +21,10 @@ jobs:
         run: npm ci
       - name: Build
         run: npm run build
+      - name: Full PDF QA
+        run: npm run pdf:qa
       - name: Download-path smoke test
         run: npm run pdf:download-smoke
-      - name: Generate fixtures
-        run: node scripts/pdf-fixtures.js
-      - name: Structural assertions
-        run: node tests/pdf-structural.cjs
       - name: Rasterize all PDFs
         run: node tests/pdf-visual-qa.cjs
       - name: Upload rendered pages
