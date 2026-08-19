@@ -84,19 +84,12 @@ function buildRuntime() {
 }
 
 function verifyFiles() {
-  const required = ['app.js', 'index.cjs', 'index.runtime.cjs', 'public/index.html', 'public/app.js', 'public/mpesa.js', 'server/document-branding.cjs', 'public/assets/branding/logo.svg', 'public/assets/branding/logo-monochrome.svg', 'server/pdf/index.cjs', 'server/pdf/a4-renderer.cjs', 'server/pdf/receipt.cjs', 'server/pdf/schema.cjs', 'server/pdf/format.js', 'server/pdf/fonts.cjs', 'server/pdf/document-adapter.cjs', 'server/services/mpesa/runtime-routes.cjs', 'scripts/user-management-server.cjs', 'scripts/pdf-fixtures.js', 'scripts/pdf-receipt-smoke.cjs', 'assets/fonts/DejaVuSans.ttf', 'assets/fonts/DejaVuSans-Bold.ttf', 'assets/fonts/LICENSE.txt', 'scripts/invoice-client-hardening.cjs'];
+  const required = ['app.js', 'index.cjs', 'index.runtime.cjs', 'public/index.html', 'public/app.js', 'public/invoice-workspace.js', 'public/mpesa.js', 'server/document-branding.cjs', 'public/assets/branding/logo.svg', 'public/assets/branding/logo-monochrome.svg', 'server/pdf/index.cjs', 'server/pdf/a4-renderer.cjs', 'server/pdf/receipt.cjs', 'server/pdf/schema.cjs', 'server/pdf/format.js', 'server/pdf/fonts.cjs', 'server/pdf/document-adapter.cjs', 'server/services/mpesa/runtime-routes.cjs', 'scripts/user-management-server.cjs', 'scripts/pdf-fixtures.js', 'scripts/pdf-receipt-smoke.cjs', 'assets/fonts/DejaVuSans.ttf', 'assets/fonts/DejaVuSans-Bold.ttf', 'assets/fonts/LICENSE.txt'];
   for (const file of required) if (!fs.existsSync(path.join(root, file))) throw new Error(`Build: missing required file ${file}`);
   const renderer = fs.readFileSync(path.join(root, 'server/pdf/a4-renderer.cjs'), 'utf8'); if (!renderer.includes("require('../document-branding.cjs')")) throw new Error('Build: A4 renderer is not using shared document branding'); if (renderer.includes('const C = {')) throw new Error('Build: A4 renderer contains a private palette'); if (!renderer.includes('loadLogo(BRAND.logo)')) throw new Error('Build: canonical logo fallback missing');
 }
 
-function runInvoiceFixes() {
-  for (const script of ['scripts/invoice-performance-patch.cjs', 'scripts/invoice-page-hardening.cjs', 'scripts/invoice-client-hardening.cjs']) {
-    const result = spawnSync(process.execPath, [path.join(root, script)], { stdio: 'inherit' });
-    if (result.status !== 0) process.exit(result.status || 1);
-  }
-}
-
 for (const font of fonts) if (!fs.existsSync(font) || !fs.statSync(font).isFile() || fs.statSync(font).size === 0) throw new Error(`Build: invalid PDF font ${font}`);
-buildRuntime(); runInvoiceFixes(); verifyFiles();
+buildRuntime(); verifyFiles();
 for (const file of ['server/document-branding.cjs', 'server/pdf/index.cjs', 'server/pdf/a4-renderer.cjs', 'server/pdf/receipt.cjs', 'server/pdf/schema.cjs', 'server/pdf/document-adapter.cjs', 'scripts/user-management-server.cjs', 'scripts/pdf-fixtures.js', 'index.runtime.cjs']) { const result = spawnSync(process.execPath, ['--check', path.join(root, file)], { stdio: 'inherit' }); if (result.status !== 0) process.exit(result.status || 1); }
 console.log('[build] authoritative invoice, quotation and receipt PDF engine verified');
