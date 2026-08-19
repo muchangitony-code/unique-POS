@@ -1,13 +1,12 @@
 (function () {
   'use strict';
 
-  // The legacy invoice route is deliberately bypassed. The API is fast (the
-  // Railway logs show 200 responses in milliseconds); the browser is freezing
-  // after the response while the monolithic app route renders the invoice view.
+  // The legacy invoice route is deliberately bypassed. Railway shows the
+  // invoice API returning 200 responses in milliseconds; the browser freeze
+  // happens after the response, inside the monolithic client render path.
   // This controller owns invoice navigation and keeps the invoice UI small,
   // paginated and asynchronous.
 
-  var VIEW_PARAM = 'view=invoices';
   var TOKEN_KEY = 'uniquepos.token';
   var active = false;
   var rendering = false;
@@ -35,13 +34,7 @@
   function setInvoiceUrl() {
     var url = new URL(window.location.href);
     url.searchParams.set('view', 'invoices');
-    history.replaceState({ invoiceWorkspace: true }, '', url.pathname + '?' + url.searchParams.toString());
-  }
-
-  function clearInvoiceUrl() {
-    var url = new URL(window.location.href);
-    url.searchParams.delete('view');
-    history.replaceState(null, '', url.pathname + (url.search ? '?' + url.searchParams.toString() : '') + url.hash);
+    history.replaceState({ invoiceWorkspace: true }, '', url.pathname + '?' + url.searchParams.toString() + url.hash);
   }
 
   function root() {
@@ -126,7 +119,7 @@
     } catch (error) {
       if (!active || !root()) return;
       root().innerHTML = '<section class="card section-card invoice-workspace" data-invoice-workspace="1">' +
-        '<div class="section-head"><div><h3>Invoices</h3><p>The invoice workspace is responsive even when the service is unavailable.</p></div></div>' +
+        '<div class="section-head"><div><h3>Invoices</h3><p>The invoice workspace remains responsive even when the service is unavailable.</p></div></div>' +
         '<div class="empty-state"><i class="fa-solid fa-triangle-exclamation"></i><strong>Unable to load invoices.</strong><p>' + escapeHtml(error && error.message ? error.message : 'Invoice service unavailable.') + '</p><button class="btn btn-primary" type="button" data-invoice-refresh="1">Retry</button></div>' +
       '</section>';
     } finally {
@@ -169,8 +162,8 @@
     observer.observe(target, { childList: true, subtree: true });
   }
 
-  // Capture before the monolithic app.js click delegate. The legacy invoice
-  // route is never entered, so its render path cannot freeze the page.
+  // Capture before the monolithic app.js delegates. The legacy invoice route
+  // is never entered, so its render path cannot freeze the page.
   document.addEventListener('click', function (event) {
     var routeButton = event.target && event.target.closest ? event.target.closest('[data-route]') : null;
     if (routeButton) {
@@ -193,6 +186,22 @@
       event.stopImmediatePropagation();
       render();
       installObserver();
+    }
+  }, true);
+
+  // Prevent global app handlers from replacing the isolated invoice view while
+  // the user searches or changes branch/user selectors.
+  document.addEventListener('input', function (event) {
+    if (!active) return;
+    if (event.target && event.target.id === 'globalSearchInput') {
+      event.stopImmediatePropagation();
+    }
+  }, true);
+
+  document.addEventListener('change', function (event) {
+    if (!active) return;
+    if (event.target && (event.target.id === 'branchSelect' || event.target.id === 'userSelect')) {
+      event.stopImmediatePropagation();
     }
   }, true);
 
