@@ -4,7 +4,7 @@
   window.__invoiceRouteFallbackInstalled = true;
 
   var TOKEN_KEY = 'uniquepos.token';
-  var originalHashChange = window.location.hash;
+  var suppressNextHashRender = false;
 
   function esc(value) {
     return String(value == null ? '' : value)
@@ -85,9 +85,26 @@
     return String(window.location.hash || '').replace(/^#/, '') === 'invoices';
   }
 
+  // Intercept the dashboard/sidebar Invoices click BEFORE app.js's document click
+  // handler. This is the critical isolation point: the legacy routeTo/loadInvoicesData/
+  // renderInvoices chain is never entered for an invoice navigation click.
+  window.addEventListener('click', function (event) {
+    var target = event.target && event.target.closest ? event.target.closest('[data-route="invoices"]') : null;
+    if (!target) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    suppressNextHashRender = true;
+    window.location.hash = 'invoices';
+    renderInvoicesFallback();
+  }, true);
+
   window.addEventListener('hashchange', function (event) {
     if (!isInvoicesRoute()) return;
     event.stopImmediatePropagation();
+    if (suppressNextHashRender) {
+      suppressNextHashRender = false;
+      return;
+    }
     renderInvoicesFallback();
   }, true);
 
