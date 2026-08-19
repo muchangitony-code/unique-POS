@@ -1,10 +1,8 @@
-/* Unique POS — receipt logo fallback + receipt print-path fix.
-   Receipt printing uses the already-saved document preview instead of re-entering
-   the PDF/payment validation path. Checkout payment validation remains unchanged. */
+/* Unique POS — receipt logo fallback + receipt print-path fix. */
 (() => {
   'use strict';
 
-  const CANONICAL_LOGO = '/assets/unique-solar-kenya-logo.svg';
+  const CANONICAL_LOGO = '/assets/branding/logo-monochrome.svg';
 
   function fixLogo(img) {
     if (!(img instanceof HTMLImageElement)) return;
@@ -12,7 +10,7 @@
     const isBrandLogo = img.classList.contains('receipt-logo') || /logo|unique solar/i.test(alt);
     if (!isBrandLogo) return;
     const src = String(img.getAttribute('src') || '').trim();
-    if (src === CANONICAL_LOGO || src.endsWith('/assets/unique-solar-kenya-logo.svg')) return;
+    if (src === CANONICAL_LOGO || src.endsWith('/assets/branding/logo-monochrome.svg')) return;
     img.src = CANONICAL_LOGO;
   }
 
@@ -24,19 +22,14 @@
     const token = localStorage.getItem('uniquepos.token') || '';
     const headers = new Headers({ Accept: 'text/html' });
     if (token) headers.set('Authorization', 'Bearer ' + token);
-
     const branchRaw = localStorage.getItem('uniquepos.branchId') || '';
     const branchId = parseInt(branchRaw, 10);
     if (Number.isInteger(branchId) && branchId > 0) headers.set('x-branch-id', String(branchId));
-
     const url = '/api/documents/' + encodeURIComponent(type) + '/' + encodeURIComponent(id) + '/preview?paper=' + encodeURIComponent(paper || '80mm');
     return fetch(url, { headers }).then(async (response) => {
       if (!response.ok) {
         let message = 'Unable to load the receipt for printing.';
-        try {
-          const body = await response.json();
-          if (body && body.error) message = String(body.error);
-        } catch (_) {}
+        try { const body = await response.json(); if (body && body.error) message = String(body.error); } catch (_) {}
         throw new Error(message);
       }
       const body = await response.json();
@@ -64,15 +57,10 @@
           window.setTimeout(() => frame.remove(), 1500);
         }, 250);
       };
-      frame.onerror = () => {
-        if (!printed) window.alert('Unable to load the receipt for printing.');
-        frame.remove();
-      };
+      frame.onerror = () => { if (!printed) window.alert('Unable to load the receipt for printing.'); frame.remove(); };
       document.body.appendChild(frame);
       frame.srcdoc = html;
-      window.setTimeout(() => {
-        if (!printed && frame.isConnected) frame.remove();
-      }, 10000);
+      window.setTimeout(() => { if (!printed && frame.isConnected) frame.remove(); }, 10000);
     }).catch((error) => {
       const message = error && error.message ? error.message : 'Unable to print receipt.';
       const toast = document.getElementById('toast');
@@ -80,23 +68,17 @@
         toast.textContent = message;
         toast.classList.remove('hidden');
         window.setTimeout(() => toast.classList.add('hidden'), 4500);
-      } else {
-        window.alert(message);
-      }
+      } else window.alert(message);
     });
   }
 
-  // Intercept only the receipt Print action. Invoice/quotation printing continues
-  // through the existing server PDF pipeline, and checkout validation is untouched.
   document.addEventListener('click', (event) => {
     const button = event.target.closest && event.target.closest('[data-action="print-document"]');
     if (!button) return;
     if (String(button.getAttribute('data-type') || '').toLowerCase() !== 'receipt') return;
-
     const id = button.getAttribute('data-id');
     if (!id) return;
     const paper = button.getAttribute('data-paper') || '80mm';
-
     event.preventDefault();
     event.stopImmediatePropagation();
     printReceiptFromPreview('receipt', id, paper);
