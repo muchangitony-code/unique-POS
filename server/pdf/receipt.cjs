@@ -15,9 +15,7 @@ const LOGO_SIZE_MAX = 82;
 const MAX_LOGO = 2 * 1024 * 1024;
 const C = BRAND.colors;
 
-function text(pdf, value, x, y, width, o = {}) {
-  pdf.font(o.font || 'body').fontSize(o.size || FONT).fillColor(o.color || C.ink).text(String(value ?? ''), x, y, { width, align: o.align || 'left', lineGap: o.lineGap || 0 });
-}
+function text(pdf, value, x, y, width, o = {}) { pdf.font(o.font || 'body').fontSize(o.size || FONT).fillColor(o.color || C.ink).text(String(value ?? ''), x, y, { width, align: o.align || 'left', lineGap: o.lineGap || 0 }); }
 function measure(pdf, value, width, size = FONT, font = 'body', lineGap = 0) { pdf.font(font).fontSize(size); return pdf.heightOfString(String(value ?? ''), { width, lineGap }); }
 function money(value, currency) { return formatMoney(value, currency); }
 function lineTotal(item) { const gross = mulCents(moneyFromInput(item.unitPrice), item.qty); const discount = moneyFromInput(item.discount || '0'); const net = Math.max(0, gross - discount); const tax = taxCents(net, item.taxRate || 0); return { gross, discount, tax, total: net + tax }; }
@@ -26,21 +24,21 @@ function calculateTotals(items) { return items.reduce((out, item) => { const t =
 function raster(value) { return Buffer.isBuffer(value) && value.length > 4 && ((value[0] === 137 && value[1] === 80 && value[2] === 78 && value[3] === 71) || (value[0] === 255 && value[1] === 216 && value[2] === 255)); }
 function svg(value) { const source = Buffer.isBuffer(value) ? value.toString('utf8') : String(value || ''); return /^\s*<svg(?:\s|>)/i.test(source) && Buffer.byteLength(source, 'utf8') <= MAX_LOGO; }
 function decodeDataImage(value) { const source = String(value || '').trim(); let match = source.match(/^data:image\/(png|jpe?g);base64,(.+)$/i); if (match) { try { const buffer = Buffer.from(match[2], 'base64'); return raster(buffer) && buffer.length <= MAX_LOGO ? buffer : null; } catch (_) { return null; } } match = source.match(/^data:image\/svg\+xml(?:;charset=[^;]+)?;base64,(.+)$/i); if (match) { try { const buffer = Buffer.from(match[1], 'base64'); return svg(buffer) ? buffer.toString('utf8') : null; } catch (_) { return null; } } return null; }
-async function loadLogo(source, fallback) {
+async function loadLogo(source) {
   if (raster(source) || svg(source)) return source;
   const data = decodeDataImage(source); if (data) return data;
-  const raw = String(source || fallback || '').trim(); if (!raw) return null;
+  const raw = String(source || '').trim(); if (!raw) return null;
   if (/^(iVBOR|\/9j\/)/.test(raw)) { try { const buffer = Buffer.from(raw, 'base64'); if (raster(buffer) && buffer.length <= MAX_LOGO) return buffer; } catch (_) {} }
   const files = [];
   if (raw.startsWith('/')) { files.push(path.join(process.cwd(), 'public', raw.slice(1))); files.push(path.join(process.cwd(), raw.slice(1))); }
-  else if (!/^https?:\/\//i.test(raw)) { files.push(path.resolve(process.cwd(), raw)); files.push(path.join(process.cwd(), 'public', raw)); }
+  else if (!/^https?:\/\//i.test(raw)) { files.push(path.resolve(process.cwd(), raw)); files.push(path.join(process.cwd(), raw)); }
   for (const file of files) { try { const buffer = fs.readFileSync(file); if (buffer.length > MAX_LOGO) continue; if (raster(buffer)) return buffer; if (svg(buffer)) return buffer.toString('utf8'); } catch (_) {} }
   if (!/^https?:\/\//i.test(raw)) return null;
   try { const response = await fetch(raw, { redirect: 'follow' }); if (!response.ok) return null; const buffer = Buffer.from(await response.arrayBuffer()); if (buffer.length > MAX_LOGO) return null; if (raster(buffer)) return buffer; if (svg(buffer)) return buffer.toString('utf8'); } catch (_) {}
   return null;
 }
 function companyValue(company, key, fallback) { return String(company?.[key] ?? '').trim() || fallback; }
-function logoSource(company) { return String(company?.logoUrl || company?.logo || company?.logoPath || BRAND.thermalLogo || '').trim(); }
+function logoSource(company) { return String(company?.logoUrl || company?.logo || company?.logoPath || '').trim(); }
 function drawThermalLogo(pdf, logo, width, y) {
   if (!logo) throw new Error('Thermal branding logo could not be loaded; refusing to generate an unbranded receipt');
   const size = Math.min(LOGO_SIZE_MAX, width - 20); const x = (width - size) / 2;
@@ -58,7 +56,8 @@ function layout(data, company, paper, probe) {
 }
 
 async function renderReceiptDocument({ doc: data, company, paper = '80mm' }) {
-  const width = WIDTHS[paper] || WIDTHS['80mm']; const items = normalizeItems(data); const totals = calculateTotals(items); const logo = await loadLogo(logoSource(company), BRAND.thermalLogo);
+  const width = WIDTHS[paper] || WIDTHS['80mm']; const items = normalizeItems(data); const totals = calculateTotals(items);
+  const logo = (await loadLogo(logoSource(company))) || (await loadLogo(BRAND.thermalLogo));
   if (!logo) throw new Error('Thermal branding logo could not be loaded; refusing to generate an unbranded receipt');
   const probe = new PDFDocument({ size: [width, 2000], margins: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN } }); registerFonts(probe); const height = layout(data, company, paper, probe); probe.end();
   const pdf = new PDFDocument({ size: [width, height], margins: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN }, autoFirstPage: true, info: { Title: `Receipt ${data.number}`, Author: companyValue(company, 'name', BRAND.legalName) } }); registerFonts(pdf);
