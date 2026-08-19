@@ -15,7 +15,7 @@
     "db:verify": "node scripts/verify-schema.cjs",
     "startup:validate": "node scripts/validate-startup-env.cjs",
     "pdf:sample": "node scripts/pdf-fixtures.js",
-    "pdf:qa": "node scripts/pdf-fixtures.js && node tests/pdf-branding-integrity.cjs && node tests/pdf-structural.cjs",
+    "pdf:qa": "node scripts/pdf-fixtures.js && node tests/pdf-branding-integrity.cjs && node tests/pdf-structural.cjs && node scripts/pdf-receipt-smoke.cjs",
     "pdf:receipt-smoke": "node scripts/pdf-receipt-smoke.cjs",
     "pdf:download-smoke": "node scripts/pdf-download-smoke.cjs",
     "pdf:production-regression": "node scripts/pdf-production-regression.cjs"
