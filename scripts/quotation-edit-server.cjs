@@ -61,7 +61,7 @@ ${router}.patch("/quotations/:id", requireAuth, async (req, res) => {
       await tx.delete(quotationItemsTable).where(eq(quotationItemsTable.quotationId, id));
       await tx.insert(quotationItemsTable).values(items.map(item => ({ quotationId: id, productId: Number.isFinite(item.product_id) && item.product_id > 0 ? item.product_id : null, description: item.description, quantity: item.quantity, unitPrice: item.unit_price.toFixed(2), discount: item.discount.toFixed(2), vatRate: item.vat_rate.toFixed(2), unit: item.unit })));
     });
-    await logAudit(req, { action: "quotation.updated", entityType: "quotation", entityId: id, description: `Updated quotation ${existing.quotationNumber}`, metadata: { quotation: existing.quotationNumber, previousTotal: existing.total, newTotal: total, itemCount: items.length } });
+    await logAudit(req, { action: "quotation.updated", entityType: "quotation", entityId: id, description: "Updated quotation " + existing.quotationNumber, metadata: { quotation: existing.quotationNumber, previousTotal: existing.total, newTotal: total, itemCount: items.length } });
     const [updated] = await db.select().from(quotationsTable).where(eq(quotationsTable.id, id));
     const updatedItems = await db.select().from(quotationItemsTable).where(eq(quotationItemsTable.quotationId, id));
     res.json({ ...updated, items: updatedItems });
