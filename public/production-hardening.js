@@ -1,13 +1,6 @@
 (function () {
   'use strict';
 
-  // Production guard: never expose design-time/demo values when the live API has not supplied data.
-  var DEMO_VALUES = new Set([
-    '125,450', '38,750', '45,200', '32,600', '36', '12', '58,900', '18', '7',
-    'KES 125,450.00', 'KES 38,750.00', 'KES 45,200.00', 'KES 32,600.00', 'KES 58,900.00',
-    'Saturday, 10 Aug 2026', '12:45 PM'
-  ]);
-
   function cleanStaticShell() {
     var branch = document.getElementById('branchSelect');
     if (branch && branch.options.length === 1 && branch.options[0].text === 'Main Branch') {
@@ -31,23 +24,8 @@
     });
   }
 
-  function neutralizeDemoDashboard() {
-    if (String(location.hash || '').replace(/^#/, '').split('?')[0] !== 'dashboard') return;
-    var root = document.getElementById('viewRoot');
-    if (!root) return;
-    root.querySelectorAll('*').forEach(function (el) {
-      if (el.children.length) return;
-      var text = el.textContent.trim();
-      if (DEMO_VALUES.has(text)) {
-        el.textContent = '—';
-        el.setAttribute('title', 'Live value not available');
-      }
-    });
-  }
-
   function run() {
     cleanStaticShell();
-    neutralizeDemoDashboard();
   }
 
   run();
