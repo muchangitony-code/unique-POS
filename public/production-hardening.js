@@ -25,6 +25,15 @@
     document.querySelectorAll('#modalTitle').forEach(function (el) {
       if (el.textContent.trim() === 'Modal') el.textContent = '';
     });
+
+    document.querySelectorAll('*').forEach(function (el) {
+      if (el.children.length) return;
+      var text = el.textContent.trim();
+      if (text === '+254 700 000000' || text === 'sales@uniquesolarkenya.co.ke') {
+        el.textContent = '—';
+        el.setAttribute('title', 'Business contact details not configured');
+      }
+    });
   }
 
   function neutralizeDemoDashboard() {
