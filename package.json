@@ -13,6 +13,8 @@
     "db:migrate": "node scripts/run-migrations.cjs",
     "db:generate-initial": "node scripts/generate-initial-migration.cjs",
     "db:verify": "node scripts/verify-schema.cjs",
+    "db:audit": "node scripts/production-audit.cjs",
+    "db:reset-documents": "node scripts/production-reset.cjs",
     "startup:validate": "node scripts/validate-startup-env.cjs",
     "pdf:sample": "node scripts/pdf-fixtures.js",
     "pdf:qa": "node scripts/pdf-fixtures.js && node tests/pdf-branding-integrity.cjs && node tests/pdf-logo-propagation.cjs && node tests/pdf-document-smoke.cjs && node scripts/pdf-production-regression.cjs && node tests/pdf-structural.cjs && node scripts/pdf-receipt-smoke.cjs",
