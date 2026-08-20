@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { patchUserManagementRoutes } = require('./user-management-server.cjs');
+const { patchQuotationEditRoutes } = require('./quotation-edit-server.cjs');
 
 const root = path.resolve(__dirname, '..');
 const sourceBundle = path.join(root, 'index.cjs');
@@ -78,7 +79,7 @@ function patchMpesaRoutes(source) {
 function buildRuntime() {
   if (!fs.existsSync(sourceBundle)) throw new Error(`Build: missing ${sourceBundle}`); let source = fs.readFileSync(sourceBundle, 'utf8');
   try { source = patchUserManagementRoutes(source); } catch (error) { const message = String(error?.message || error); if (/Express app .*not found|could not locate Express application variable|application listen point not found/i.test(message)) console.warn(`[build] User-management patch skipped: ${message}`); else throw error; }
-  source = patchDocumentDeletionRoutes(source); source = installPdfEngine(source); source = patchMpesaRoutes(source); fs.writeFileSync(runtimeBundle, source, 'utf8');
+  source = patchDocumentDeletionRoutes(source); source = patchQuotationEditRoutes(source); source = installPdfEngine(source); source = patchMpesaRoutes(source); fs.writeFileSync(runtimeBundle, source, 'utf8');
   const runtime = fs.readFileSync(runtimeBundle, 'utf8');
   if (!runtime.includes("require('./server/pdf/index.cjs')") || !runtime.includes("require('./server/pdf/document-adapter.cjs')")) throw new Error('Build: authoritative PDF engine missing from runtime bundle');
   for (const stale of ['build-safe.cjs', 'build-guard.cjs', 'PDF_SVG_LOGO_PATCH', 'renderLegacyDocumentPdf', 'legacyRenderPdfBuffer', 'legacy-adapter.cjs', 'server/pdf/stable.cjs', 'server/pdf/clean.cjs', 'receipt-logo-fix.js', 'receipt-print-payment-fix.js']) if (runtime.includes(stale)) throw new Error(`Build: stale document reference remains: ${stale}`);
