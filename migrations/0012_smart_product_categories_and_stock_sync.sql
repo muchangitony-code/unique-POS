@@ -16,7 +16,6 @@ CREATE TABLE IF NOT EXISTS product_category_rules (
 CREATE INDEX IF NOT EXISTS product_category_rules_active_priority_idx
   ON product_category_rules (is_active, priority, id);
 
--- Seed only if the rule does not already exist. Existing user-created rules are preserved.
 INSERT INTO product_category_rules (category_name, priority, phrases, keywords)
 SELECT * FROM (VALUES
   ('Inverters', 10, ARRAY['hybrid inverter','solar inverter','off grid inverter','grid tie inverter','grid-tie inverter','inverter charger'], ARRAY['inverter','ups']),
@@ -38,8 +37,6 @@ WHERE NOT EXISTS (
   SELECT 1 FROM product_category_rules r WHERE lower(r.category_name) = lower(seed.category_name)
 );
 
--- Make sure inferred categories exist. This uses the same minimal category contract
--- already used by the bulk importer (name + created_at).
 INSERT INTO categories (name, created_at)
 SELECT DISTINCT r.category_name, NOW()
 FROM product_category_rules r
@@ -75,7 +72,7 @@ BEGIN
       OR EXISTS (
         SELECT 1 FROM unnest(r.keywords) keyword
         WHERE btrim(keyword) <> ''
-          AND (compact_name = lower(btrim(keyword)) OR compact_name LIKE '% ' || lower(btrim(keyword)) || ' %')
+          AND position(' ' || lower(btrim(keyword)) || ' ' IN ' ' || compact_name || ' ') > 0
       )
     )
   ORDER BY r.priority ASC, r.id ASC
@@ -130,9 +127,15 @@ CREATE OR REPLACE FUNCTION product_stock_sync_legacy_total()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
+DECLARE
+  affected_product_id INTEGER;
 BEGIN
-  PERFORM sync_product_legacy_stock(COALESCE(NEW.product_id, OLD.product_id));
-  RETURN COALESCE(NEW, OLD);
+  affected_product_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.product_id ELSE NEW.product_id END;
+  PERFORM sync_product_legacy_stock(affected_product_id);
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
 END;
 $$;
 
