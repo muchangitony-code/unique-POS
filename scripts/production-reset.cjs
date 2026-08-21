@@ -7,6 +7,16 @@ const CONFIRM_TEST = 'DELETE_TEST_DOCUMENTS';
 const CONFIRM_ALL = 'DELETE_ALL_DOCUMENTS';
 const CONFIRM_CATALOG = 'DELETE_ALL_PRODUCTS_INVENTORY';
 
+// Only these tables contain disposable inventory/catalog relationships.
+// Transactional history is deliberately NOT in this allow-list.
+const INVENTORY_CHILD_TABLES = new Set([
+  'product_stock',
+  'stock',
+  'stock_adjustments',
+  'stock_movements',
+  'barcode_labels'
+]);
+
 function assertSafeReset(scope) {
   const nodeEnv = String(process.env.NODE_ENV || 'production').toLowerCase();
   const confirm = process.env.RESET_CONFIRM || '';
@@ -23,6 +33,85 @@ function assertSafeReset(scope) {
 async function count(client, table) {
   const { rows } = await client.query(`SELECT COUNT(*)::int AS count FROM ${table}`);
   return rows[0].count;
+}
+
+function quoteIdent(value) {
+  return '"' + String(value).replaceAll('"', '""') + '"';
+}
+
+async function findProductReferences(client) {
+  const { rows } = await client.query(`
+    SELECT
+      child.relname AS table_name,
+      child_col.attname AS column_name
+    FROM pg_constraint c
+    JOIN pg_class child ON child.oid = c.conrelid
+    JOIN pg_class parent ON parent.oid = c.confrelid
+    JOIN pg_attribute child_col
+      ON child_col.attrelid = child.oid
+     AND child_col.attnum = c.conkey[1]
+    WHERE c.contype = 'f'
+      AND parent.relname = 'products'
+      AND child.relnamespace = 'public'::regnamespace
+      AND array_length(c.conkey, 1) = 1
+    ORDER BY child.relname, child_col.attname
+  `);
+  return rows;
+}
+
+async function countProductReferences(client, tableName, columnName) {
+  const sql = `
+    SELECT COUNT(*)::int AS count
+    FROM ${quoteIdent(tableName)} child
+    JOIN products p ON p.id = child.${quoteIdent(columnName)}
+  `;
+  const { rows } = await client.query(sql);
+  return rows[0].count;
+}
+
+async function resetCatalogSafely(client) {
+  const references = await findProductReferences(client);
+  const blocking = [];
+
+  for (const ref of references) {
+    const refCount = await countProductReferences(client, ref.table_name, ref.column_name);
+    if (refCount === 0) continue;
+    if (!INVENTORY_CHILD_TABLES.has(ref.table_name)) {
+      blocking.push({ ...ref, count: refCount });
+    }
+  }
+
+  if (blocking.length) {
+    throw new Error(
+      'Catalog reset aborted because products are referenced by transactional/history records: ' +
+      JSON.stringify(blocking) +
+      '. No data was deleted. Archive or clear those transactions first.'
+    );
+  }
+
+  // Remove only disposable inventory rows that reference the current product set.
+  // Do not use CASCADE: that could silently erase sales, invoices, purchases or returns.
+  for (const ref of references) {
+    if (!INVENTORY_CHILD_TABLES.has(ref.table_name)) continue;
+    await client.query(`
+      DELETE FROM ${quoteIdent(ref.table_name)} child
+      USING products p
+      WHERE child.${quoteIdent(ref.column_name)} = p.id
+    `);
+  }
+
+  const deleted = await client.query('DELETE FROM products');
+
+  await client.query(`
+    DO $$
+    BEGIN
+      IF to_regclass('public.products_id_seq') IS NOT NULL THEN
+        PERFORM setval('public.products_id_seq', 1, false);
+      END IF;
+    END $$;
+  `);
+
+  return deleted.rowCount;
 }
 
 async function run() {
@@ -50,17 +139,17 @@ async function run() {
     await client.query('BEGIN');
 
     if (scope === 'all') {
-      // Full document reset. Master data such as products, customers, branches and users remains.
+      // Preserve master data including products. This behavior is unchanged.
       await client.query('TRUNCATE TABLE invoices, quotations RESTART IDENTITY CASCADE');
       await client.query("DELETE FROM document_sequences WHERE lower(doc_type) IN ('invoice', 'quotation', 'quote')");
     } else if (scope === 'catalog') {
-      // Fresh product/inventory catalogue reset.
-      // Products are the parent records for the inventory and product-linked transaction rows.
-      // CASCADE removes dependent product/inventory rows atomically, preventing orphaned records.
-      // Business identity, users, customers, branches, settings and reference configuration remain.
-      await client.query('TRUNCATE TABLE products RESTART IDENTITY CASCADE');
-      await client.query('TRUNCATE TABLE categories, brands RESTART IDENTITY CASCADE');
-      await client.query('DELETE FROM document_sequences WHERE lower(doc_type) IN (\'purchase\', \'stock\', \'transfer\')');
+      // Clean-start product/inventory catalogue reset.
+      // This branch is deliberately conservative: any product referenced by
+      // transactional history causes a full rollback instead of a cascade delete.
+      const deletedProducts = await resetCatalogSafely(client);
+      console.log('[production-reset] Catalog products removed', { deletedProducts });
+      // Categories, brands, customers, branches, users, settings and document
+      // history are intentionally preserved so the POS remains operational.
     } else {
       const invoiceIds = (await client.query(`
         SELECT id FROM invoices
