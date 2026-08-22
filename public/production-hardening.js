@@ -36,6 +36,49 @@
     });
   }
 
+  function ensureInventoryBulkAddButton() {
+    var route = String(location.hash || '').replace(/^#/, '').split('?')[0];
+    if (route !== 'inventory') return;
+
+    var root = document.getElementById('viewRoot');
+    if (!root) return;
+
+    var toolbar = root.querySelector('.module-toolbar');
+    if (!toolbar) return;
+    if (toolbar.querySelector('[data-action="bulk-add-products"]')) return;
+
+    var group = toolbar.querySelector('.inline-group');
+    if (!group) {
+      group = document.createElement('div');
+      group.className = 'inline-group';
+      toolbar.prepend(group);
+    }
+
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-primary';
+    button.setAttribute('data-action', 'bulk-add-products');
+    button.innerHTML = '<i class="fa-solid fa-file-import"></i> Bulk Add Products';
+
+    var productListButton = group.querySelector('[data-route="products"]');
+    if (productListButton) {
+      group.insertBefore(button, productListButton);
+    } else {
+      group.appendChild(button);
+    }
+  }
+
+  function bindBulkAddAction() {
+    if (window.__uniquePosBulkAddBound) return;
+    window.__uniquePosBulkAddBound = true;
+    document.addEventListener('click', function (event) {
+      var button = event.target.closest('[data-action="bulk-add-products"]');
+      if (!button) return;
+      event.preventDefault();
+      location.hash = 'bulk-import';
+    });
+  }
+
   function neutralizeDemoDashboard() {
     var route = String(location.hash || '').replace(/^#/, '').split('?')[0];
     if (route !== 'dashboard') return;
@@ -71,10 +114,12 @@
     window.setTimeout(function () {
       scheduled = false;
       cleanStaticShell();
+      ensureInventoryBulkAddButton();
       neutralizeIfDashboardApiUnavailable();
     }, 0);
   }
 
+  bindBulkAddAction();
   run();
   window.addEventListener('hashchange', run);
   new MutationObserver(run).observe(document.documentElement, { childList: true, subtree: true });
