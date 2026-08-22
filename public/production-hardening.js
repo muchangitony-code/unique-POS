@@ -79,6 +79,8 @@
     });
   }
 
+  // Never allow the dashboard to display the old hard-coded demo KPIs.
+  // A zero is a valid live value; showing fabricated sales/till figures is not.
   function neutralizeDemoDashboard() {
     var route = String(location.hash || '').replace(/^#/, '').split('?')[0];
     if (route !== 'dashboard') return;
@@ -94,19 +96,6 @@
     });
   }
 
-  function neutralizeIfDashboardApiUnavailable() {
-    var token = localStorage.getItem('uniquepos.token');
-    if (!token) return;
-    fetch('/api/dashboard/stats', {
-      headers: { Authorization: 'Bearer ' + token },
-      credentials: 'same-origin'
-    }).then(function (res) {
-      if (!res.ok) neutralizeDemoDashboard();
-    }).catch(function () {
-      neutralizeDemoDashboard();
-    });
-  }
-
   var scheduled = false;
   function run() {
     if (scheduled) return;
@@ -115,7 +104,7 @@
       scheduled = false;
       cleanStaticShell();
       ensureInventoryBulkAddButton();
-      neutralizeIfDashboardApiUnavailable();
+      neutralizeDemoDashboard();
     }, 0);
   }
 
