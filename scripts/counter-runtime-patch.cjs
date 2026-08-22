@@ -97,5 +97,78 @@ replaceFunction('addProductToBasket', `function addProductToBasket(productId) {
     showToast("Added to basket.", "success");
   }`);
 
+function patchHandleAction() {
+  const marker = 'async function handleAction(action, button, event) {';
+  const start = source.indexOf(marker);
+  if (start < 0) throw new Error('Counter patch: missing handleAction');
+  if (source.includes('counter-basket-inc')) return;
+  const insertAt = start + marker.length;
+  const guard = `\n    if (action === "add-to-basket") { addProductToBasket(button && button.dataset ? button.dataset.id : ""); return; }\n    if (action === "counter-basket-inc") { adjustCounterBasketLine(button.dataset.id, 1); return; }\n    if (action === "counter-basket-dec") { adjustCounterBasketLine(button.dataset.id, -1); return; }\n    if (action === "counter-basket-remove") { removeCounterBasketLine(button.dataset.id); return; }\n    if (action === "counter-basket-clear") { clearBasket(true); return; }\n`;
+  source = source.slice(0, insertAt) + guard + source.slice(insertAt);
+}
+
+function installBasketHelpers() {
+  if (source.includes('function renderCounterBasket()')) return;
+  const anchor = source.indexOf('\n  function ');
+  if (anchor < 0) throw new Error('Counter patch: helper insertion anchor not found');
+  const helpers = `
+
+  function renderCounterBasket() {
+    if (state.activeRoute !== "sales") return;
+    const card = document.querySelector(".pos-column--basket > .section-card:first-child");
+    if (!card) return;
+    const basket = Array.isArray(state.pos.basket) ? state.pos.basket : [];
+    const subtotal = basket.reduce(function (sum, line) { return sum + firstNumber(line.unit_price, 0) * firstNumber(line.quantity, 0); }, 0);
+    const discount = firstNumber(state.pos.discount_amount, 0);
+    const shipping = firstNumber(state.pos.shipping_amount, 0);
+    const taxable = Math.max(0, subtotal - discount);
+    const vat = taxable * 0.16;
+    const total = taxable + vat + shipping;
+    const rows = basket.length ? basket.map(function (line) {
+      const id = escapeAttr(String(line.product_id));
+      const qty = firstNumber(line.quantity, 0);
+      const unit = firstNumber(line.unit_price, 0);
+      return '<tr><td><strong>' + escapeHtml(firstText(line.product_name, "Product")) + '</strong><small>' + escapeHtml(firstText(line.product_code, "")) + '</small></td><td>' + money(unit) + '</td><td><span class="qty-control"><button type="button" data-action="counter-basket-dec" data-id="' + id + '">−</button><strong>' + qty + '</strong><button type="button" data-action="counter-basket-inc" data-id="' + id + '">+</button></span></td><td>' + money(unit * qty) + '</td><td><button type="button" class="btn btn-ghost" data-action="counter-basket-remove" data-id="' + id + '" title="Remove"><i class="fa-solid fa-trash"></i></button></td></tr>';
+    }).join("") : '<tr><td colspan="5" class="empty-state">Basket is empty. Add products to begin.</td></tr>';
+    card.innerHTML = '<div class="basket-section-head"><h4>Basket <span>(' + basket.length + ' items)</span></h4><button type="button" class="btn btn-ghost" data-action="counter-basket-clear"' + (basket.length ? '' : ' disabled') + '>Clear</button></div><div class="basket-table-wrap"><table class="basket-table"><thead><tr><th>Product</th><th>Unit</th><th>Qty</th><th>Total</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div><div class="pos-summary"><div class="pos-summary-row"><span>Subtotal</span><strong>' + money(subtotal) + '</strong></div><div class="pos-summary-row"><span>Discount</span><strong>' + money(discount) + '</strong></div><div class="pos-summary-row"><span>VAT (16%)</span><strong>' + money(vat) + '</strong></div><div class="pos-summary-row"><span>Shipping</span><strong>' + money(shipping) + '</strong></div><div class="pos-summary-row total"><span>Grand Total</span><strong>' + money(total) + '</strong></div></div>';
+  }
+
+  function adjustCounterBasketLine(productId, delta) {
+    const line = state.pos.basket.find(function (item) { return String(item.product_id) === String(productId); });
+    if (!line) return;
+    const product = state.pos.products.find(function (item) { return String(item.id) === String(productId); });
+    const rawStock = product ? (product.current_stock != null ? product.current_stock : (product.stock != null ? product.stock : product.available_stock)) : null;
+    const stockKnown = rawStock != null && rawStock !== "";
+    const next = firstNumber(line.quantity, 0) + delta;
+    if (next <= 0) { removeCounterBasketLine(productId); return; }
+    if (stockKnown && next > firstNumber(rawStock, 0)) { showToast("Cannot exceed available stock.", "error"); return; }
+    line.quantity = next;
+    renderCurrentRoute();
+  }
+
+  function removeCounterBasketLine(productId) {
+    state.pos.basket = state.pos.basket.filter(function (item) { return String(item.product_id) !== String(productId); });
+    renderCurrentRoute();
+  }
+`;
+  source = source.slice(0, anchor) + helpers + source.slice(anchor);
+}
+
+function wrapRenderCurrentRoute() {
+  const marker = 'function renderCurrentRoute(';
+  const start = source.indexOf(marker);
+  if (start < 0) throw new Error('Counter patch: missing renderCurrentRoute');
+  if (source.includes('__counterOriginalRenderCurrentRoute')) return;
+  const end = findFunctionEnd(source, start);
+  const original = source.slice(start, end);
+  const renamed = original.replace(marker, 'function __counterOriginalRenderCurrentRoute(');
+  const wrapper = `function renderCurrentRoute() {\n    const result = __counterOriginalRenderCurrentRoute.apply(this, arguments);\n    renderCounterBasket();\n    return result;\n  }`;
+  source = source.slice(0, start) + renamed + '\n\n  ' + wrapper + source.slice(end);
+}
+
+patchHandleAction();
+installBasketHelpers();
+wrapRenderCurrentRoute();
+
 fs.writeFileSync(file, source);
-console.log('[counter-patch] Counter product visibility, Add to Basket, and stock guards installed.');
+console.log('[counter-patch] Counter catalogue, basket renderer, quantity controls, action dispatch, and stock guards installed.');
