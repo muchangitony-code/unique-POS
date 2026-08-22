@@ -77,8 +77,8 @@ replaceFunction('addProductToBasket', `function addProductToBasket(productId) {
     const rawStock = product.current_stock != null ? product.current_stock : (product.stock != null ? product.stock : product.available_stock);
     const stockKnown = rawStock != null && rawStock !== "";
     const stock = stockKnown ? firstNumber(rawStock, 0) : null;
-    const existing = state.pos.basket.find(function (line) { return String(line.product_id) === String(productId); });
     if (stockKnown && stock <= 0) { showToast("This product is out of stock in the selected branch.", "error"); return; }
+    const existing = state.pos.basket.find(function (line) { return String(line.product_id) === String(productId); });
     if (existing) {
       if (stockKnown && existing.quantity >= stock) { showToast("Cannot sell more than available stock.", "error"); return; }
       existing.quantity += 1;
@@ -97,28 +97,5 @@ replaceFunction('addProductToBasket', `function addProductToBasket(productId) {
     showToast("Added to basket.", "success");
   }`);
 
-function patchActionDispatch() {
-  const marker = 'async function handleAction(action, button, event) {';
-  const start = source.indexOf(marker);
-  if (start < 0) throw new Error('Counter patch: missing handleAction');
-  const insertAt = start + marker.length;
-  const guard = `\n    if (action === "add-to-basket") { addProductToBasket(button && button.dataset ? button.dataset.id : ""); return; }\n    if (action === "counter-basket-inc") { adjustCounterBasketLine(button.dataset.id, 1); return; }\n    if (action === "counter-basket-dec") { adjustCounterBasketLine(button.dataset.id, -1); return; }\n    if (action === "counter-basket-remove") { removeCounterBasketLine(button.dataset.id); return; }\n    if (action === "counter-basket-clear") { clearBasket(true); return; }\n`;
-  source = source.slice(0, insertAt) + guard + source.slice(insertAt);
-}
-
-function installBasketRenderer() {
-  const marker = 'function renderCurrentRoute(';
-  const start = source.indexOf(marker);
-  if (start < 0) throw new Error('Counter patch: missing renderCurrentRoute');
-  source = source.replace(marker, 'function __counterOriginalRenderCurrentRoute(');
-  const wrapper = `\n\n  function renderCurrentRoute() {\n    const result = __counterOriginalRenderCurrentRoute.apply(this, arguments);\n    renderCounterBasket();\n    return result;\n  }\n\n  function renderCounterBasket() {\n    if (state.activeRoute !== "sales") return;\n    const card = document.querySelector(".pos-column--basket > .section-card:first-child");\n    if (!card) return;\n    const basket = Array.isArray(state.pos.basket) ? state.pos.basket : [];\n    const subtotal = basket.reduce(function (sum, line) { return sum + firstNumber(line.unit_price, 0) * firstNumber(line.quantity, 0); }, 0);\n    const discount = firstNumber(state.pos.discount_amount, 0);\n    const shipping = firstNumber(state.pos.shipping_amount, 0);\n    const taxable = Math.max(0, subtotal - discount);\n    const vat = taxable * 0.16;\n    const total = taxable + vat + shipping;\n    const rows = basket.length ? basket.map(function (line) {\n      const id = escapeAttr(String(line.product_id));\n      const qty = firstNumber(line.quantity, 0);\n      const unit = firstNumber(line.unit_price, 0);\n      return '<tr><td><strong>' + escapeHtml(firstText(line.product_name, "Product")) + '</strong><small>' + escapeHtml(firstText(line.product_code, "")) + '</small></td><td>' + money(unit) + '</td><td><span class="qty-control"><button type="button" data-action="counter-basket-dec" data-id="' + id + '">−</button><strong>' + qty + '</strong><button type="button" data-action="counter-basket-inc" data-id="' + id + '">+</button></span></td><td>' + money(unit * qty) + '</td><td><button type="button" class="btn btn-ghost" data-action="counter-basket-remove" data-id="' + id + '" title="Remove"><i class="fa-solid fa-trash"></i></button></td></tr>';\n    }).join("") : '<tr><td colspan="5" class="empty-state">Basket is empty. Add products to begin.</td></tr>';\n    card.innerHTML = '<div class="basket-section-head"><h4>Basket <span>(' + basket.length + ' items)</span></h4><button type="button" class="btn btn-ghost" data-action="counter-basket-clear"' + (basket.length ? '' : ' disabled') + '>Clear</button></div><div class="basket-table-wrap"><table class="basket-table"><thead><tr><th>Product</th><th>Unit</th><th>Qty</th><th>Total</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div><div class="pos-summary"><div class="pos-summary-row"><span>Subtotal</span><strong>' + money(subtotal) + '</strong></div><div class="pos-summary-row"><span>Discount</span><strong>' + money(discount) + '</strong></div><div class="pos-summary-row"><span>VAT (16%)</span><strong>' + money(vat) + '</strong></div><div class="pos-summary-row"><span>Shipping</span><strong>' + money(shipping) + '</strong></div><div class="pos-summary-row total"><span>Grand Total</span><strong>' + money(total) + '</strong></div></div>';\n  }\n\n  function adjustCounterBasketLine(productId, delta) {\n    const line = state.pos.basket.find(function (item) { return String(item.product_id) === String(productId); });\n    if (!line) return;\n    const product = state.pos.products.find(function (item) { return String(item.id) === String(productId); });\n    const rawStock = product ? (product.current_stock != null ? product.current_stock : (product.stock != null ? product.stock : product.available_stock)) : null;\n    const stockKnown = rawStock != null && rawStock !== "";\n    const next = firstNumber(line.quantity, 0) + delta;\n    if (next <= 0) return removeCounterBasketLine(productId);\n    if (stockKnown && next > firstNumber(rawStock, 0)) { showToast("Cannot exceed available stock.", "error"); return; }\n    line.quantity = next;\n    renderCurrentRoute();\n  }\n\n  function removeCounterBasketLine(productId) {\n    state.pos.basket = state.pos.basket.filter(function (item) { return String(item.product_id) !== String(productId); });\n    renderCurrentRoute();\n  }\n`;
-  const insertionPoint = source.indexOf('\n', source.indexOf('}', source.indexOf('function __counterOriginalRenderCurrentRoute(')) + 1);
-  if (insertionPoint < 0) throw new Error('Counter patch: renderCurrentRoute insertion point not found');
-  source = source.slice(0, insertionPoint) + wrapper + source.slice(insertionPoint);
-}
-
-patchActionDispatch();
-installBasketRenderer();
-
 fs.writeFileSync(file, source);
-console.log('[counter-patch] Counter catalogue, basket, quantity controls, action dispatch, and stock guards installed.');
+console.log('[counter-patch] Counter product visibility, Add to Basket, and stock guards installed.');
