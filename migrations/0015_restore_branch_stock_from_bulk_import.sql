@@ -72,4 +72,52 @@ WHERE COALESCE(p.status, 'active') = 'active'
   )
 ON CONFLICT (branch_id, product_id) DO NOTHING;
 
+-- Future bulk/product imports must not strand a positive products.current_stock
+-- value outside the branch-level inventory table. Seed only when there is no
+-- positive branch stock already, so legitimate multi-branch stock is preserved.
+CREATE OR REPLACE FUNCTION seed_product_stock_from_legacy_total()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  target_branch_id INTEGER;
+BEGIN
+  IF COALESCE(NEW.current_stock, 0) <= 0 THEN
+    RETURN NEW;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM product_stock ps
+    WHERE ps.product_id = NEW.id
+      AND ps.current_stock > 0
+  ) THEN
+    RETURN NEW;
+  END IF;
+
+  target_branch_id := COALESCE(
+    NEW.primary_branch_id,
+    (SELECT b.id FROM branches b WHERE b.is_active = TRUE ORDER BY b.id LIMIT 1)
+  );
+
+  IF target_branch_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  INSERT INTO product_stock (product_id, branch_id, current_stock, min_stock)
+  VALUES (NEW.id, target_branch_id, NEW.current_stock, COALESCE(NEW.min_stock, 0))
+  ON CONFLICT (branch_id, product_id)
+  DO UPDATE SET
+    current_stock = GREATEST(product_stock.current_stock, EXCLUDED.current_stock),
+    min_stock = GREATEST(product_stock.min_stock, EXCLUDED.min_stock);
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS seed_product_stock_from_legacy_total_trigger ON products;
+CREATE TRIGGER seed_product_stock_from_legacy_total_trigger
+AFTER INSERT OR UPDATE OF current_stock ON products
+FOR EACH ROW
+EXECUTE FUNCTION seed_product_stock_from_legacy_total();
+
 COMMIT;
