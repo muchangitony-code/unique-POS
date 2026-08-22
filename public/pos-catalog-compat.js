@@ -1,14 +1,16 @@
 (function () {
   "use strict";
 
-  // Counter compatibility layer. The main POS bundle historically filtered
-  // the catalogue to current_stock > 0. A missing branch-stock row must not
-  // hide a valid master product from the Counter.
+  // Counter compatibility layer. The main POS bundle can render an empty
+  // product grid even when the master catalogue contains products. This layer
+  // restores the catalogue from the live product endpoint and keeps stock
+  // status visible instead of silently hiding the cards.
   var originalFetch = window.fetch.bind(window);
   var categoryCache = null;
   var stockCache = null;
   var stockPromise = null;
   var repairTimer = null;
+  var repairing = false;
 
   var CATEGORY_ALIASES = {
     "solar panels": "Solar Panels", "solar panel": "Solar Panels",
@@ -163,25 +165,32 @@
     return [product.product_name, product.product_code, product.barcode, product.category_name].some(function (value) { return String(value || "").toLowerCase().indexOf(query) !== -1; });
   }
   function productCard(product, stock) {
-    var current = number(stock && stock.current, number(product.current_stock, number(product.stock, 0)));
+    var rawStock = stock ? stock.current : (product.current_stock != null ? product.current_stock : (product.stock != null ? product.stock : product.available_stock));
+    var stockKnown = rawStock != null && rawStock !== "";
+    var current = number(rawStock, 0);
     var min = number(stock && stock.min, number(product.min_stock, 0));
-    var inStock = current > 0;
+    var inStock = stockKnown ? current > 0 : true;
     var image = String(product.image_url || "").trim();
     var imageHtml = image ? '<img src="' + escapeAttr(image) + '" alt="' + escapeAttr(product.product_name || "Product") + '" />' : '<i class="fa-solid fa-solar-panel"></i>';
-    var stockClass = current <= 0 ? "out" : (current <= min ? "low" : "ok");
-    var stockText = current <= 0 ? "Out of stock" : (current <= min ? "Low stock" : "In stock");
+    var stockClass = stockKnown && current <= 0 ? "out" : (stockKnown && current <= min ? "low" : "ok");
+    var stockText = stockKnown && current <= 0 ? "Out of stock" : (stockKnown && current <= min ? "Low stock" : "In stock");
     var action = inStock ? ' data-action="add-to-basket"' : '';
     var disabled = inStock ? '' : ' disabled aria-disabled="true" title="No stock available in this branch"';
-    return '<article class="product-card"' + action + ' data-id="' + escapeAttr(String(product.id)) + '"><div class="product-card__image">' + imageHtml + '</div><div class="product-card__body"><div class="product-card__title">' + escapeHtml(product.product_name || "Product") + '</div><div class="product-card__meta"><span>' + money(product.selling_price) + '</span><span class="stock-pill ' + stockClass + '">' + stockText + '</span></div><button type="button" class="btn ' + (inStock ? 'btn-primary' : 'btn-outline') + '" data-action="' + (inStock ? 'add-to-basket' : 'noop') + '" data-id="' + escapeAttr(String(product.id)) + '"' + disabled + '><i class="fa-solid ' + (inStock ? 'fa-plus' : 'fa-ban') + '"></i>' + (inStock ? 'Add' : 'Out of stock') + '</button></div></article>';
+    return '<article class="product-card"' + action + ' data-id="' + escapeAttr(String(product.id)) + '"><div class="product-card__image">' + imageHtml + '</div><div class="product-card__body"><div class="product-card__title">' + escapeHtml(product.product_name || "Product") + '</div><div class="product-card__meta"><span>' + money(product.selling_price) + '</span><span class="stock-pill ' + stockClass + '">' + stockText + '</span></div><button type="button" class="btn ' + (inStock ? 'btn-primary' : 'btn-outline') + '" data-action="' + (inStock ? 'add-to-basket' : 'noop') + '" data-id="' + escapeAttr(String(product.id)) + '"' + disabled + '><i class="fa-solid ' + (inStock ? 'fa-plus' : 'fa-ban') + '"></i>' + (inStock ? 'Add to Basket' : 'Out of stock') + '</button></div></article>';
   }
+
   async function repairEmptyCounterCatalog() {
-    if (String(location.hash || "") !== "#sales") return;
+    if (String(location.hash || "") !== "#sales" || repairing) return;
     var panel = document.querySelector(".pos-products-panel");
-    if (!panel || panel.dataset.catalogRepair === "loading") return;
-    if (panel.querySelector(".product-grid")) return;
+    if (!panel) return;
+
+    // Only leave the normal renderer alone when it actually produced product cards.
+    // A product-grid containing only the empty-state message must be repaired.
+    if (panel.querySelector(".product-card")) return;
+    repairing = true;
     panel.dataset.catalogRepair = "loading";
     try {
-      var response = await originalFetch("/api/products?limit=500&fallback_product_stock=true", {});
+      var response = await originalFetch("/api/products?limit=500&in_stock_only=false&fallback_product_stock=true", {});
       if (!response.ok) throw new Error("Product catalogue request failed");
       var products = normalizeList(await response.json());
       var categories = await getCategoryCache({});
@@ -196,15 +205,30 @@
       var query = currentSearch();
       var filter = activeCategory();
       var filtered = products.filter(function (product) { return matchesSearch(product, query) && matchesCategory(product, filter); });
-      if (!filtered.length) { panel.dataset.catalogRepair = "done"; return; }
+      if (!filtered.length) {
+        panel.dataset.catalogRepair = "empty";
+        return;
+      }
       panel.innerHTML = '<div class="product-grid">' + filtered.map(function (product) { return productCard(product, stockMap[String(product.id)]); }).join("") + '</div>';
       panel.dataset.catalogRepair = "done";
-    } catch (_) { panel.dataset.catalogRepair = "failed"; }
+    } catch (_) {
+      panel.dataset.catalogRepair = "failed";
+    } finally {
+      repairing = false;
+    }
   }
-  function scheduleRepair() { clearTimeout(repairTimer); repairTimer = setTimeout(repairEmptyCounterCatalog, 100); }
-  var observer = new MutationObserver(function () { if (String(location.hash || "") === "#sales") scheduleRepair(); });
+
+  function scheduleRepair() {
+    clearTimeout(repairTimer);
+    repairTimer = setTimeout(repairEmptyCounterCatalog, 150);
+  }
+  var observer = new MutationObserver(function () {
+    if (String(location.hash || "") === "#sales") scheduleRepair();
+  });
   observer.observe(document.documentElement, { childList: true, subtree: true });
   window.addEventListener("hashchange", scheduleRepair);
+  window.addEventListener("load", scheduleRepair);
   document.addEventListener("input", function (event) { if (event.target && event.target.id === "posProductSearch") scheduleRepair(); });
   document.addEventListener("click", function (event) { if (event.target.closest("[data-action=pos-category]")) scheduleRepair(); });
+  scheduleRepair();
 })();
