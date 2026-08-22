@@ -1,44 +1,32 @@
 (function () {
   "use strict";
 
-  // Counter must consume the same live product catalogue as Inventory.
-  // The main POS bundle historically requested only branch-scoped in-stock
-  // rows and then applied a second, name-based category filter. That can hide
-  // valid inventory when branch stock/category naming differs slightly.
+  // Counter compatibility layer. The main POS bundle historically filtered
+  // the catalogue to current_stock > 0. A missing branch-stock row must not
+  // hide a valid master product from the Counter.
   var originalFetch = window.fetch.bind(window);
   var categoryCache = null;
+  var stockCache = null;
+  var stockPromise = null;
+  var repairTimer = null;
 
   var CATEGORY_ALIASES = {
-    "solar panels": "Solar Panels",
-    "solar panel": "Solar Panels",
-    "pv panels": "Solar Panels",
-    "pv panel": "Solar Panels",
+    "solar panels": "Solar Panels", "solar panel": "Solar Panels",
+    "pv panels": "Solar Panels", "pv panel": "Solar Panels",
     "photovoltaic panels": "Solar Panels",
-    "inverters": "Inverters",
-    "inverter": "Inverters",
-    "batteries": "Batteries",
-    "battery": "Batteries",
-    "accessories": "Accessories",
-    "accessory": "Accessories",
-    "cables": "Cables",
-    "cable": "Cables",
-    "electricals": "Electricals",
-    "electrical": "Electricals",
-    "breakers": "Electricals",
-    "breaker": "Electricals",
-    "contactors": "Electricals",
-    "isolators": "Electricals",
-    "bulbs": "Electricals",
-    "bulb": "Electricals",
-    "lighting": "Electricals",
-    "switches & sockets": "Electricals",
-    "switches and sockets": "Electricals",
-    "conduit": "Electricals",
-    "plugs & adapters": "Electricals",
-    "plugs and adapters": "Electricals",
-    "fittings": "Electricals",
-    "networking": "Electricals",
-    "others": "Others"
+    "inverters": "Inverters", "inverter": "Inverters",
+    "batteries": "Batteries", "battery": "Batteries",
+    "accessories": "Accessories", "accessory": "Accessories",
+    "cables": "Cables", "cable": "Cables",
+    "electricals": "Electricals", "electrical": "Electricals",
+    "breakers": "Electricals", "breaker": "Electricals",
+    "contactors": "Electricals", "contactor": "Electricals",
+    "isolators": "Electricals", "isolator": "Electricals",
+    "bulbs": "Electricals", "bulb": "Electricals", "lighting": "Electricals",
+    "switches & sockets": "Electricals", "switches and sockets": "Electricals",
+    "conduit": "Electricals", "plugs & adapters": "Electricals",
+    "plugs and adapters": "Electricals", "fittings": "Electricals",
+    "networking": "Electricals", "others": "Others"
   };
 
   function normalizedCategory(value) {
@@ -46,103 +34,177 @@
     if (!raw) return "Others";
     return CATEGORY_ALIASES[raw.toLowerCase()] || raw;
   }
-
+  function normalizeList(value) {
+    if (Array.isArray(value)) return value;
+    if (value && Array.isArray(value.data)) return value.data;
+    if (value && Array.isArray(value.items)) return value.items;
+    return [];
+  }
+  function number(value, fallback) {
+    var n = Number(value);
+    return Number.isFinite(n) ? n : (fallback || 0);
+  }
+  function escapeHtml(value) {
+    return String(value == null ? "" : value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function escapeAttr(value) { return escapeHtml(value); }
+  function money(value) {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: "KES", maximumFractionDigits: 2 }).format(number(value, 0));
+  }
   function isProductsRequest(url) {
-    try {
-      return new URL(url, window.location.origin).pathname === "/api/products";
-    } catch (_) {
-      return false;
-    }
+    try { return new URL(url, window.location.origin).pathname === "/api/products"; } catch (_) { return false; }
   }
-
   function isCategoriesRequest(url) {
-    try {
-      return new URL(url, window.location.origin).pathname === "/api/categories";
-    } catch (_) {
-      return false;
-    }
+    try { return new URL(url, window.location.origin).pathname === "/api/categories"; } catch (_) { return false; }
   }
-
+  function isStockRequest(url) {
+    try { return new URL(url, window.location.origin).pathname === "/api/inventory/stock-count"; } catch (_) { return false; }
+  }
   function cacheCategories(payload) {
-    var rows = Array.isArray(payload) ? payload : (payload && Array.isArray(payload.data) ? payload.data : []);
     var map = {};
-    rows.forEach(function (row) {
-      if (!row) return;
-      var id = row.id != null ? String(row.id) : "";
-      if (id) map[id] = normalizedCategory(row.name || row.category_name);
+    normalizeList(payload).forEach(function (row) {
+      if (row && row.id != null) map[String(row.id)] = normalizedCategory(row.name || row.category_name);
     });
     categoryCache = map;
   }
-
-  async function getCategoryCache(init) {
-    if (categoryCache) return categoryCache;
-    try {
-      var response = await originalFetch("/api/categories", init || {});
-      if (response.ok) {
-        var payload = await response.clone().json();
-        cacheCategories(payload);
-      }
-    } catch (_) {
-      categoryCache = {};
-    }
-    return categoryCache || {};
+  function buildStockMap(payload) {
+    var map = {};
+    normalizeList(payload).forEach(function (row) {
+      if (!row) return;
+      var id = row.product_id != null ? String(row.product_id) : (row.id != null ? String(row.id) : "");
+      if (!id) return;
+      map[id] = { current: number(row.current_stock, number(row.stock, number(row.available_stock, 0))), min: number(row.min_stock, 0) };
+    });
+    return map;
   }
-
-  function rewriteProductsPayload(payload, categories) {
+  function rewriteProductsPayload(payload, categories, stockMap) {
     if (!payload || !Array.isArray(payload.data)) return payload;
     payload.data = payload.data.map(function (product) {
       var row = Object.assign({}, product);
       var category = row.category_name || row.category;
-      if (!category && row.category_id != null && categories[String(row.category_id)]) {
-        category = categories[String(row.category_id)];
-      }
+      if (!category && row.category_id != null && categories[String(row.category_id)]) category = categories[String(row.category_id)];
       row.category_name = normalizedCategory(category);
-      if (row.current_stock == null) {
-        if (row.stock != null) row.current_stock = row.stock;
-        else if (row.available_stock != null) row.current_stock = row.available_stock;
+      var stock = stockMap && stockMap[String(row.id)];
+      if (stock) {
+        row.current_stock = stock.current;
+        if (!number(row.min_stock, 0)) row.min_stock = stock.min;
+      } else if (row.current_stock == null) {
+        row.current_stock = number(row.stock, number(row.available_stock, 0));
       }
       return row;
     });
     return payload;
   }
-
+  async function getCategoryCache(init) {
+    if (categoryCache) return categoryCache;
+    try {
+      var response = await originalFetch("/api/categories", init || {});
+      if (response.ok) cacheCategories(await response.clone().json());
+    } catch (_) { categoryCache = {}; }
+    return categoryCache || {};
+  }
+  async function getStockCache(init) {
+    if (stockCache) return stockCache;
+    if (stockPromise) return stockPromise;
+    stockPromise = originalFetch("/api/inventory/stock-count", init || {})
+      .then(function (response) { return response.ok ? response.clone().json().then(buildStockMap).catch(function () { return {}; }) : {}; })
+      .catch(function () { return {}; })
+      .then(function (map) { stockCache = map || {}; stockPromise = null; return stockCache; });
+    return stockPromise;
+  }
   function responseWithPayload(response, payload) {
     var headers = new Headers(response.headers);
     headers.set("Content-Type", "application/json");
-    return new Response(JSON.stringify(payload), {
-      status: response.status,
-      statusText: response.statusText,
-      headers: headers
-    });
+    return new Response(JSON.stringify(payload), { status: response.status, statusText: response.statusText, headers: headers });
   }
 
   window.fetch = async function (input, init) {
     var rawUrl = typeof input === "string" ? input : (input && input.url) || "";
-
     if (isCategoriesRequest(rawUrl)) {
       var categoryResponse = await originalFetch(input, init);
-      try {
-        if (categoryResponse.ok) cacheCategories(await categoryResponse.clone().json());
-      } catch (_) {}
+      try { if (categoryResponse.ok) cacheCategories(await categoryResponse.clone().json()); } catch (_) {}
       return categoryResponse;
     }
-
+    if (isStockRequest(rawUrl)) {
+      var stockResponse = await originalFetch(input, init);
+      try { if (stockResponse.ok) stockCache = buildStockMap(await stockResponse.clone().json()); } catch (_) {}
+      return stockResponse;
+    }
     if (!isProductsRequest(rawUrl)) return originalFetch(input, init);
-
     try {
       var url = new URL(rawUrl, window.location.origin);
-      // Do not let the API hide catalogue records merely because branch stock
-      // has not been synchronised yet. Counter will still show stock status and
-      // the existing checkout safeguards remain responsible for sale quantity.
       url.searchParams.delete("in_stock_only");
       url.searchParams.set("fallback_product_stock", "true");
-      var categories = await getCategoryCache(init);
+      var categoriesPromise = getCategoryCache(init);
+      var stockPromiseLocal = getStockCache(init);
       var productResponse = await originalFetch(url.toString(), init);
       if (!productResponse.ok) return productResponse;
       var payload = await productResponse.clone().json();
-      return responseWithPayload(productResponse, rewriteProductsPayload(payload, categories));
-    } catch (_) {
-      return originalFetch(input, init);
-    }
+      return responseWithPayload(productResponse, rewriteProductsPayload(payload, await categoriesPromise, await stockPromiseLocal));
+    } catch (_) { return originalFetch(input, init); }
   };
+
+  function activeCategory() {
+    var chip = document.querySelector(".pos-categories-panel .chip.active");
+    return chip ? String(chip.getAttribute("data-value") || chip.textContent || "").trim() : "All Products";
+  }
+  function currentSearch() {
+    var input = document.getElementById("posProductSearch");
+    return input ? String(input.value || "").trim().toLowerCase() : "";
+  }
+  function matchesCategory(product, filter) {
+    if (!filter || filter === "All Products") return true;
+    var category = normalizedCategory(product.category_name || product.category);
+    if (filter === "Others") return ["Solar Panels", "Inverters", "Batteries", "Accessories", "Cables", "Electricals"].indexOf(category) === -1;
+    return category.toLowerCase() === String(filter).toLowerCase();
+  }
+  function matchesSearch(product, query) {
+    if (!query) return true;
+    return [product.product_name, product.product_code, product.barcode, product.category_name].some(function (value) { return String(value || "").toLowerCase().indexOf(query) !== -1; });
+  }
+  function productCard(product, stock) {
+    var current = number(stock && stock.current, number(product.current_stock, number(product.stock, 0)));
+    var min = number(stock && stock.min, number(product.min_stock, 0));
+    var inStock = current > 0;
+    var image = String(product.image_url || "").trim();
+    var imageHtml = image ? '<img src="' + escapeAttr(image) + '" alt="' + escapeAttr(product.product_name || "Product") + '" />' : '<i class="fa-solid fa-solar-panel"></i>';
+    var stockClass = current <= 0 ? "out" : (current <= min ? "low" : "ok");
+    var stockText = current <= 0 ? "Out of stock" : (current <= min ? "Low stock" : "In stock");
+    var action = inStock ? ' data-action="add-to-basket"' : '';
+    var disabled = inStock ? '' : ' disabled aria-disabled="true" title="No stock available in this branch"';
+    return '<article class="product-card"' + action + ' data-id="' + escapeAttr(String(product.id)) + '"><div class="product-card__image">' + imageHtml + '</div><div class="product-card__body"><div class="product-card__title">' + escapeHtml(product.product_name || "Product") + '</div><div class="product-card__meta"><span>' + money(product.selling_price) + '</span><span class="stock-pill ' + stockClass + '">' + stockText + '</span></div><button type="button" class="btn ' + (inStock ? 'btn-primary' : 'btn-outline') + '" data-action="' + (inStock ? 'add-to-basket' : 'noop') + '" data-id="' + escapeAttr(String(product.id)) + '"' + disabled + '><i class="fa-solid ' + (inStock ? 'fa-plus' : 'fa-ban') + '"></i>' + (inStock ? 'Add' : 'Out of stock') + '</button></div></article>';
+  }
+  async function repairEmptyCounterCatalog() {
+    if (String(location.hash || "") !== "#sales") return;
+    var panel = document.querySelector(".pos-products-panel");
+    if (!panel || panel.dataset.catalogRepair === "loading") return;
+    if (panel.querySelector(".product-grid")) return;
+    panel.dataset.catalogRepair = "loading";
+    try {
+      var response = await originalFetch("/api/products?limit=500&fallback_product_stock=true", {});
+      if (!response.ok) throw new Error("Product catalogue request failed");
+      var products = normalizeList(await response.json());
+      var categories = await getCategoryCache({});
+      var stockMap = await getStockCache({});
+      products = products.map(function (product) {
+        var row = Object.assign({}, product);
+        if (!row.category_name && row.category_id != null && categories[String(row.category_id)]) row.category_name = categories[String(row.category_id)];
+        row.category_name = normalizedCategory(row.category_name || row.category);
+        if (stockMap[String(row.id)]) row.current_stock = stockMap[String(row.id)].current;
+        return row;
+      });
+      var query = currentSearch();
+      var filter = activeCategory();
+      var filtered = products.filter(function (product) { return matchesSearch(product, query) && matchesCategory(product, filter); });
+      if (!filtered.length) { panel.dataset.catalogRepair = "done"; return; }
+      panel.innerHTML = '<div class="product-grid">' + filtered.map(function (product) { return productCard(product, stockMap[String(product.id)]); }).join("") + '</div>';
+      panel.dataset.catalogRepair = "done";
+    } catch (_) { panel.dataset.catalogRepair = "failed"; }
+  }
+  function scheduleRepair() { clearTimeout(repairTimer); repairTimer = setTimeout(repairEmptyCounterCatalog, 100); }
+  var observer = new MutationObserver(function () { if (String(location.hash || "") === "#sales") scheduleRepair(); });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+  window.addEventListener("hashchange", scheduleRepair);
+  document.addEventListener("input", function (event) { if (event.target && event.target.id === "posProductSearch") scheduleRepair(); });
+  document.addEventListener("click", function (event) { if (event.target.closest("[data-action=pos-category]")) scheduleRepair(); });
 })();
