@@ -16,15 +16,13 @@
     <script src="/quotation-custom-items.js" defer></script>
     <script src="/invoice-api-compat.js?v=20260819-1" defer></script>
     <script src="/pos-auth-bridge.js?v=20260822-2" defer></script>
-    <script src="/pos-catalog-compat.js?v=20260823-1" defer></script>
     <script src="/app.js?v=20260823-1" defer></script>
+    <script src="/inventory-v3-bridge.js?v=20260823-2" defer></script>
     <script src="/quotation-edit-ui.js?v=20260820-2" defer></script>
     <script src="/user-management.js" defer></script>
     <script src="/administrator-user-management.js" defer></script>
     <script src="/mpesa.js" defer></script>
     <script src="/production-hardening.js?v=20260823-1" defer></script>
-    <script src="/live-data-sanity.js?v=20260823-1" defer></script>
-    <script src="/bulk-import-restore.js?v=20260822-1" defer></script>
   </head>
   <body>
     <div class="login-shell" id="loginShell">
@@ -32,11 +30,7 @@
         <div class="brand-pill"><img id="brandMark" src="/assets/branding/logo.svg" alt="Unique Solar Kenya" class="brand-mark" /><span id="brandPillLabel">Unique Solar Kenya</span></div>
         <h1 id="brandHeadline">Powering sales, inventory and customer service from one counter.</h1>
         <p id="brandSummary">Modern POS operations for solar panels, inverters, batteries, accessories and electrical stock.</p>
-        <div class="hero-grid">
-          <article class="hero-card"><span class="hero-card__icon"><i class="fa-solid fa-chart-line"></i></span><div><strong>Live operations</strong><p>Track sales, till balances, quotations and stock movement in real time.</p></div></article>
-          <article class="hero-card"><span class="hero-card__icon"><i class="fa-solid fa-receipt"></i></span><div><strong>Professional documents</strong><p>Issue A4 invoices, quotations and 80mm thermal receipts instantly.</p></div></article>
-          <article class="hero-card"><span class="hero-card__icon"><i class="fa-solid fa-solar-panel"></i></span><div><strong>Solar-focused retail</strong><p>Built for product-rich solar and electrical merchandising workflows.</p></div></article>
-        </div>
+        <div class="hero-grid"><article class="hero-card"><span class="hero-card__icon"><i class="fa-solid fa-chart-line"></i></span><div><strong>Live operations</strong><p>Track sales, till balances, quotations and stock movement in real time.</p></div></article><article class="hero-card"><span class="hero-card__icon"><i class="fa-solid fa-receipt"></i></span><div><strong>Professional documents</strong><p>Issue A4 invoices, quotations and 80mm thermal receipts instantly.</p></div></article><article class="hero-card"><span class="hero-card__icon"><i class="fa-solid fa-solar-panel"></i></span><div><strong>Solar-focused retail</strong><p>Built for product-rich solar and electrical merchandising workflows.</p></div></article></div>
         <div class="service-status" id="apiStatus">Checking service status…</div>
       </section>
       <section class="login-panel"><div class="login-card"><div class="login-card__header"><h2>Sign in</h2><p>Use your account to open the POS workspace.</p></div><form id="loginForm" class="stack-form"><label><span>Email or username</span><input id="email" name="email" type="text" autocomplete="username" required /></label><label><span>Password</span><input id="password" name="password" type="password" autocomplete="current-password" required /></label><label id="totpWrap" class="hidden"><span>Authentication code</span><input id="totp" name="totp" type="text" inputmode="numeric" autocomplete="one-time-code" /></label><button id="submitBtn" type="submit" class="btn btn-primary btn-block">Sign in</button></form><div id="loginMessage" class="inline-message hidden"></div></div></section>
