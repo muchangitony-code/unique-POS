@@ -38,6 +38,7 @@ function ensureRuntimeBundle() {
   console.log("[startup] Rebuilding deterministic runtime bundle");
   require("./scripts/build.cjs");
   if (!fs.existsSync(runtimeBundle)) throw new Error(`Build completed without creating ${runtimeBundle}`);
+  require("./scripts/inventory-v3-runtime-patch.cjs").patchRuntimeBundle();
 }
 
 async function start() {
