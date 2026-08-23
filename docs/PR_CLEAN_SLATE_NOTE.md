@@ -1,0 +1,1 @@
+This PR intentionally wipes the current obsolete product catalogue and inventory state through migration 0023. It does not seed replacement products. Deployment must be verified at zero products/stock before the real master stock list is imported.
