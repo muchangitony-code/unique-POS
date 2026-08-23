@@ -1,0 +1,1 @@
+Production catalogue clean-slate release. This migration removes the obsolete registered product catalogue and disposable inventory state, preserves business configuration and transactional history, and aborts if protected product references exist. After deployment the catalogue must contain zero products and zero product stock.
