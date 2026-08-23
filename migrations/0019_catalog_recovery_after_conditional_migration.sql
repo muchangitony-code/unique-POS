@@ -1,17 +1,10 @@
 BEGIN;
 
 -- Definitive catalog recovery.
---
--- 0017/0018 were conditional migrations. If the bulk-import ledger tables had
--- not yet been created when those migrations ran, they could legally complete
--- without restoring anything and were then recorded as applied. This migration
--- is intentionally self-contained and repeats the recovery at startup-safe
--- time. It is non-destructive: it only creates products when the master
--- products table is empty.
+-- 0017/0018 could complete without restoring anything when the lazy bulk-import
+-- ledger tables did not yet exist. This migration is self-contained and only
+-- restores the catalogue when products is empty.
 
--- The bulk importer normally creates these tables lazily. Make the ledger
--- available to this recovery even on a database where the importer has never
--- been opened since deployment.
 CREATE TABLE IF NOT EXISTS public.product_import_jobs (
   id SERIAL PRIMARY KEY,
   source_type TEXT NOT NULL,
@@ -65,8 +58,6 @@ DO $$
 BEGIN
   IF (SELECT COUNT(*) FROM public.products) = 0 THEN
 
-    -- Recreate categories from the actual imported data first. Existing
-    -- category records are preserved.
     INSERT INTO public.categories (name, created_at)
     SELECT DISTINCT trim(r.normalized_data->>'category'), NOW()
     FROM public.product_import_rows r
@@ -77,57 +68,73 @@ BEGIN
         WHERE lower(trim(c.name)) = lower(trim(r.normalized_data->>'category'))
       );
 
+    -- First restore rows whose original product_id was retained. This preserves
+    -- historical product references where the importer recorded them.
     WITH source_rows AS (
       SELECT DISTINCT ON (
-        COALESCE(
-          NULLIF(lower(trim(r.normalized_data->>'product_code')), ''),
-          'row:' || r.id::text
-        )
-      )
-        r.id,
-        r.product_id,
-        r.normalized_data
+        COALESCE(r.product_id::text, NULLIF(lower(trim(r.normalized_data->>'product_code')), ''), 'row:' || r.id::text)
+      ) r.id, r.product_id, r.normalized_data
       FROM public.product_import_rows r
-      WHERE r.normalized_data IS NOT NULL
+      WHERE r.product_id IS NOT NULL
+        AND r.product_id > 0
+        AND r.normalized_data IS NOT NULL
         AND COALESCE(r.status, 'pending') <> 'invalid'
         AND NULLIF(trim(r.normalized_data->>'product_name'), '') IS NOT NULL
         AND NULLIF(trim(r.normalized_data->>'selling_price'), '') IS NOT NULL
-      ORDER BY
-        COALESCE(NULLIF(lower(trim(r.normalized_data->>'product_code')), ''), 'row:' || r.id::text),
-        r.id DESC
+      ORDER BY COALESCE(r.product_id::text, NULLIF(lower(trim(r.normalized_data->>'product_code')), ''), 'row:' || r.id::text), r.id DESC
     )
     INSERT INTO public.products (
-      id,
-      product_code,
-      barcode,
-      product_name,
-      description,
-      category_id,
-      brand_id,
-      supplier_id,
-      cost_price,
-      selling_price,
-      vat_rate,
-      current_stock,
-      min_stock,
-      image_url,
-      unit
+      id, product_code, barcode, product_name, description,
+      category_id, brand_id, supplier_id, cost_price, selling_price,
+      vat_rate, current_stock, min_stock, image_url, unit
     )
     SELECT
-      CASE
-        WHEN s.product_id IS NOT NULL AND s.product_id > 0 THEN s.product_id
-        ELSE NULL
-      END,
-      COALESCE(
-        NULLIF(trim(s.normalized_data->>'product_code'), ''),
-        'IMP-' || lpad(s.id::text, 6, '0')
-      ),
+      s.product_id,
+      COALESCE(NULLIF(trim(s.normalized_data->>'product_code'), ''), 'IMP-' || lpad(s.id::text, 6, '0')),
       NULLIF(trim(s.normalized_data->>'barcode'), ''),
       trim(s.normalized_data->>'product_name'),
       NULLIF(trim(s.normalized_data->>'description'), ''),
-      c.id,
-      NULL,
-      NULL,
+      c.id, NULL, NULL,
+      COALESCE(NULLIF(trim(s.normalized_data->>'cost_price'), '')::numeric, 0),
+      COALESCE(NULLIF(trim(s.normalized_data->>'selling_price'), '')::numeric, 0),
+      COALESCE(NULLIF(trim(s.normalized_data->>'vat_rate'), '')::numeric, 16),
+      GREATEST(COALESCE(NULLIF(trim(s.normalized_data->>'current_stock'), '')::numeric, 0), 0)::integer,
+      GREATEST(COALESCE(NULLIF(trim(s.normalized_data->>'min_stock'), '')::numeric, 0), 0)::integer,
+      NULLIF(trim(s.normalized_data->>'image_url'), ''),
+      NULLIF(trim(s.normalized_data->>'unit'), '')
+    FROM source_rows s
+    LEFT JOIN public.categories c
+      ON lower(trim(c.name)) = lower(trim(s.normalized_data->>'category'))
+    WHERE NOT EXISTS (SELECT 1 FROM public.products p WHERE p.id = s.product_id)
+      AND NOT EXISTS (
+        SELECT 1 FROM public.products p
+        WHERE lower(p.product_code) = lower(COALESCE(NULLIF(trim(s.normalized_data->>'product_code'), ''), 'IMP-' || lpad(s.id::text, 6, '0')))
+      );
+
+    -- Then restore rows without a retained product_id using the import row id
+    -- only to generate a deterministic fallback SKU; PostgreSQL owns the ID.
+    WITH source_rows AS (
+      SELECT DISTINCT ON (COALESCE(NULLIF(lower(trim(r.normalized_data->>'product_code')), ''), 'row:' || r.id::text))
+        r.id, r.normalized_data
+      FROM public.product_import_rows r
+      WHERE (r.product_id IS NULL OR r.product_id <= 0)
+        AND r.normalized_data IS NOT NULL
+        AND COALESCE(r.status, 'pending') <> 'invalid'
+        AND NULLIF(trim(r.normalized_data->>'product_name'), '') IS NOT NULL
+        AND NULLIF(trim(r.normalized_data->>'selling_price'), '') IS NOT NULL
+      ORDER BY COALESCE(NULLIF(lower(trim(r.normalized_data->>'product_code')), ''), 'row:' || r.id::text), r.id DESC
+    )
+    INSERT INTO public.products (
+      product_code, barcode, product_name, description,
+      category_id, brand_id, supplier_id, cost_price, selling_price,
+      vat_rate, current_stock, min_stock, image_url, unit
+    )
+    SELECT
+      COALESCE(NULLIF(trim(s.normalized_data->>'product_code'), ''), 'IMP-' || lpad(s.id::text, 6, '0')),
+      NULLIF(trim(s.normalized_data->>'barcode'), ''),
+      trim(s.normalized_data->>'product_name'),
+      NULLIF(trim(s.normalized_data->>'description'), ''),
+      c.id, NULL, NULL,
       COALESCE(NULLIF(trim(s.normalized_data->>'cost_price'), '')::numeric, 0),
       COALESCE(NULLIF(trim(s.normalized_data->>'selling_price'), '')::numeric, 0),
       COALESCE(NULLIF(trim(s.normalized_data->>'vat_rate'), '')::numeric, 16),
@@ -139,33 +146,19 @@ BEGIN
     LEFT JOIN public.categories c
       ON lower(trim(c.name)) = lower(trim(s.normalized_data->>'category'))
     WHERE NOT EXISTS (
-      SELECT 1
-      FROM public.products p
-      WHERE lower(p.product_code) = lower(
-        COALESCE(
-          NULLIF(trim(s.normalized_data->>'product_code'), ''),
-          'IMP-' || lpad(s.id::text, 6, '0')
-        )
-      )
+      SELECT 1 FROM public.products p
+      WHERE lower(p.product_code) = lower(COALESCE(NULLIF(trim(s.normalized_data->>'product_code'), ''), 'IMP-' || lpad(s.id::text, 6, '0')))
     );
 
-    -- Recover branch stock from the import opening-stock field. This covers
-    -- both rows whose original product_id survived and rows where it did not.
+    -- Rebuild branch stock from the latest import opening-stock values.
     WITH latest AS (
-      SELECT DISTINCT ON (
-        COALESCE(NULLIF(lower(trim(r.normalized_data->>'product_code')), ''), 'row:' || r.id::text)
-      )
-        r.id,
-        r.product_id,
-        r.normalized_data,
-        j.options
+      SELECT DISTINCT ON (COALESCE(NULLIF(lower(trim(r.normalized_data->>'product_code')), ''), 'row:' || r.id::text))
+        r.id, r.product_id, r.normalized_data, j.options
       FROM public.product_import_rows r
       JOIN public.product_import_jobs j ON j.id = r.job_id
       WHERE r.normalized_data IS NOT NULL
         AND NULLIF(trim(r.normalized_data->>'product_name'), '') IS NOT NULL
-      ORDER BY
-        COALESCE(NULLIF(lower(trim(r.normalized_data->>'product_code')), ''), 'row:' || r.id::text),
-        r.id DESC
+      ORDER BY COALESCE(NULLIF(lower(trim(r.normalized_data->>'product_code')), ''), 'row:' || r.id::text), r.id DESC
     ),
     resolved AS (
       SELECT
@@ -173,21 +166,13 @@ BEGIN
         GREATEST(COALESCE(NULLIF(trim(l.normalized_data->>'current_stock'), '')::numeric, 0), 0)::integer AS opening_stock,
         GREATEST(COALESCE(NULLIF(trim(l.normalized_data->>'min_stock'), '')::numeric, 0), 0)::integer AS min_stock,
         COALESCE(
-          CASE
-            WHEN (l.options->>'branch_id') ~ '^\\d+$'
-              THEN (l.options->>'branch_id')::integer
-          END,
+          CASE WHEN (l.options->>'branch_id') ~ '^\\d+$' THEN (l.options->>'branch_id')::integer END,
           p.primary_branch_id,
           (SELECT b.id FROM public.branches b WHERE b.is_active = TRUE ORDER BY b.id LIMIT 1)
         ) AS branch_id
       FROM latest l
       JOIN public.products p
-        ON lower(p.product_code) = lower(
-          COALESCE(
-            NULLIF(trim(l.normalized_data->>'product_code'), ''),
-            'IMP-' || lpad(l.id::text, 6, '0')
-          )
-        )
+        ON lower(p.product_code) = lower(COALESCE(NULLIF(trim(l.normalized_data->>'product_code'), ''), 'IMP-' || lpad(l.id::text, 6, '0')))
     )
     INSERT INTO public.product_stock (product_id, branch_id, current_stock, min_stock, created_at)
     SELECT product_id, branch_id, opening_stock, min_stock, NOW()
@@ -199,21 +184,11 @@ BEGIN
 
     UPDATE public.products p
     SET current_stock = COALESCE((
-      SELECT SUM(ps.current_stock)
-      FROM public.product_stock ps
-      WHERE ps.product_id = p.id
+      SELECT SUM(ps.current_stock) FROM public.product_stock ps WHERE ps.product_id = p.id
     ), p.current_stock);
 
-    PERFORM setval(
-      'public.products_id_seq',
-      GREATEST(COALESCE((SELECT MAX(id) FROM public.products), 1), 1),
-      TRUE
-    );
-    PERFORM setval(
-      'public.product_stock_id_seq',
-      GREATEST(COALESCE((SELECT MAX(id) FROM public.product_stock), 1), 1),
-      TRUE
-    );
+    PERFORM setval('public.products_id_seq', GREATEST(COALESCE((SELECT MAX(id) FROM public.products), 1), 1), TRUE);
+    PERFORM setval('public.product_stock_id_seq', GREATEST(COALESCE((SELECT MAX(id) FROM public.product_stock), 1), 1), TRUE);
   END IF;
 END $$;
 
