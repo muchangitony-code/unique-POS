@@ -1,0 +1,1 @@
+Production clean slate: migration 0023 wipes the obsolete product catalogue and disposable inventory state and leaves the system ready for the verified real stock master list.
