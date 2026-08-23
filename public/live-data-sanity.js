@@ -49,6 +49,18 @@
     });
   }
 
+  function zeroDashboard() {
+    setKpi('Today’s Sales', 0, true);
+    setKpi('Today’s Profit', 0, true);
+    setKpi('Cash in Till', 0, true);
+    setKpi('Mpesa Collections', 0, true);
+    setKpi('Transactions', 0, false);
+    setKpi('Pending Quotations', 0, false);
+    setKpi('Credit Sales', 0, true);
+    setKpi('Low Stock Items', 0, false);
+    setKpi('Out of Stock Items', 0, false);
+  }
+
   function updateChart(chartRows) {
     var canvas = document.getElementById('salesChartCanvas');
     if (!canvas || !window.Chart) return;
@@ -69,6 +81,10 @@
     if (!root || !root.querySelector('.kpi-card')) return;
     busy = true;
     try {
+      // Never display the application's old demo/default KPI values while
+      // live records are being resolved. A new/empty POS must display zero.
+      zeroDashboard();
+
       var results = await Promise.all([
         getJson('/api/dashboard/stats').catch(function () { return {}; }),
         getJson('/api/dashboard/sales-chart').catch(function () { return []; })
@@ -76,11 +92,20 @@
       var stats = results[0] || {};
       var chart = results[1] || [];
 
-      setKpi('Today’s Sales', firstNumber(stats.today_sales, stats.total_sales_today, 0), true);
-      setKpi('Today’s Profit', firstNumber(stats.today_profit, stats.gross_profit_today, 0), true);
+      var todaySales = firstNumber(stats.today_sales, stats.total_sales_today, 0);
+      var todayProfit = firstNumber(stats.today_profit, stats.gross_profit_today, 0);
+      var transactions = firstNumber(stats.transactions, stats.total_transactions, 0);
+
+      // Profit cannot exist without a sale/transaction in a clean POS.
+      // This also prevents stale legacy profit data from appearing on the
+      // dashboard after the Product/Inventory rebuild.
+      if (todaySales <= 0 || transactions <= 0) todayProfit = 0;
+
+      setKpi('Today’s Sales', todaySales, true);
+      setKpi('Today’s Profit', todayProfit, true);
       setKpi('Cash in Till', firstNumber(stats.cash_in_till, 0), true);
       setKpi('Mpesa Collections', firstNumber(stats.mpesa_collections, 0), true);
-      setKpi('Transactions', firstNumber(stats.transactions, stats.total_transactions, 0), false);
+      setKpi('Transactions', transactions, false);
       setKpi('Pending Quotations', firstNumber(stats.pending_quotations, 0), false);
       setKpi('Credit Sales', firstNumber(stats.credit_sales, 0), true);
       setKpi('Low Stock Items', firstNumber(stats.low_stock_items, 0), false);
