@@ -1,9 +1,10 @@
 {
-  "migrations/0011_production_clean_start.sql": {"action": "retired"},
   "0011_production_clean_start.sql": {"action": "retired"},
   "0012_clear_stale_bulk_import_history.sql": {"action": "retired"},
   "0013_production_clear_product_catalog.sql": {"action": "retired"},
   "0014_force_clean_test_catalog.sql": {"action": "retired"},
+  "0019_catalog_recovery_after_conditional_migration.sql": {"action": "review"},
+  "0021_replace_canonical_catalog_with_exact_source.sql": {"action": "retired"},
   "0023_production_catalog_clean_slate.sql": {"action": "retired"},
   "0023_production_catalog_wipe.sql": {"action": "retired"},
   "0023_production_clean_slate_catalog.sql": {"action": "retired"},
