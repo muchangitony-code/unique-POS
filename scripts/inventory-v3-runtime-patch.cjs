@@ -12,7 +12,7 @@ function patchBranchScopedInventoryCatalogue(source) {
       const params = [];
       let where = 'p.is_active = TRUE';
       if (q) {
-        params.push(\`%${q}%\`);
+        params.push(\`%\${q}%\`);
         where += \` AND (p.name ILIKE $1 OR p.sku ILIKE $1 OR COALESCE(p.barcode,'') ILIKE $1)\`;
       }
       const result = await db().query(\`
@@ -42,7 +42,7 @@ function patchBranchScopedInventoryCatalogue(source) {
       const params = [branchId];
       let where = 'p.is_active = TRUE';
       if (q) {
-        params.push(\`%${q}%\`);
+        params.push(\`%\${q}%\`);
         where += \` AND (p.name ILIKE $2 OR p.sku ILIKE $2 OR COALESCE(p.barcode,'') ILIKE $2)\`;
       }
       const result = await db().query(\`
