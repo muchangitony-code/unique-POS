@@ -9,6 +9,7 @@ function read(file) { return fs.readFileSync(path.resolve(__dirname, '..', file)
 const app = read('app.js');
 const bootstrap = read('scripts/bootstrap-db.cjs');
 const reset = read('scripts/production-reset.cjs');
+const directRunner = read('scripts/run-migrations.cjs');
 const packageJson = JSON.parse(read('package.json'));
 const policy = JSON.parse(read('migration-safety.json'));
 
@@ -18,6 +19,7 @@ if (/TRUNCATE TABLE[\s\S]*CASCADE|CASCADE/.test(reset)) throw new Error('Product
 if (packageJson.scripts['db:migrate'] !== 'node scripts/deploy-migrations.cjs') throw new Error('db:migrate must use the explicit deployment gate.');
 if (!packageJson.scripts['db:migration-audit']) throw new Error('db:migration-audit script is missing.');
 if (!/UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS/.test(app)) throw new Error('Application startup must disable internal migration paths before loading the runtime bundle.');
+if (!/MIGRATION_DEPLOY_TOKEN/.test(directRunner) || !/MIGRATION_CONFIRMATION/.test(directRunner)) throw new Error('Direct migration runner is not credential-gated.');
 
 const scanned = scanMigrations(path.resolve(__dirname, '..', 'migrations'));
 const knownRetired = [
