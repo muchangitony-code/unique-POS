@@ -45,24 +45,27 @@ The deployment script creates that backup only after the explicit destructive ap
 
 ## Historical destructive migrations
 
-The following known historical cleanup migrations are marked `retired` and therefore **must never execute automatically**, even with the destructive gate:
+The following known historical cleanup/replacement migrations are marked `retired` and therefore **must never execute automatically**:
 
 - `0011_production_clean_start.sql`
 - `0012_clear_stale_bulk_import_history.sql`
 - `0013_production_clear_product_catalog.sql`
 - `0014_force_clean_test_catalog.sql`
+- `0021_replace_canonical_catalog_with_exact_source.sql`
 - `0023_production_catalog_clean_slate.sql`
 - `0023_production_catalog_wipe.sql`
 - `0023_production_clean_slate_catalog.sql`
 - `0026_inventory_clean_start.sql`
 
-These files contain explicit production cleanup/wipe behavior. Their production-applied state must be checked on the real target database using:
+These files contain explicit production data deletion/truncation or replacement behavior. Their production-applied state must be checked on the real target database using:
 
 ```text
 npm run db:migration-audit
 ```
 
-A result of `pending` for any retired migration is a deployment blocker. It must be resolved by a separately reviewed migration/history reconciliation; it must not be allowed to run as part of an ordinary deploy.
+A result of `pending` for any retired migration is a **production deployment blocker**. It must be resolved by a separately reviewed migration/history reconciliation; it must not be allowed to run as part of an ordinary deploy.
+
+For non-production test/development databases only, the explicit migration deployment command records retired migration history as applied **without executing the retired SQL**. This keeps fresh CI installs from replaying historical production cleanup operations. Production never uses this bypass.
 
 The audit also scans every other migration. If a new destructive migration is introduced without a policy entry, it is treated as `review` and will block deployment when pending until explicitly reviewed.
 
