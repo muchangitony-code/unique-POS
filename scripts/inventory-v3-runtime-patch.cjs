@@ -63,7 +63,7 @@ function patchBranchScopedInventoryCatalogue(source) {
   });`;
 
   if (!source.includes(old)) throw new Error('Inventory v3 branch patch: catalogue route source not found');
-  return source.replace(old, replacement) + `\n// [inventory-v3] branch-scoped catalogue installed\n`;
+  return source.replace(old, replacement) + '\n// [inventory-v3] branch-scoped catalogue installed\n';
 }
 
 function patchRuntimeBundle() {
@@ -71,12 +71,15 @@ function patchRuntimeBundle() {
   const file = path.join(root, 'index.runtime.cjs');
   let source = fs.readFileSync(file, 'utf8');
   source = patchBranchScopedInventoryCatalogue(source);
-  if (source.includes('[inventory-v3] isolated inventory API mounted')) return fs.writeFileSync(file, source, 'utf8');
+  if (source.includes('[inventory-v3] isolated inventory API mounted')) {
+    fs.writeFileSync(file, source, 'utf8');
+    return;
+  }
 
-  const listen = source.match(/\\b([A-Za-z_$][\\w$]*)\\.listen\\s*\\(/);
+  const listen = source.match(/\b([A-Za-z_$][\w$]*)\.listen\s*\(/);
   if (!listen) throw new Error('Inventory v3 patch: Express listen point not found');
   const appName = listen[1];
-  const injection = `\\nrequire('./server/inventory-v3.cjs').mountInventoryV3(${appName});\\n`;
+  const injection = `\nrequire('./server/inventory-v3.cjs').mountInventoryV3(${appName});\n`;
   source = source.slice(0, listen.index) + injection + source.slice(listen.index);
   fs.writeFileSync(file, source, 'utf8');
   console.log('[inventory-v3-patch] branch-scoped inventory API mounted');
