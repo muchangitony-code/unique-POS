@@ -79,7 +79,11 @@ function patchRuntimeBundle() {
   const listen = source.match(/\b([A-Za-z_$][\w$]*)\.listen\s*\(/);
   if (!listen) throw new Error('Inventory v3 patch: Express listen point not found');
   const appName = listen[1];
-  const injection = `\nrequire('./server/inventory-v3.cjs').mountInventoryV3(${appName});\n`;
+
+  // Use string concatenation here. This startup patch must not contain a
+  // second template-literal interpolation layer; doing so can evaluate
+  // generated-runtime variables while Node is starting the application.
+  const injection = '\nrequire(\'./server/inventory-v3.cjs\').mountInventoryV3(' + appName + ');\n';
   source = source.slice(0, listen.index) + injection + source.slice(listen.index);
   fs.writeFileSync(file, source, 'utf8');
   console.log('[inventory-v3-patch] branch-scoped inventory API mounted');
