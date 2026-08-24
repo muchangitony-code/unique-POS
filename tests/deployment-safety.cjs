@@ -25,6 +25,7 @@ const knownRetired = [
   '0012_clear_stale_bulk_import_history.sql',
   '0013_production_clear_product_catalog.sql',
   '0014_force_clean_test_catalog.sql',
+  '0021_replace_canonical_catalog_with_exact_source.sql',
   '0023_production_catalog_clean_slate.sql',
   '0023_production_catalog_wipe.sql',
   '0023_production_clean_slate_catalog.sql',
