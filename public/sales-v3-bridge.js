@@ -1,10 +1,9 @@
 (function () {
   'use strict';
 
-  // The clean inventory cutover made inventory_products_v2/inventory_stock_v2
-  // authoritative, but the Sales workspace still requested the retired
-  // /api/products catalogue with in_stock_only=true. That made newly imported
-  // V3 products invisible to Sales even though Inventory showed them.
+  // Sales must always read stock for the selected branch. The authoritative
+  // inventory tables contain one stock row per product/branch, so an aggregate
+  // catalogue would leak stock from other branches into the current counter.
   const originalFetch = window.fetch.bind(window);
 
   function isSalesRoute() {
@@ -55,9 +54,9 @@
     };
   }
 
-  function makeResponse(payload) {
+  function makeResponse(payload, status) {
     return new Response(JSON.stringify(payload), {
-      status: 200,
+      status: status || 200,
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store'
@@ -73,13 +72,17 @@
       const requested = new URL(rawUrl, window.location.origin);
       const query = requested.searchParams.get('search') || requested.searchParams.get('q') || '';
       const branchId = selectedBranchId();
+
+      // Never fall back to aggregate stock. If the user has not selected a
+      // branch yet, show an empty catalogue until the branch context exists.
+      if (!branchId) {
+        return makeResponse({ data: [], products: [], total: 0, count: 0, branch_id: null, source: 'inventory_products_v2', error: 'Select a branch to load stock.' });
+      }
+
       const liveUrl = new URL('/api/v3/inventory/products', window.location.origin);
+      liveUrl.searchParams.set('branchId', String(branchId));
       if (query) liveUrl.searchParams.set('q', query);
 
-      // V3 is the authoritative inventory source. It currently returns stock
-      // across active branches; preserve the selected branch as metadata for
-      // future branch-scoped V3 support without falling back to the retired
-      // catalogue.
       const response = await originalFetch(liveUrl.toString(), {
         method: 'GET',
         headers: { Accept: 'application/json' },
@@ -89,31 +92,17 @@
 
       const data = await response.json();
       const products = Array.isArray(data.products) ? data.products.map(legacyProduct) : [];
-      // Sales itself applies current_stock > 0, so do not hide products here
-      // and accidentally create a second, inconsistent stock filter.
       return makeResponse({
         data: products,
         products,
         total: products.length,
         count: products.length,
-        branch_id: branchId || null,
+        branch_id: branchId,
         source: 'inventory_products_v2'
       });
     } catch (error) {
-      console.error('[sales-v3] live inventory catalogue failed', error);
+      console.error('[sales-v3] branch-scoped live inventory catalogue failed', error);
       return originalFetch(input, init);
     }
   };
-
-  function clearSalesView() {
-    if (!isSalesRoute()) return;
-    // The normal Sales route reloads its data when the branch changes. This
-    // event is intentionally just a cache-busting hook for browser/devtools
-    // visibility; the bridge itself never caches responses.
-  }
-
-  window.addEventListener('hashchange', clearSalesView);
-  document.addEventListener('change', function (event) {
-    if (event.target && event.target.id === 'branchSelect') clearSalesView();
-  });
 })();
