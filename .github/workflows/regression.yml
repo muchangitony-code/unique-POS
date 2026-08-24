@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main, master]
   push:
-    branches: [main, master]
+    branches: [main, master, phase-1-deployment-safety]
 
 jobs:
   regression:
@@ -32,6 +32,8 @@ jobs:
       PORT: 3099
       NODE_ENV: test
       SESSION_SECRET: ${{ secrets.SESSION_SECRET || 'ci-test-session-secret-32-chars!!' }}
+      MIGRATION_DEPLOY_TOKEN: ci-only-not-a-production-secret-32chars
+      MIGRATION_CONFIRMATION: APPLY_MIGRATIONS
       UNIQUEPOS_BOOTSTRAP_ADMIN_USERNAME: admin
       UNIQUEPOS_BOOTSTRAP_ADMIN_EMAIL: admin@test.local
       UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD || 'TestAdmin123!' }}
@@ -56,7 +58,10 @@ jobs:
           PG_PASS="${{ secrets.POSTGRES_PASSWORD || 'pospassword' }}"
           echo "DATABASE_URL=${SCHEME}://posuser:${PG_PASS}@localhost:5432/posdb" >> "$GITHUB_ENV"
 
-      - name: Bootstrap database and start server
+      - name: Explicitly deploy database migrations
+        run: node scripts/deploy-migrations.cjs
+
+      - name: Start server after explicit migration deployment
         run: |
           node app.js > /tmp/uniquepos-server.log 2>&1 &
           echo $! > /tmp/server.pid

@@ -2,7 +2,7 @@ name: POS regression checks
 
 on:
   push:
-    branches: ["main", "chatgpt/**"]
+    branches: ["main", "chatgpt/**", "phase-1-deployment-safety"]
   pull_request:
     branches: ["main"]
 
@@ -21,6 +21,8 @@ jobs:
         run: npm ci
       - name: Build and syntax validation
         run: npm run build
+      - name: Deployment safety regression
+        run: node tests/deployment-safety.cjs
       - name: Counter runtime patch and syntax smoke test
         run: |
           node scripts/counter-runtime-patch.cjs
@@ -55,3 +57,101 @@ jobs:
           if (!migration.includes('ALTER COLUMN product_id DROP NOT NULL')) throw new Error('Quotation migration does not permit non-stock items');
           console.log('Quotation custom-item integration checks passed.');
           NODE
+
+  staging-deploy-safety:
+    name: Staging deployment safety proof
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: posuser
+          POSTGRES_PASSWORD: pospassword
+          POSTGRES_DB: posdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgres://posuser:pospassword@localhost:5432/posdb
+      PORT: 3199
+      NODE_ENV: test
+      SESSION_SECRET: ci-staging-deployment-safety-session-secret
+      UNIQUEPOS_BOOTSTRAP_ADMIN_USERNAME: admin
+      UNIQUEPOS_BOOTSTRAP_ADMIN_EMAIL: admin@staging.test
+      UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD: TestAdmin123!
+      UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Create staging schema snapshot
+        run: |
+          PGPASSWORD=pospassword psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database.sql
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const { Client } = require('pg');
+          const client = new Client({ connectionString: process.env.DATABASE_URL });
+          (async () => {
+            await client.connect();
+            await client.query('CREATE TABLE IF NOT EXISTS schema_migrations (id SERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
+            for (const name of fs.readdirSync('migrations').filter((n) => n.endsWith('.sql')).sort()) {
+              await client.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [name]);
+            }
+            await client.query('CREATE TABLE IF NOT EXISTS deployment_safety_sentinel (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+            await client.query("INSERT INTO deployment_safety_sentinel (id, value) VALUES (1, 'must-survive-startup') ON CONFLICT (id) DO NOTHING");
+            await client.end();
+          })().catch(async (err) => { console.error(err); try { await client.end(); } catch {} process.exit(1); });
+          NODE
+      - name: Verify migration gate rejects normal deployment credentials
+        run: |
+          set +e
+          OUTPUT=$(MIGRATION_CONFIRMATION=APPLY_MIGRATIONS node scripts/deploy-migrations.cjs 2>&1)
+          STATUS=$?
+          set -e
+          printf '%s\n' "$OUTPUT"
+          if [ "$STATUS" -eq 0 ]; then echo 'Migration deployment unexpectedly succeeded without MIGRATION_DEPLOY_TOKEN'; exit 1; fi
+          if ! printf '%s' "$OUTPUT" | grep -q 'MIGRATION_DEPLOY_TOKEN'; then echo 'Expected migration credential gate was not reached'; exit 1; fi
+      - name: Start staging app and prove startup does not migrate
+        run: |
+          node app.js > /tmp/uniquepos-staging.log 2>&1 &
+          echo $! > /tmp/server.pid
+          READY=0
+          for i in $(seq 1 60); do
+            HEALTH=$(curl -fsS "http://localhost:$PORT/api/healthz" 2>/dev/null || true)
+            if [ -n "$HEALTH" ]; then
+              if printf '%s' "$HEALTH" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.exit(j.db_ok===true?0:1)}catch{process.exit(1)}})'; then READY=1; break; fi
+            fi
+            sleep 1
+          done
+          if [ "$READY" != "1" ]; then cat /tmp/uniquepos-staging.log; exit 1; fi
+          node - <<'NODE'
+          const { Client } = require('pg');
+          const client = new Client({ connectionString: process.env.DATABASE_URL });
+          (async () => {
+            await client.connect();
+            const { rows } = await client.query("SELECT value FROM deployment_safety_sentinel WHERE id=1");
+            if (rows[0]?.value !== 'must-survive-startup') throw new Error('Startup changed sentinel data');
+            const { rows: migrations } = await client.query('SELECT COUNT(*)::int AS count FROM schema_migrations');
+            const files = require('node:fs').readdirSync('migrations').filter((n) => n.endsWith('.sql'));
+            if (migrations[0].count !== files.length) throw new Error('Application startup altered migration state');
+            await client.end();
+            console.log('Staging startup safety proof passed.');
+          })().catch(async (err) => { console.error(err); try { await client.end(); } catch {} process.exit(1); });
+          NODE
+      - name: Stop staging app
+        if: always()
+        run: '[ -f /tmp/server.pid ] && kill "$(cat /tmp/server.pid)" 2>/dev/null || true'
