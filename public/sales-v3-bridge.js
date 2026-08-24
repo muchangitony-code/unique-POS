@@ -2,8 +2,9 @@
   'use strict';
 
   // Sales must always read stock for the selected branch. The authoritative
-  // inventory tables contain one stock row per product/branch, so an aggregate
-  // catalogue would leak stock from other branches into the current counter.
+  // inventory tables contain one stock row per product/branch. Never fall
+  // back to the retired aggregate catalogue because that can leak stock from
+  // another branch into the current counter.
   const originalFetch = window.fetch.bind(window);
 
   function isSalesRoute() {
@@ -73,10 +74,8 @@
       const query = requested.searchParams.get('search') || requested.searchParams.get('q') || '';
       const branchId = selectedBranchId();
 
-      // Never fall back to aggregate stock. If the user has not selected a
-      // branch yet, show an empty catalogue until the branch context exists.
       if (!branchId) {
-        return makeResponse({ data: [], products: [], total: 0, count: 0, branch_id: null, source: 'inventory_products_v2', error: 'Select a branch to load stock.' });
+        return makeResponse({ data: [], products: [], total: 0, count: 0, branch_id: null, source: 'inventory_products_v2', error: 'Select a branch to load stock.' }, 400);
       }
 
       const liveUrl = new URL('/api/v3/inventory/products', window.location.origin);
@@ -102,7 +101,7 @@
       });
     } catch (error) {
       console.error('[sales-v3] branch-scoped live inventory catalogue failed', error);
-      return originalFetch(input, init);
+      return makeResponse({ data: [], products: [], total: 0, count: 0, branch_id: selectedBranchId() || null, source: 'inventory_products_v2', error: 'Unable to load branch stock.' }, 503);
     }
   };
 })();
