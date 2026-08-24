@@ -3,7 +3,7 @@
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 const { Pool } = require('pg');
-const { applyMigrations } = require('./run-migrations.cjs');
+const { applyMigrations } = require('./migration-engine.cjs');
 const { bootstrapDatabaseIfNeeded } = require('./bootstrap-db.cjs');
 const { parseAndValidateDatabaseUrl, railwaySsl } = require('./database-url.cjs');
 const { auditMigrationState, assertMigrationDeploymentSafe, DESTRUCTIVE_APPROVAL } = require('./migration-safety.cjs');
@@ -30,9 +30,7 @@ async function markRetiredAsAppliedInNonProduction(names) {
   const client = await pool.connect();
   try {
     await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (id SERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
-    for (const name of names) {
-      await client.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [name]);
-    }
+    for (const name of names) await client.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [name]);
   } finally {
     client.release();
     await pool.end();
@@ -59,7 +57,6 @@ async function main() {
     await markRetiredAsAppliedInNonProduction(retiredPending);
     rows = await auditMigrationState();
   }
-
   const destructivePending = rows.filter((row) => row.status === 'pending' && row.destructive).map((row) => row.name);
   if (destructivePending.length) {
     requireDestructiveApproval(destructivePending);
@@ -67,7 +64,6 @@ async function main() {
     const backupFile = createFreshBackup();
     console.log(`[migration-deploy] Backup ready: ${backupFile}`);
   }
-
   await assertMigrationDeploymentSafe();
   const result = await applyMigrations();
   console.log('[migration-deploy] Migrations applied:', result.applied);
