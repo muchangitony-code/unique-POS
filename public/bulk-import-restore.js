@@ -28,6 +28,11 @@
     });
   }
   function isBulkRoute() { return String(location.hash || "").replace(/^#/, "").split("?")[0] === "bulk-import"; }
+  function selectedBranchId() {
+    const el = document.getElementById("branchSelect");
+    const value = el && el.value ? Number(el.value) : 0;
+    return Number.isInteger(value) && value > 0 ? value : 0;
+  }
 
   function render() {
     if (!isBulkRoute()) return;
@@ -38,7 +43,10 @@
       <section class="card" style="padding:24px;">
         <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap;">
           <div><h2 style="margin:0 0 6px;">Bulk Product Import</h2><p style="margin:0;color:#64748b;">Upload a CSV, Excel or text-based PDF. Review the data before anything is written to inventory.</p></div>
-          <button type="button" class="btn btn-secondary" data-bulk-template>Download CSV template</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-secondary" data-bulk-template>Download CSV template</button>
+            <button type="button" class="btn btn-secondary" data-bulk-sync-latest>Sync Last Import to Inventory</button>
+          </div>
         </div>
         <div style="margin-top:20px;display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:16px;">
           <label class="stack-form"><span>Select product file</span><input id="bulkFileInput" type="file" accept=".csv,.xlsx,.xls,.pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf"></label>
@@ -106,6 +114,39 @@
       </div>`;
   }
 
+  async function syncLiveInventory(jobId) {
+    const progress = document.getElementById("bulkProgress");
+    if (progress) progress.textContent = "Syncing products into live inventory…";
+    const branchId = selectedBranchId();
+    const result = await api("/api/v3/inventory/import-job/" + encodeURIComponent(jobId) + "/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ branchId })
+    });
+    if (progress) {
+      progress.textContent = result.alreadySynced
+        ? "Live inventory was already synchronized."
+        : "Live inventory synchronized: " + result.syncedRows + " products; created " + result.created + ", updated " + result.updated + ".";
+    }
+    return result;
+  }
+
+  async function syncLatestImport() {
+    const status = document.getElementById("bulkStatus");
+    if (status) status.textContent = "Syncing the latest completed import into live inventory…";
+    try {
+      const result = await api("/api/v3/inventory/import-job/latest/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ branchId: selectedBranchId() })
+      });
+      if (status) status.textContent = result.alreadySynced
+        ? "The latest import is already in live inventory."
+        : "Done: " + result.syncedRows + " products are now in live inventory.";
+      if (window.__uniqueBulkImportJob) await poll(window.__uniqueBulkImportJob);
+    } catch (error) { if (status) status.textContent = error.message; }
+  }
+
   async function startImport() {
     const id = window.__uniqueBulkImportJob;
     if (!id) return;
@@ -125,8 +166,14 @@
       const job = result.job || {};
       progress.textContent = (job.status || "processing") + " — " + (job.processed_rows || 0) + "/" + (job.total_rows || 0) + " processed; created " + (job.created_count || 0) + ", updated " + (job.updated_count || 0) + ".";
       if (["completed", "failed"].includes(job.status)) {
-        if (job.status === "completed") progress.textContent += " Import completed successfully.";
-        else progress.textContent += " " + (job.last_error || "Import failed.");
+        if (job.status === "completed") {
+          progress.textContent += " Import completed successfully. Syncing live inventory…";
+          try {
+            await syncLiveInventory(id);
+          } catch (syncError) {
+            progress.textContent = "Import completed, but live inventory sync failed: " + syncError.message;
+          }
+        } else progress.textContent += " " + (job.last_error || "Import failed.");
         return;
       }
       setTimeout(function () { poll(id); }, 1000);
@@ -137,6 +184,7 @@
     if (event.target.closest("[data-bulk-template]")) return templateCsv();
     if (event.target.closest("[data-bulk-upload]")) return upload();
     if (event.target.closest("[data-bulk-start]")) return startImport();
+    if (event.target.closest("[data-bulk-sync-latest]")) return syncLatestImport();
     const action = event.target.closest("[data-action]");
     if (action && action.getAttribute("data-action") === "bulk-import") { location.hash = "bulk-import"; }
   });
