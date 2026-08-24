@@ -43,6 +43,127 @@ function productPayload(b) {
   ];
 }
 
+async function syncImportJob(client, jobId, requestedBranchId) {
+  const jobResult = await client.query(
+    'SELECT id, status, total_rows, valid_rows, invalid_rows, COALESCE(summary, \'{}\'::jsonb) AS summary FROM product_import_jobs WHERE id=$1 FOR UPDATE',
+    [jobId]
+  );
+  if (!jobResult.rowCount) throw new Error('Import job not found.');
+  const job = jobResult.rows[0];
+  if (job.status !== 'completed') throw new Error(`Import job is ${job.status}; only completed imports can be synced.`);
+  if (job.summary && job.summary.live_inventory_synced === true) {
+    return { jobId, alreadySynced: true, created: 0, updated: 0, syncedRows: Number(job.valid_rows || 0), stockRows: Number(job.valid_rows || 0), branchId: null };
+  }
+
+  const rowsResult = await client.query(`
+    SELECT row_number, normalized_data, validation_errors
+    FROM product_import_rows
+    WHERE job_id=$1 AND status <> 'skipped'
+    ORDER BY row_number
+  `, [jobId]);
+  const rows = rowsResult.rows;
+  const invalid = rows.filter((row) => {
+    const errors = Array.isArray(row.validation_errors) ? row.validation_errors : [];
+    return errors.length > 0;
+  });
+  if (invalid.length) throw new Error(`Import job contains ${invalid.length} invalid row(s); correct the file and import again.`);
+
+  const branchesResult = await client.query(
+    'SELECT id, name, code FROM branches WHERE is_active=TRUE ORDER BY id ASC'
+  );
+  const branches = branchesResult.rows;
+  if (!branches.length) throw new Error('No active branch is available for imported stock.');
+
+  const requested = Number(requestedBranchId || 0);
+  const targetBranch = requested && branches.some((branch) => Number(branch.id) === requested)
+    ? branches.find((branch) => Number(branch.id) === requested)
+    : branches[0];
+
+  let created = 0;
+  let updated = 0;
+  let stockRows = 0;
+
+  for (const row of rows) {
+    const data = row.normalized_data || {};
+    const name = text(data.product_name);
+    const sku = text(data.product_code) || `IMP-${jobId}-${row.row_number}`;
+    if (!name) throw new Error(`Row ${row.row_number}: product name is required.`);
+
+    const barcode = text(data.barcode) || null;
+    const costPrice = number(data.cost_price ?? 0, `cost price on row ${row.row_number}`);
+    const sellingPrice = number(data.selling_price ?? 0, `selling price on row ${row.row_number}`);
+    const vatRate = number(data.vat_rate ?? 0, `VAT rate on row ${row.row_number}`);
+    const reorderLevel = number(data.min_stock ?? 0, `reorder level on row ${row.row_number}`);
+    const openingStock = number(data.current_stock ?? 0, `opening stock on row ${row.row_number}`);
+
+    const existing = await client.query(
+      'SELECT id FROM inventory_products_v2 WHERE sku=$1 OR ($2::text IS NOT NULL AND barcode=$2) LIMIT 1',
+      [sku, barcode]
+    );
+
+    let productId;
+    if (existing.rowCount) {
+      productId = existing.rows[0].id;
+      await client.query(`
+        UPDATE inventory_products_v2
+        SET sku=$1, barcode=$2, name=$3, category=$4, brand=$5, unit=$6,
+            cost_price=$7, selling_price=$8, vat_rate=$9, reorder_level=$10,
+            supplier=$11, description=$12, is_active=TRUE, updated_at=NOW()
+        WHERE id=$13
+      `, [
+        sku, barcode, name, text(data.category) || null, text(data.brand) || null,
+        text(data.unit) || 'pcs', costPrice, sellingPrice, vatRate, reorderLevel,
+        text(data.supplier) || null, text(data.description) || null, productId
+      ]);
+      updated += 1;
+    } else {
+      const inserted = await client.query(`
+        INSERT INTO inventory_products_v2
+          (sku, barcode, name, category, brand, unit, cost_price, selling_price, vat_rate, reorder_level, supplier, description)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        RETURNING id
+      `, [
+        sku, barcode, name, text(data.category) || null, text(data.brand) || null,
+        text(data.unit) || 'pcs', costPrice, sellingPrice, vatRate, reorderLevel,
+        text(data.supplier) || null, text(data.description) || null
+      ]);
+      productId = inserted.rows[0].id;
+      created += 1;
+    }
+
+    await client.query(`
+      INSERT INTO inventory_stock_v2(product_id, branch_id, quantity_on_hand)
+      SELECT $1, id, 0 FROM branches WHERE is_active=TRUE
+      ON CONFLICT(product_id, branch_id) DO NOTHING
+    `, [productId]);
+
+    await client.query(`
+      INSERT INTO inventory_stock_v2(product_id, branch_id, quantity_on_hand)
+      VALUES ($1,$2,$3)
+      ON CONFLICT(product_id, branch_id)
+      DO UPDATE SET quantity_on_hand=EXCLUDED.quantity_on_hand, updated_at=NOW()
+    `, [productId, targetBranch.id, openingStock]);
+    stockRows += 1;
+
+    await client.query(`
+      INSERT INTO inventory_movements_v2(product_id, branch_id, movement_type, quantity_delta, reason)
+      VALUES ($1,$2,'opening_balance',$3,$4)
+    `, [productId, targetBranch.id, openingStock, `Bulk import job ${jobId}, row ${row.row_number}`]);
+  }
+
+  const syncSummary = {
+    ...(job.summary || {}),
+    live_inventory_synced: true,
+    live_inventory_synced_at: new Date().toISOString(),
+    live_inventory_branch_id: Number(targetBranch.id),
+    live_inventory_created: created,
+    live_inventory_updated: updated
+  };
+  await client.query('UPDATE product_import_jobs SET summary=$1::jsonb WHERE id=$2', [JSON.stringify(syncSummary), jobId]);
+
+  return { jobId, alreadySynced: false, created, updated, syncedRows: rows.length, stockRows, branchId: targetBranch.id };
+}
+
 function mountInventoryV3(app) {
   if (app.__inventoryV3Mounted) return;
   app.__inventoryV3Mounted = true;
@@ -95,6 +216,37 @@ function mountInventoryV3(app) {
     } catch (error) {
       console.error('[inventory-v3] dashboard failed', error);
       res.status(500).json({ error: 'Unable to load live inventory dashboard data.' });
+    }
+  });
+
+  app.post('/api/v3/inventory/import-job/latest/sync', async (req, res) => {
+    try {
+      const result = await withTransaction(async (client) => {
+        const latest = await client.query(`
+          SELECT id FROM product_import_jobs
+          WHERE status='completed'
+          ORDER BY completed_at DESC NULLS LAST, id DESC
+          LIMIT 1
+        `);
+        if (!latest.rowCount) throw new Error('No completed bulk import job was found.');
+        return syncImportJob(client, latest.rows[0].id, req.body?.branchId);
+      });
+      res.set('Cache-Control', 'no-store').json({ ok: true, ...result });
+    } catch (error) {
+      console.error('[inventory-v3] latest bulk import sync failed', error);
+      res.status(400).json({ error: error.message || 'Unable to sync the latest bulk import.' });
+    }
+  });
+
+  app.post('/api/v3/inventory/import-job/:id/sync', async (req, res) => {
+    const jobId = Number(req.params.id);
+    if (!Number.isInteger(jobId) || jobId <= 0) return res.status(400).json({ error: 'Invalid import job ID.' });
+    try {
+      const result = await withTransaction((client) => syncImportJob(client, jobId, req.body?.branchId));
+      res.set('Cache-Control', 'no-store').json({ ok: true, ...result });
+    } catch (error) {
+      console.error('[inventory-v3] bulk import sync failed', error);
+      res.status(400).json({ error: error.message || 'Unable to sync bulk import into live inventory.' });
     }
   });
 
