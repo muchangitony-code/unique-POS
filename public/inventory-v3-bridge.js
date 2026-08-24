@@ -2,14 +2,29 @@
   'use strict';
 
   const root = () => document.getElementById('viewRoot');
-  const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
+  const esc = value => String(value ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#039;'}[ch]));
+  const selectedBranchId = () => {
+    const el = document.getElementById('branchSelect');
+    const value = el && el.value ? Number(el.value) : 0;
+    return Number.isInteger(value) && value > 0 ? value : 0;
+  };
   let products = [];
   let query = '';
   let loaded = false;
 
   async function loadProducts() {
-    const response = await fetch('/api/v3/inventory/products?q=' + encodeURIComponent(query), { headers: { Accept: 'application/json' }, cache: 'no-store' });
-    if (!response.ok) throw new Error('Live inventory service is unavailable.');
+    const branchId = selectedBranchId();
+    if (!branchId) {
+      products = [];
+      loaded = true;
+      render();
+      return;
+    }
+    const url = new URL('/api/v3/inventory/products', window.location.origin);
+    url.searchParams.set('branchId', String(branchId));
+    if (query) url.searchParams.set('q', query);
+    const response = await fetch(url.toString(), { headers: { Accept: 'application/json' }, cache: 'no-store' });
+    if (!response.ok) throw new Error('Live branch inventory service is unavailable.');
     const data = await response.json();
     products = Array.isArray(data.products) ? data.products : [];
     loaded = true;
@@ -17,7 +32,7 @@
   }
 
   function productRows() {
-    if (!products.length) return '<tr><td colspan="8" class="empty-state">No products in inventory.</td></tr>';
+    if (!products.length) return '<tr><td colspan="8" class="empty-state">No products with inventory records for the selected branch.</td></tr>';
     return products.map(p => `<tr>
       <td><strong>${esc(p.sku)}</strong></td><td>${esc(p.barcode || '')}</td><td>${esc(p.name)}</td>
       <td>${esc(p.category || '')}</td><td>${esc(p.unit || 'pcs')}</td>
@@ -29,11 +44,12 @@
   function render() {
     const el = root();
     if (!el) return;
+    const branchId = selectedBranchId();
     el.innerHTML = `<section class="card section-card inventory-v3-page">
-      <div class="section-head"><div><h2>Products & Inventory</h2><p>Live catalogue backed directly by PostgreSQL inventory records.</p></div><button class="btn btn-primary" type="button" id="inventoryV3Add">Add Product</button></div>
+      <div class="section-head"><div><h2>Products & Inventory</h2><p>Live catalogue and stock for the selected branch.</p></div><button class="btn btn-primary" type="button" id="inventoryV3Add">Add Product</button></div>
       <div class="inline-group" style="margin-bottom:16px"><input id="inventoryV3Search" class="form-control" type="search" placeholder="Search name, SKU or barcode" value="${esc(query)}"><button class="btn btn-outline" type="button" id="inventoryV3Refresh">Refresh</button></div>
       <div class="table-wrap"><table><thead><tr><th>SKU</th><th>Barcode</th><th>Product</th><th>Category</th><th>Unit</th><th>Selling</th><th>Stock</th><th>Actions</th></tr></thead><tbody>${productRows()}</tbody></table></div>
-      <div class="inventory-v3-status">${loaded ? `${products.length} products — live query` : 'Loading live inventory…'}</div>
+      <div class="inventory-v3-status">${branchId ? (loaded ? `${products.length} products — branch ${branchId} live query` : 'Loading live branch inventory…') : 'Select a branch to view branch stock.'}</div>
     </section>`;
     el.querySelector('#inventoryV3Search').addEventListener('input', event => { query = event.target.value; loadProducts().catch(showError); });
     el.querySelector('#inventoryV3Refresh').addEventListener('click', () => loadProducts().catch(showError));
@@ -44,7 +60,7 @@
 
   function showError(error) {
     const el = root();
-    if (el) { const status = el.querySelector('.inventory-v3-status'); if (status) status.textContent = error.message || 'Unable to load live inventory.'; }
+    if (el) { const status = el.querySelector('.inventory-v3-status'); if (status) status.textContent = error.message || 'Unable to load live branch inventory.'; }
   }
 
   function form(product) {
@@ -101,5 +117,9 @@
   function activeRoute() { return String(location.hash || '#dashboard').replace(/^#/, '').split('?')[0]; }
   function isInventoryRoute() { return activeRoute() === 'products' || activeRoute() === 'inventory'; }
   function activate() { if (!isInventoryRoute()) return; loaded = false; products = []; render(); loadProducts().catch(showError); }
-  window.addEventListener('hashchange', () => setTimeout(activate, 0)); setTimeout(activate, 0);
+  window.addEventListener('hashchange', () => setTimeout(activate, 0));
+  document.addEventListener('change', event => {
+    if (event.target && event.target.id === 'branchSelect' && isInventoryRoute()) setTimeout(activate, 0);
+  });
+  setTimeout(activate, 0);
 })();
