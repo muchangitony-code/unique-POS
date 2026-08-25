@@ -9,5 +9,5 @@
   "0023_production_catalog_wipe.sql": {"action": "retired"},
   "0023_production_clean_slate_catalog.sql": {"action": "retired"},
   "0026_inventory_clean_start.sql": {"action": "retired"},
-  "0027_restore_inventory_catalog_from_archive.sql": {"action": "retired"}
+  "0027_restore_inventory_catalog_from_archive.sql": {"action": "baseline"}
 }
