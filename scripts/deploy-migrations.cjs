@@ -22,22 +22,6 @@ function requireDestructiveApproval(names) {
   if (missing.length) throw new Error(`Destructive migration blocked: approval missing for ${missing.join(', ')}`);
 }
 
-async function markRetiredAsAppliedInNonProduction(names) {
-  const nodeEnv = String(process.env.NODE_ENV || 'production').toLowerCase();
-  if (nodeEnv === 'production') throw new Error(`Retired historical migrations are pending in production: ${names.join(', ')}. Audit and reconcile them before deployment.`);
-  const { databaseUrl } = parseAndValidateDatabaseUrl('migration-baseline');
-  const pool = new Pool({ connectionString: databaseUrl, ssl: railwaySsl(databaseUrl) });
-  const client = await pool.connect();
-  try {
-    await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (id SERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
-    for (const name of names) await client.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [name]);
-  } finally {
-    client.release();
-    await pool.end();
-  }
-  console.log(`[migration-deploy] Non-production baseline recorded retired migration history without executing destructive SQL: ${names.join(', ')}`);
-}
-
 function createFreshBackup() {
   const result = spawnSync(process.execPath, [path.resolve(__dirname, 'backup-before-migration.cjs')], { stdio: ['ignore', 'pipe', 'inherit'], env: process.env, encoding: 'utf8' });
   if (result.status !== 0) throw new Error('Fresh database backup failed. No migration was run.');
@@ -51,19 +35,23 @@ function createFreshBackup() {
 
 async function main() {
   requireDeploymentCredential();
-  let rows = await auditMigrationState();
-  const retiredPending = rows.filter((row) => row.status === 'pending' && row.policy === 'retired').map((row) => row.name);
-  if (retiredPending.length) {
-    await markRetiredAsAppliedInNonProduction(retiredPending);
-    rows = await auditMigrationState();
+  const rows = await auditMigrationState();
+  const freshStartPending = rows.filter((row) => row.status === 'pending' && row.policy === 'fresh_start');
+  const destructivePending = rows
+    .filter((row) => row.status === 'pending' && row.policy !== 'fresh_start' && row.destructive)
+    .map((row) => row.name);
+
+  if (freshStartPending.length) {
+    console.warn(`[migration-deploy] Fresh-start mode: ${freshStartPending.map((row) => row.name).join(', ')}. No backup/archive will be created by design.`);
   }
-  const destructivePending = rows.filter((row) => row.status === 'pending' && row.destructive).map((row) => row.name);
+
   if (destructivePending.length) {
     requireDestructiveApproval(destructivePending);
     console.log(`[migration-deploy] Fresh backup required for destructive migration(s): ${destructivePending.join(', ')}`);
     const backupFile = createFreshBackup();
     console.log(`[migration-deploy] Backup ready: ${backupFile}`);
   }
+
   await assertMigrationDeploymentSafe();
   const result = await applyMigrations();
   console.log('[migration-deploy] Migrations applied:', result.applied);
@@ -73,6 +61,5 @@ async function main() {
 
 main().catch((error) => {
   console.error('[migration-deploy] FAILED:', error.message || error);
-  console.error('[migration-deploy] If a migration failed after a backup was created, restore the reported pre-migration dump before retrying.');
   process.exit(1);
 });
