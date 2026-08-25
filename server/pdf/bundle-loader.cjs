@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const Module = require('node:module');
 
-const INVENTORY_MOUNT_MARKER = 'UNIQUEPOS_INVENTORY_V3_MOUNT_V1';
+const INVENTORY_MOUNT_MARKER = 'UNIQUEPOS_INVENTORY_V3_MOUNT_V2';
 
 function prepareRuntimeSource(filename) {
   let source = fs.readFileSync(filename, 'utf8');
@@ -25,7 +25,9 @@ function prepareRuntimeSource(filename) {
 
   const injection = [
     `// ${INVENTORY_MOUNT_MARKER}`,
+    "const { mountInventoryV3BranchRoutes } = require('./server/inventory-v3-branch-routes.cjs');",
     "const { mountInventoryV3 } = require('./server/inventory-v3.cjs');",
+    `mountInventoryV3BranchRoutes(${appVar});`,
     `mountInventoryV3(${appVar});`,
     ''
   ].join('\n');
