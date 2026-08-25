@@ -21,6 +21,9 @@ if (fs.existsSync(envPath)) {
   }
 }
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
+// Migration execution is deployment-only. Set the guard before any runtime or
+// database bootstrap code is loaded so startup can never accidentally migrate.
+process.env.UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS = "1";
 const defaultClientDir = path.join(__dirname, "public");
 const configuredClientDir = process.env.SERVE_CLIENT_DIR ? path.resolve(process.env.SERVE_CLIENT_DIR) : "";
 const configuredClientIndex = configuredClientDir ? path.join(configuredClientDir, "index.html") : "";
@@ -48,7 +51,6 @@ async function start() {
     ensureRuntimeBundle();
     const { bootstrapDatabaseIfNeeded } = require("./scripts/bootstrap-db.cjs");
     const result = await bootstrapDatabaseIfNeeded();
-    process.env.UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS = "1";
     console.log("[startup] Database bootstrap complete", result);
     if (result.adminBootstrapped) console.log("[bootstrap-db] Admin account ensured");
     loadIndex();
