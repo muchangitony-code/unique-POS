@@ -1,14 +1,13 @@
 BEGIN;
 
--- CLEAN CATALOG INITIALIZATION
+-- FRESH CATALOG START
 --
--- The historical recovery archive is empty in the target environment and the
--- operator has explicitly chosen to start the catalogue again from a clean
--- state. This migration only establishes the current V2 inventory schema.
+-- The operator has explicitly chosen to abandon the legacy product catalogue
+-- and start with a new catalogue. This migration removes catalogue/inventory
+-- rows only. POS transactions, users, branches, settings, customers,
+-- suppliers and financial records are intentionally left intact.
 --
--- It deliberately does not fabricate products and does not delete existing
--- catalogue or transactional data. The new catalogue is loaded through the
--- normal product/bulk-import flow after deployment.
+-- No backup/archive is created by this migration. No product data is fabricated.
 
 CREATE TABLE IF NOT EXISTS public.inventory_products_v2 (
   id BIGSERIAL PRIMARY KEY,
@@ -49,5 +48,52 @@ CREATE TABLE IF NOT EXISTS public.inventory_movements_v2 (
   user_id BIGINT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Remove every legacy/current catalogue source so there is exactly one clean
+-- starting point for the new catalogue import.
+DO $$
+BEGIN
+  IF to_regclass('public.inventory_movements_v2') IS NOT NULL THEN
+    DELETE FROM public.inventory_movements_v2;
+  END IF;
+  IF to_regclass('public.inventory_stock_v2') IS NOT NULL THEN
+    DELETE FROM public.inventory_stock_v2;
+  END IF;
+  IF to_regclass('public.inventory_products_v2') IS NOT NULL THEN
+    DELETE FROM public.inventory_products_v2;
+  END IF;
+  IF to_regclass('public.product_stock') IS NOT NULL THEN
+    DELETE FROM public.product_stock;
+  END IF;
+  IF to_regclass('public.products') IS NOT NULL THEN
+    DELETE FROM public.products;
+  END IF;
+  IF to_regclass('public.inventory_canonical') IS NOT NULL THEN
+    DELETE FROM public.inventory_canonical;
+  END IF;
+  IF to_regclass('public.products_canonical') IS NOT NULL THEN
+    DELETE FROM public.products_canonical;
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  remaining BIGINT := 0;
+BEGIN
+  SELECT
+    COALESCE((SELECT COUNT(*) FROM public.products), 0) +
+    COALESCE((SELECT COUNT(*) FROM public.product_stock), 0) +
+    COALESCE((SELECT COUNT(*) FROM public.inventory_products_v2), 0) +
+    COALESCE((SELECT COUNT(*) FROM public.inventory_stock_v2), 0) +
+    COALESCE((SELECT COUNT(*) FROM public.inventory_movements_v2), 0)
+  INTO remaining;
+
+  IF remaining <> 0 THEN
+    RAISE EXCEPTION 'Fresh catalogue reset failed: % inventory rows remain', remaining;
+  END IF;
+END $$;
+
+SELECT setval(pg_get_serial_sequence('public.inventory_products_v2', 'id'), 1, false);
+SELECT setval(pg_get_serial_sequence('public.inventory_movements_v2', 'id'), 1, false);
 
 COMMIT;
