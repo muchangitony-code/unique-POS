@@ -1,0 +1,28 @@
+name: Actions Runner Smoke
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  runner-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Runner diagnostics
+        run: |
+          echo "GitHub Actions runner started"
+          echo "Runner: $RUNNER_NAME"
+          echo "OS: $RUNNER_OS"
+          node --version || true
+          npm --version || true
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Verify checkout
+        run: |
+          test -f package.json
+          git rev-parse HEAD
+          echo "Actions runner and repository checkout are healthy."
