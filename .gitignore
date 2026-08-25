@@ -4,3 +4,4 @@ backups/
 storage/
 build/
 index.runtime.cjs
+*.map
