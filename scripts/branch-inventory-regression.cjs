@@ -5,6 +5,7 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const inventory = fs.readFileSync(path.join(root, 'server', 'inventory-v3.cjs'), 'utf8');
+const branchRoutes = fs.readFileSync(path.join(root, 'server', 'inventory-v3-branch-routes.cjs'), 'utf8');
 const loader = fs.readFileSync(path.join(root, 'server', 'pdf', 'bundle-loader.cjs'), 'utf8');
 const bridge = fs.readFileSync(path.join(root, 'public', 'sales-v3-bridge.js'), 'utf8');
 
@@ -14,8 +15,13 @@ function assertIncludes(source, text, message) {
 
 assertIncludes(inventory, 'const q = text(req.query.q);', 'Inventory catalogue must preserve search handling.');
 assertIncludes(inventory, 'inventory_stock_v2', 'Inventory catalogue must read live stock.');
-assertIncludes(loader, 'UNIQUEPOS_INVENTORY_V3_MOUNT_V1', 'Runtime loader must install Inventory V3.');
-assertIncludes(loader, 'mountInventoryV3', 'Runtime loader must mount the Inventory V3 module.');
+assertIncludes(branchRoutes, "app.get('/api/v3/inventory/products'", 'Branch inventory catalogue route must be installed.');
+assertIncludes(branchRoutes, 's.branch_id = $1', 'Branch inventory catalogue must constrain stock by branch_id.');
+assertIncludes(branchRoutes, "app.get('/api/v3/inventory/dashboard'", 'Branch inventory dashboard route must be installed.');
+assertIncludes(branchRoutes, 'ON s.product_id = p.id AND s.branch_id = $1', 'Branch inventory dashboard must constrain stock by branch_id.');
+assertIncludes(loader, 'UNIQUEPOS_INVENTORY_V3_MOUNT_V3', 'Runtime loader must install the current Inventory V3 architecture.');
+assertIncludes(loader, 'mountInventoryV3BranchRoutes', 'Runtime loader must mount branch-scoped Inventory V3 routes.');
+assertIncludes(loader, 'mountInventoryV3', 'Runtime loader must mount the generic Inventory V3 module.');
 assertIncludes(bridge, "liveUrl.searchParams.set('branchId', String(branchId));", 'Sales bridge must send branchId.');
 assertIncludes(bridge, 'if (!branchId)', 'Sales bridge must never fall back to cross-branch stock.');
 assertIncludes(bridge, 'Cache-Control', 'Sales bridge must remain uncached.');
