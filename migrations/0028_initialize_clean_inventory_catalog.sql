@@ -6,9 +6,10 @@ BEGIN;
 -- That archive is empty in the target environment and the operator has
 -- explicitly chosen to start the catalogue again from a clean state.
 --
--- This migration intentionally does NOT fabricate or restore products.
--- It only establishes a valid empty V2 inventory state so the POS can deploy
--- cleanly and receive a new catalogue through the normal import flow.
+-- This migration does not fabricate or restore products. It only guarantees
+-- that the current V2 inventory tables exist and are ready for a new catalogue
+-- import. Existing inventory data is intentionally left untouched here so a
+-- normal migration deployment can never silently delete production data.
 
 CREATE TABLE IF NOT EXISTS public.inventory_products_v2 (
   id BIGSERIAL PRIMARY KEY,
@@ -48,23 +49,6 @@ CREATE TABLE IF NOT EXISTS public.inventory_movements_v2 (
   reason TEXT,
   user_id BIGINT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Start with a genuinely empty catalogue. Do not touch sales, invoices,
--- customers, suppliers, users, branches, or financial documents.
-DELETE FROM public.inventory_movements_v2;
-DELETE FROM public.inventory_stock_v2;
-DELETE FROM public.inventory_products_v2;
-
-SELECT setval(
-  pg_get_serial_sequence('public.inventory_products_v2', 'id'),
-  1,
-  false
-);
-SELECT setval(
-  pg_get_serial_sequence('public.inventory_movements_v2', 'id'),
-  1,
-  false
 );
 
 COMMIT;
