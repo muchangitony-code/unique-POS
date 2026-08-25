@@ -25,13 +25,11 @@ async function main() {
   const client = await pool.connect();
   let createdIds = [];
   try {
-    // 3. Database must contain no legacy catalog rows after the clean migration.
     for (const table of ['products', 'product_stock']) {
       const { rows } = await client.query(`SELECT COUNT(*)::int AS count FROM public.${table}`);
       assert.equal(rows[0].count, 0, `${table} still contains legacy rows`);
     }
 
-    // Schema/FK checks.
     const fk = await client.query(`
       SELECT 1 FROM pg_constraint
       WHERE conrelid = 'public.inventory_stock_v2'::regclass
@@ -40,40 +38,47 @@ async function main() {
     `);
     assert.equal(fk.rowCount, 1, 'inventory_stock_v2.product_id FK is missing');
 
-    // 1. Create -> immediate inventory visibility with zero default stock.
+    const branches = await client.query('SELECT id FROM branches WHERE is_active=TRUE ORDER BY id LIMIT 2');
+    assert.ok(branches.rowCount >= 1, 'At least one active branch is required');
+    const branchA = Number(branches.rows[0].id);
+    const branchB = branches.rowCount > 1 ? Number(branches.rows[1].id) : null;
+
     const sku = `ACCEPT-${Date.now()}`;
     const created = await api('/api/v3/inventory/products', {
       method: 'POST', body: JSON.stringify({ sku, name: 'Acceptance Product', sellingPrice: 100 })
     });
     createdIds.push(created.product.id);
-    let list = await api(`/api/v3/inventory/products?q=${encodeURIComponent(sku)}`);
+
+    let list = await api(`/api/v3/inventory/products?q=${encodeURIComponent(sku)}&branchId=${branchA}`);
     assert.equal(list.products.length, 1);
     assert.equal(Number(list.products[0].quantity_on_hand), 0);
 
-    // 2. Edit is immediately reflected.
+    if (branchB) {
+      const other = await api(`/api/v3/inventory/products?q=${encodeURIComponent(sku)}&branchId=${branchB}`);
+      assert.equal(other.products.length, 1);
+      assert.equal(Number(other.products[0].quantity_on_hand), 0);
+    }
+
     await api(`/api/v3/inventory/products/${created.product.id}`, {
       method: 'PATCH', body: JSON.stringify({ name: 'Acceptance Product Edited' })
     });
-    list = await api(`/api/v3/inventory/products?q=${encodeURIComponent(sku)}`);
+    list = await api(`/api/v3/inventory/products?q=${encodeURIComponent(sku)}&branchId=${branchA}`);
     assert.equal(list.products[0].name, 'Acceptance Product Edited');
 
-    // 4. Dashboard inventory numbers must equal the direct database query.
-    const dashboard = await api('/api/v3/inventory/dashboard');
+    const dashboard = await api(`/api/v3/inventory/dashboard?branchId=${branchA}`);
     const direct = await client.query(`
       SELECT
         COUNT(DISTINCT p.id)::int AS total_products,
         COUNT(*) FILTER (WHERE COALESCE(s.quantity_on_hand,0)=0)::int AS out_of_stock_items,
         COUNT(*) FILTER (WHERE COALESCE(s.quantity_on_hand,0)>0 AND COALESCE(s.quantity_on_hand,0)<=p.reorder_level)::int AS low_stock_items
       FROM inventory_products_v2 p
-      LEFT JOIN inventory_stock_v2 s ON s.product_id=p.id
+      LEFT JOIN inventory_stock_v2 s ON s.product_id=p.id AND s.branch_id=$1
       WHERE p.is_active=TRUE
-    `);
+    `, [branchA]);
     assert.equal(Number(dashboard.total_products), Number(direct.rows[0].total_products));
     assert.equal(Number(dashboard.out_of_stock_items), Number(direct.rows[0].out_of_stock_items));
     assert.equal(Number(dashboard.low_stock_items), Number(direct.rows[0].low_stock_items));
 
-    // 5. Concurrent stress test: creates are transactional and each product gets
-    // at most one stock row per branch.
     const batch = Array.from({ length: 20 }, (_, i) => `STRESS-${Date.now()}-${i}`);
     const stress = await Promise.all(batch.map(s => api('/api/v3/inventory/products', {
       method: 'POST', body: JSON.stringify({ sku: s, name: s, sellingPrice: 10 })
@@ -86,12 +91,10 @@ async function main() {
     `, [stress.map(x => x.product.id)]);
     assert.equal(duplicateStock.rowCount, 0, 'Concurrent product creation created duplicate stock rows');
 
-    // Concurrent edits should leave every row valid.
     await Promise.all(stress.map(x => api(`/api/v3/inventory/products/${x.product.id}`, {
       method: 'PATCH', body: JSON.stringify({ sellingPrice: 11 })
     })));
 
-    // 2/5. Delete and verify no orphan inventory/movement rows.
     await Promise.all(createdIds.map(id => api(`/api/v3/inventory/products/${id}`, { method: 'DELETE' })));
     const orphanStock = await client.query(`
       SELECT COUNT(*)::int AS count FROM inventory_stock_v2 s
