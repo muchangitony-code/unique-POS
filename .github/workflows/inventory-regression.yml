@@ -1,0 +1,26 @@
+name: Inventory regression
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  inventory-architecture:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Inventory architecture regression
+        run: node tests/inventory-runtime-architecture.cjs
+      - name: Branch inventory regression
+        run: node scripts/branch-inventory-regression.cjs
+      - name: Syntax check inventory modules
+        run: |
+          node --check server/inventory-v3.cjs
+          node --check server/pdf/bundle-loader.cjs
