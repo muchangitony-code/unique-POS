@@ -20,12 +20,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Build and syntax validation
-        run: npm run build
-      - name: Deployment safety regression
-        run: node tests/deployment-safety.cjs
-      - name: Counter runtime patch and syntax smoke test
         run: |
-          node scripts/counter-runtime-patch.cjs
+          npm run build
           node --check public/app.js
           node --check public/pos-catalog-compat.js
           node --check public/pos-auth-bridge.js
@@ -37,12 +33,14 @@ jobs:
           const bridge = fs.readFileSync('public/pos-auth-bridge.js', 'utf8');
           if (html.indexOf('pos-catalog-compat.js') > html.indexOf('pos-auth-bridge.js')) throw new Error('Counter compatibility layer must load before auth bridge');
           if (html.indexOf('pos-auth-bridge.js') > html.indexOf('app.js')) throw new Error('Auth bridge must load before POS app');
-          if (!app.includes('data-action=\\"add-to-basket\\"')) throw new Error('Counter Add to Basket action missing after patch');
-          if (!app.includes('Cannot sell more than available stock.')) throw new Error('Counter stock guard missing after patch');
+          if (!app.includes('data-action=\\"add-to-basket\\"')) throw new Error('Counter Add to Basket action missing after deterministic build');
+          if (!app.includes('Cannot sell more than available stock.')) throw new Error('Counter stock guard missing after deterministic build');
           if (!compat.includes('in_stock_only')) throw new Error('Counter compatibility stock fallback missing');
           if (!bridge.includes('Authorization')) throw new Error('Counter auth bridge missing Authorization support');
           console.log('Counter static smoke checks passed.');
           NODE
+      - name: Deployment safety regression
+        run: node tests/deployment-safety.cjs
       - name: Verify quotation custom-item integration
         run: |
           node - <<'NODE'
