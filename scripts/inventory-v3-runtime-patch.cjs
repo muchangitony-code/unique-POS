@@ -1,7 +1,8 @@
 'use strict';
 
-const fs = require('node:fs');
-const path = require('node:path');
+// This module is intentionally build-time only.  It must never mutate the
+// runtime bundle while app.js is starting; startup-time source rewriting was
+// the cause of the recurring ReferenceError/patchRuntimeBundle failures.
 
 function patchBranchScopedInventoryCatalogue(source) {
   if (source.includes('[inventory-v3] branch-scoped catalogue installed')) return source;
@@ -62,31 +63,8 @@ function patchBranchScopedInventoryCatalogue(source) {
     }
   });`;
 
-  if (!source.includes(old)) throw new Error('Inventory v3 branch patch: catalogue route source not found');
+  if (!source.includes(old)) throw new Error('Inventory v3 build patch: catalogue route source not found');
   return source.replace(old, replacement) + '\n// [inventory-v3] branch-scoped catalogue installed\n';
 }
 
-function patchRuntimeBundle() {
-  const root = path.resolve(__dirname, '..');
-  const file = path.join(root, 'index.runtime.cjs');
-  let source = fs.readFileSync(file, 'utf8');
-  source = patchBranchScopedInventoryCatalogue(source);
-  if (source.includes('[inventory-v3] isolated inventory API mounted')) {
-    fs.writeFileSync(file, source, 'utf8');
-    return;
-  }
-
-  const listen = source.match(/\b([A-Za-z_$][\w$]*)\.listen\s*\(/);
-  if (!listen) throw new Error('Inventory v3 patch: Express listen point not found');
-  const appName = listen[1];
-
-  // Use string concatenation here. This startup patch must not contain a
-  // second template-literal interpolation layer; doing so can evaluate
-  // generated-runtime variables while Node is starting the application.
-  const injection = '\nrequire(\'./server/inventory-v3.cjs\').mountInventoryV3(' + appName + ');\n';
-  source = source.slice(0, listen.index) + injection + source.slice(listen.index);
-  fs.writeFileSync(file, source, 'utf8');
-  console.log('[inventory-v3-patch] branch-scoped inventory API mounted');
-}
-
-module.exports = { patchRuntimeBundle };
+module.exports = { patchBranchScopedInventoryCatalogue };
