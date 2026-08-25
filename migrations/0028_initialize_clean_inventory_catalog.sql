@@ -2,14 +2,13 @@ BEGIN;
 
 -- CLEAN CATALOG INITIALIZATION
 --
--- The previous recovery migration expected a populated historical archive.
--- That archive is empty in the target environment and the operator has
--- explicitly chosen to start the catalogue again from a clean state.
+-- The historical recovery archive is empty in the target environment and the
+-- operator has explicitly chosen to start the catalogue again from a clean
+-- state. This migration only establishes the current V2 inventory schema.
 --
--- This migration does not fabricate or restore products. It only guarantees
--- that the current V2 inventory tables exist and are ready for a new catalogue
--- import. Existing inventory data is intentionally left untouched here so a
--- normal migration deployment can never silently delete production data.
+-- It deliberately does not fabricate products and does not delete existing
+-- catalogue or transactional data. The new catalogue is loaded through the
+-- normal product/bulk-import flow after deployment.
 
 CREATE TABLE IF NOT EXISTS public.inventory_products_v2 (
   id BIGSERIAL PRIMARY KEY,
