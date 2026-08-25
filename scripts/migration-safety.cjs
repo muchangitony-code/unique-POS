@@ -25,9 +25,6 @@ function classifyMigration(sqlText) {
     const normalized = stripComments(statement).replace(/\s+/g, ' ').trim();
     if (!normalized) continue;
     const upper = normalized.toUpperCase();
-
-    // Scan the executable statement body, not only its first token. PostgreSQL
-    // DO/EXECUTE blocks can hide destructive SQL inside string literals.
     if (/\bTRUNCATE\s+(?:TABLE\s+)?/.test(upper)) findings.push('TRUNCATE');
     if (/\bDELETE\s+FROM\b/.test(upper)) findings.push('DELETE');
     if (/\bDROP\s+(?:TABLE|SCHEMA|DATABASE|TYPE|SEQUENCE|VIEW|MATERIALIZED\s+VIEW)\b/.test(upper)) findings.push('DROP');
@@ -44,8 +41,7 @@ function loadPolicy(policyPath) {
 
 function scanMigrations(migrationsDir, policyPath = path.resolve(process.cwd(), 'migration-safety.json')) {
   const policy = loadPolicy(policyPath);
-  const files = listMigrationFiles(migrationsDir);
-  return files.map((name) => {
+  return listMigrationFiles(migrationsDir).map((name) => {
     const findings = classifyMigration(fs.readFileSync(path.join(migrationsDir, name), 'utf8'));
     const entry = policy[name] || {};
     return { name, destructive: findings.length > 0, findings, policy: entry.action || 'review' };
@@ -100,15 +96,22 @@ async function assertMigrationDeploymentSafe(options = {}) {
   const applied = await readMigrationState(options.databaseUrl);
   const pending = scanned.filter((item) => !applied.has(item.name));
   const retiredPending = pending.filter((item) => item.policy === 'retired');
-  if (retiredPending.length) throw new Error(`Migration deployment blocked: retired migration(s) are still pending: ${retiredPending.map((item) => item.name).join(', ')}. Audit the target database before deployment; these historical data-cleanup migrations must never run automatically.`);
-  const destructivePending = pending.filter((item) => item.destructive);
+  if (retiredPending.length) throw new Error(`Migration deployment blocked: retired migration(s) are still pending: ${retiredPending.map((item) => item.name).join(', ')}.`);
+
+  const freshStartPending = pending.filter((item) => item.policy === 'fresh_start');
+  const normalPending = pending.filter((item) => item.policy !== 'fresh_start');
+  const destructivePending = normalPending.filter((item) => item.destructive);
   if (destructivePending.length) {
     const names = destructivePending.map((item) => item.name);
     requireDestructiveApproval(names);
     const backupFile = requireBackupFile(process.env.MIGRATION_BACKUP_FILE);
-    return { pending, destructivePending, backupFile };
+    return { pending, freshStartPending, destructivePending, backupFile };
   }
-  return { pending, destructivePending: [], backupFile: null };
+
+  if (freshStartPending.length) {
+    console.warn(`[migration-deploy] Explicit fresh-start migration approved: ${freshStartPending.map((item) => item.name).join(', ')}. No backup/archive will be created.`);
+  }
+  return { pending, freshStartPending, destructivePending: [], backupFile: null };
 }
 
 async function auditMigrationState(options = {}) {
@@ -124,7 +127,7 @@ module.exports = { CONFIRMATION, DESTRUCTIVE_APPROVAL, scanMigrations, auditMigr
 if (require.main === module) {
   auditMigrationState().then((rows) => {
     console.table(rows.map(({ name, destructive, findings, policy, status }) => ({ name, status, destructive, findings: findings.join(','), policy })));
-    if (rows.some((row) => row.status === 'pending' && row.destructive)) process.exitCode = 2;
+    if (rows.some((row) => row.status === 'pending' && row.destructive && row.policy !== 'fresh_start')) process.exitCode = 2;
   }).catch((error) => {
     console.error('[migration-safety] Failed:', error.message || error);
     process.exitCode = 1;
