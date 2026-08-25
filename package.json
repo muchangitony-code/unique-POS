@@ -6,8 +6,7 @@
   "engines": { "node": ">=22" },
   "files": ["assets/fonts/"],
   "scripts": {
-    "build": "node scripts/build.cjs",
-    "prestart": "node scripts/counter-runtime-patch.cjs && node scripts/build.cjs",
+    "build": "node scripts/counter-runtime-patch.cjs && node scripts/build.cjs",
     "start": "node app.js",
     "db:init": "node scripts/deploy-migrations.cjs",
     "db:migrate": "node scripts/deploy-migrations.cjs",
