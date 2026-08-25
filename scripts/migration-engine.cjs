@@ -23,6 +23,11 @@ function listMigrationFiles(migrationsDir) {
   return fs.readdirSync(migrationsDir).filter((name) => name.endsWith('.sql')).sort();
 }
 
+function loadMigrationPolicy(policyPath) {
+  if (!fs.existsSync(policyPath)) return {};
+  return JSON.parse(fs.readFileSync(policyPath, 'utf8'));
+}
+
 function isTransactionControlStatement(statement) {
   const s = stripLeadingSqlComments(statement).trim().toUpperCase();
   return s === 'BEGIN' || s === 'COMMIT' || s === 'ROLLBACK';
@@ -168,6 +173,8 @@ async function applyMigrationFile(client, filePath, fileName) {
 async function applyMigrations(options = {}) {
   const { databaseUrl } = parseAndValidateDatabaseUrl('migrations');
   const migrationsDir = options.migrationsDir || path.resolve(process.cwd(), 'migrations');
+  const policyPath = options.policyPath || path.resolve(process.cwd(), 'migration-safety.json');
+  const policy = loadMigrationPolicy(policyPath);
   const files = listMigrationFiles(migrationsDir);
   const pool = new Pool({ connectionString: databaseUrl, ssl: railwaySsl(databaseUrl) });
   const client = await pool.connect();
@@ -178,6 +185,18 @@ async function applyMigrations(options = {}) {
     for (const file of files) {
       const { rows } = await client.query('SELECT 1 FROM schema_migrations WHERE name=$1', [file]);
       if (rows.length > 0) continue;
+
+      // A baseline migration is an explicit migration-history reconciliation:
+      // its SQL is intentionally never executed. This is used only when a
+      // historical migration was deliberately abandoned and its effects are
+      // known not to exist in the target database.
+      if (policy[file]?.action === 'baseline') {
+        await client.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [file]);
+        console.log(`[migrations] Baseline recorded without executing SQL: ${file}`);
+        applied.push(file);
+        continue;
+      }
+
       await applyMigrationFile(client, path.join(migrationsDir, file), file);
       applied.push(file);
     }
