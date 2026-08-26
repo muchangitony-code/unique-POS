@@ -37,14 +37,12 @@ function prepareRuntimeSource(filename) {
     if (appStatementEnd < 0) throw new Error('Bulk Import V2 integration: Express application declaration is incomplete.');
     injections.push({ index: appStatementEnd + 1, code: [
       `// ${BULK_IMPORT_MOUNT_MARKER}`,
-      "const { Pool } = require('pg');",
       "const { parseAndValidateDatabaseUrl, railwaySsl } = require('./scripts/database-url.cjs');",
       "const { registerBulkImportV2Routes } = require('./server/bulk-import-v2-router.cjs');",
       'let __bulkImportV2Pool;',
       'function __getBulkImportV2Pool() {',
-      "  if (!__bulkImportV2Pool) { const { databaseUrl } = parseAndValidateDatabaseUrl('bulk-import-v2'); __bulkImportV2Pool = new Pool({ connectionString: databaseUrl, ssl: railwaySsl(databaseUrl), max: 5 }); }",
+      "  if (!__bulkImportV2Pool) { const { Pool: BulkImportPool } = require('pg'); const { databaseUrl } = parseAndValidateDatabaseUrl('bulk-import-v2'); __bulkImportV2Pool = new BulkImportPool({ connectionString: databaseUrl, ssl: railwaySsl(databaseUrl), max: 5 }); }",
       '  return __bulkImportV2Pool;',
-      '}',
       `${appVar}.get('/api/healthz', (_req, res) => res.status(200).json({ ok: true, service: 'unique-pos' }));`,
       `registerBulkImportV2Routes({ app: ${appVar}, pool: __getBulkImportV2Pool(), requireAuth: typeof requireAuth === 'function' ? requireAuth : undefined });`,
       ''
