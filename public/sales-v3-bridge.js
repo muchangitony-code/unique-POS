@@ -1,10 +1,10 @@
 (function () {
   'use strict';
 
-  // Sales must always read stock for the selected branch. The authoritative
-  // inventory tables contain one stock row per product/branch. Never fall
-  // back to the retired aggregate catalogue because that can leak stock from
-  // another branch into the current counter.
+  // Sales must use the same branch-scoped inventory source as Products/Inventory.
+  // Keep the adapter deliberately small and passive: it must never trigger route
+  // changes or refresh loops. It only normalizes the live inventory response
+  // into every stock field used by the legacy Sales renderer.
   const originalFetch = window.fetch.bind(window);
 
   function isSalesRoute() {
@@ -33,6 +33,7 @@
 
   function legacyProduct(row) {
     const stock = number(row.quantity_on_hand);
+    const outOfStock = stock <= 0;
     return {
       id: row.id,
       product_id: row.id,
@@ -43,14 +44,29 @@
       name: row.name || '',
       category_name: String(row.category || '').trim() || 'Others',
       category: String(row.category || '').trim() || 'Others',
+      brand: row.brand || '',
       unit: row.unit || 'pcs',
       cost_price: number(row.cost_price),
       selling_price: number(row.selling_price),
       vat_rate: number(row.vat_rate),
       min_stock: number(row.reorder_level),
+      reorder_level: number(row.reorder_level),
+
+      // Stock aliases. Different generations of the Sales renderer use
+      // different names; all must describe the same branch quantity.
       current_stock: stock,
       stock: stock,
+      quantity: stock,
+      quantity_on_hand: stock,
+      stock_quantity: stock,
       available_stock: stock,
+      available_quantity: stock,
+      qty: stock,
+      currentStock: stock,
+      is_out_of_stock: outOfStock,
+      out_of_stock: outOfStock,
+      in_stock: !outOfStock,
+
       is_active: row.is_active !== false
     };
   }
