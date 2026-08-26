@@ -28,6 +28,37 @@ function authorizeBulkImport(req, res, next) {
   return next();
 }
 
+// Some deployments of UniquePOS do not install Express's JSON body parser before
+// the runtime-mounted V2 routes. In that case req.body is undefined even though
+// the browser correctly sends application/json. Read the request body here as a
+// safe fallback so the upload cannot fail with the misleading "No catalogue file
+// was supplied" message.
+async function getRequestBody(req) {
+  if (req?.body && typeof req.body === 'object') return req.body;
+  if (!req || typeof req.on !== 'function') return {};
+
+  const chunks = [];
+  let size = 0;
+  const MAX_BODY_BYTES = 100 * 1024 * 1024;
+
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > MAX_BODY_BYTES) throw new Error('Catalogue upload is too large. Maximum upload size is 100 MB.');
+    chunks.push(buffer);
+  }
+
+  if (!chunks.length) return {};
+  const raw = Buffer.concat(chunks).toString('utf8').trim();
+  if (!raw) return {};
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error('Invalid upload request. Please select the Excel/CSV file again and retry.');
+  }
+}
+
 function registerBulkImportV2Routes({ app, pool, requireAuth }) {
   if (!app || !pool) throw new Error('Bulk Import V2 requires application and database pool');
   if (app.__bulkImportV2Mounted) return app;
@@ -38,8 +69,9 @@ function registerBulkImportV2Routes({ app, pool, requireAuth }) {
 
   app.post('/api/v2/products/bulk-import/preview', requireAuth, authorizeBulkImport, async (req, res) => {
     try {
-      const fileName = String(req.body?.file_name || 'catalog.csv');
-      const encoded = String(req.body?.file_base64 || '');
+      const body = await getRequestBody(req);
+      const fileName = String(body?.file_name || 'catalog.csv');
+      const encoded = String(body?.file_base64 || '');
       if (!encoded) return res.status(400).json({ error: 'No catalogue file was supplied.' });
       const buffer = Buffer.from(encoded, 'base64');
       if (!buffer.length) return res.status(400).json({ error: 'The catalogue file is empty.' });
@@ -54,8 +86,9 @@ function registerBulkImportV2Routes({ app, pool, requireAuth }) {
 
   app.post('/api/v2/products/bulk-import', requireAuth, authorizeBulkImport, async (req, res) => {
     try {
-      const branchId = Number(req.body?.branch_id);
-      const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+      const body = await getRequestBody(req);
+      const branchId = Number(body?.branch_id);
+      const rows = Array.isArray(body?.rows) ? body.rows : [];
       if (!Number.isInteger(branchId) || branchId <= 0) return res.status(400).json({ error: 'A valid branch is required.' });
       if (!rows.length) return res.status(400).json({ error: 'No valid product rows were supplied.' });
       return res.json({ ok: true, ...await importRows({ pool, rows, branchId, userId: req.user?.id ?? req.user?.userId ?? null }) });
@@ -75,8 +108,9 @@ function createBulkImportV2Router({ Router, pool, requireAuth }) {
 
   router.post('/api/v2/products/bulk-import/preview', requireAuth, authorizeBulkImport, async (req, res) => {
     try {
-      const fileName = String(req.body?.file_name || 'catalog.csv');
-      const encoded = String(req.body?.file_base64 || '');
+      const body = await getRequestBody(req);
+      const fileName = String(body?.file_name || 'catalog.csv');
+      const encoded = String(body?.file_base64 || '');
       if (!encoded) return res.status(400).json({ error: 'No catalogue file was supplied.' });
       const buffer = Buffer.from(encoded, 'base64');
       if (!buffer.length) return res.status(400).json({ error: 'The catalogue file is empty.' });
@@ -91,8 +125,9 @@ function createBulkImportV2Router({ Router, pool, requireAuth }) {
 
   router.post('/api/v2/products/bulk-import', requireAuth, authorizeBulkImport, async (req, res) => {
     try {
-      const branchId = Number(req.body?.branch_id);
-      const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+      const body = await getRequestBody(req);
+      const branchId = Number(body?.branch_id);
+      const rows = Array.isArray(body?.rows) ? body.rows : [];
       if (!Number.isInteger(branchId) || branchId <= 0) return res.status(400).json({ error: 'A valid branch is required.' });
       if (!rows.length) return res.status(400).json({ error: 'No valid product rows were supplied.' });
       return res.json({ ok: true, ...await importRows({ pool, rows, branchId, userId: req.user?.id ?? req.user?.userId ?? null }) });
@@ -109,6 +144,7 @@ module.exports = {
   normalizedRole,
   isAuthorizedImportUser,
   authorizeBulkImport,
+  getRequestBody,
   registerBulkImportV2Routes,
   createBulkImportV2Router
 };
