@@ -6,7 +6,6 @@
   // back to the retired aggregate catalogue because that can leak stock from
   // another branch into the current counter.
   const originalFetch = window.fetch.bind(window);
-  let refreshScheduled = false;
 
   function isSalesRoute() {
     return String(location.hash || '').replace(/^#/, '').split('?')[0] === 'sales';
@@ -66,19 +65,6 @@
     });
   }
 
-  function refreshSalesRoute() {
-    if (!isSalesRoute() || refreshScheduled) return;
-    refreshScheduled = true;
-    window.setTimeout(function () {
-      refreshScheduled = false;
-      if (!isSalesRoute() || !selectedBranchId()) return;
-      // app.js owns the renderer. Re-entering the same hash through its
-      // hashchange handler guarantees the initial catalogue request happens
-      // after this bridge has installed its fetch interception.
-      window.dispatchEvent(new Event('hashchange'));
-    }, 50);
-  }
-
   window.fetch = async function (input, init) {
     const rawUrl = typeof input === 'string' ? input : (input && input.url) || '';
     if (!isSalesProductRequest(rawUrl)) return originalFetch(input, init);
@@ -118,12 +104,4 @@
       return makeResponse({ data: [], products: [], total: 0, count: 0, branch_id: selectedBranchId() || null, source: 'inventory_products_v2', error: 'Unable to load branch stock.' }, 503);
     }
   };
-
-  window.addEventListener('hashchange', function () {
-    if (isSalesRoute()) refreshSalesRoute();
-  });
-  document.addEventListener('change', function (event) {
-    if (event.target && event.target.id === 'branchSelect') refreshSalesRoute();
-  });
-  window.setTimeout(refreshSalesRoute, 150);
 })();
