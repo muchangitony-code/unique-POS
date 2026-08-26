@@ -15,7 +15,7 @@ BEGIN
   END IF;
 
   WITH latest AS (
-    SELECT DISTINCT ON (lower(trim(COALESCE(r.normalized_data->>'product_name',r.raw_data->>'Product Name',r.raw_data->>'product_name',r.raw_data->>'name')))),
+    SELECT DISTINCT ON (lower(trim(COALESCE(r.normalized_data->>'product_name',r.raw_data->>'Product Name',r.raw_data->>'product_name',r.raw_data->>'name'))))
       lower(trim(COALESCE(r.normalized_data->>'product_name',r.raw_data->>'Product Name',r.raw_data->>'product_name',r.raw_data->>'name'))) AS name_key,
       GREATEST(COALESCE((SELECT CASE WHEN trim(e.value) ~ '^-?[0-9]+([.][0-9]+)?$' THEN trim(e.value)::numeric ELSE NULL END FROM jsonb_each_text(COALESCE(r.normalized_data,'{}')||COALESCE(r.raw_data,'{}')) e WHERE regexp_replace(lower(e.key),'[^a-z0-9]','','g') IN ('openingstock','currentstock','stock','qty','quantity') ORDER BY CASE regexp_replace(lower(e.key),'[^a-z0-9]','','g') WHEN 'openingstock' THEN 1 WHEN 'currentstock' THEN 2 WHEN 'stock' THEN 3 WHEN 'qty' THEN 4 WHEN 'quantity' THEN 5 ELSE 99 END LIMIT 1),0),0) AS qty
     FROM public.product_import_rows r JOIN public.product_import_jobs j ON j.id=r.job_id
