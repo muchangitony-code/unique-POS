@@ -1,15 +1,20 @@
 'use strict';
 
 // Injects the fresh Bulk Import V2 API and a lightweight health endpoint into
-// the generated Express runtime. It never imports the historical importer.
+// the generated Express runtime. The runtime bundle does not necessarily own
+// the HTTP listen call, so this patch is mounted immediately after the Express
+// application is created instead of searching for app.listen().
 function patchBulkImportRoutes(source) {
   if (source.includes('BULK_IMPORT_V2_PATCH')) return source;
+
   const expressMatch = source.match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*express\(\)/)
     || source.match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(0,\s*[A-Za-z_$][\w$]*\.default\)\(\)/);
   if (!expressMatch) throw new Error('Bulk import: Express app not found');
+
   const appVar = expressMatch[1];
-  let listenIndex = source.lastIndexOf(`${appVar}.listen(`);
-  if (listenIndex < 0) throw new Error('Bulk import: application listen point not found');
+  const appStatementEnd = source.indexOf('\n', expressMatch.index);
+  if (appStatementEnd < 0) throw new Error('Bulk import: Express application declaration is incomplete');
+
   const code = [
     '// BULK_IMPORT_V2_PATCH',
     '(function installFreshBulkImport(){',
@@ -28,7 +33,8 @@ function patchBulkImportRoutes(source) {
     '})();',
     ''
   ].join('\n');
-  return source.slice(0, listenIndex) + code + source.slice(listenIndex);
+
+  return source.slice(0, appStatementEnd + 1) + code + source.slice(appStatementEnd + 1);
 }
 
 module.exports = { patchBulkImportRoutes };
