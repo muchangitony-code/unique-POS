@@ -1,14 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { parseCsv, detectMapping, normalizeRow, validateRow, buildPreview } = require('../server/bulk-import-v2.cjs');
-const {
-  AUTHORIZED_IMPORT_ROLES,
-  normalizedRole,
-  isAuthorizedImportUser,
-  authorizeBulkImport,
-  registerBulkImportV2Routes
-} = require('../server/bulk-import-v2-router.cjs');
+const { parseCsv, detectMapping, normalizeRow, validateRow, buildPreview, generateProductCode } = require('../server/bulk-import-v2.cjs');
+const { AUTHORIZED_IMPORT_ROLES, normalizedRole, isAuthorizedImportUser, authorizeBulkImport, registerBulkImportV2Routes } = require('../server/bulk-import-v2-router.cjs');
 
 const matrix = parseCsv('SKU,Product Name,Cost Price,Selling Price,VAT,Opening Stock\nEL-001,LED Bulb,50,80,16,12\nEL-002,Socket,100,150,16,4');
 assert.equal(matrix.length, 3);
@@ -23,7 +17,18 @@ assert.equal(normalized.product_code, 'EL-001');
 assert.equal(normalized.selling_price, 80);
 assert.equal(normalized.opening_stock, 12);
 assert.deepEqual(validateRow(normalized, 2), []);
-const bad = normalizeRow({ SKU: '', 'Product Name': '', 'Selling Price': 'abc' }, detectMapping(['SKU','Product Name','Selling Price']));
+
+const noSku = parseCsv('Product Name,Cost Price,Selling Price,Opening Stock\nLED Bulb,50,80,12\nSocket,100,150,4');
+const generatedPreview = buildPreview(noSku);
+assert.equal(generatedPreview.valid, 2);
+assert.equal(generatedPreview.auto_generated_codes, 2);
+assert.match(generatedPreview.rows[0].normalized.product_code, /^US-LED-BULB-/);
+assert.match(generatedPreview.rows[1].normalized.product_code, /^US-SOCKET-/);
+assert.notEqual(generatedPreview.rows[0].normalized.product_code, generatedPreview.rows[1].normalized.product_code);
+assert.equal(generatedPreview.rows[0].generated_product_code, generatedPreview.rows[0].normalized.product_code);
+assert.match(generateProductCode({ rowNumber: 4, productName: 'Solar Panel 550W', seed: 'TEST-4' }), /^US-SOLAR-PANEL-550W-TEST-4$/);
+
+const bad = normalizeRow({ SKU: '', 'Product Name': '', 'Selling Price': 'abc' }, detectMapping(['SKU','Product Name','Selling Price']), { autoGenerateCode: false });
 assert.ok(validateRow(bad, 2).length >= 2);
 
 for (const role of ['administrator', 'ADMINISTRATOR', ' admin ', 'super_admin', 'business_owner', 'branch_manager', 'inventory_manager']) {
@@ -33,14 +38,7 @@ for (const role of ['administrator', 'ADMINISTRATOR', ' admin ', 'super_admin', 
 }
 assert.equal(isAuthorizedImportUser({ user: { role: 'sales_cashier' } }), false);
 
-function responseStub() {
-  const out = { statusCode: 200, body: null };
-  return {
-    out,
-    status(code) { out.statusCode = code; return this; },
-    json(body) { out.body = body; return this; }
-  };
-}
+function responseStub() { const out = { statusCode: 200, body: null }; return { out, status(code) { out.statusCode = code; return this; }, json(body) { out.body = body; return this; } }; }
 let called = 0;
 const next = () => { called += 1; };
 const adminRes = responseStub();
@@ -53,10 +51,7 @@ assert.equal(deniedRes.out.statusCode, 403);
 assert.equal(deniedRes.out.body.error, 'Bulk import is restricted to authorized inventory users.');
 
 const registered = [];
-const app = {
-  post(path, ...handlers) { registered.push({ path, handlers }); },
-  __bulkImportV2Mounted: false
-};
+const app = { post(path, ...handlers) { registered.push({ path, handlers }); }, __bulkImportV2Mounted: false };
 const requireAuth = (req, res, nextMiddleware) => { req.user = { role: 'administrator', id: 7 }; nextMiddleware(); };
 registerBulkImportV2Routes({ app, pool: {}, requireAuth });
 registerBulkImportV2Routes({ app, pool: {}, requireAuth });
