@@ -38,17 +38,17 @@ function prepareRuntimeSource(filename) {
     injections.push({ index: appStatementEnd + 1, code: [
       `// ${BULK_IMPORT_MOUNT_MARKER}`,
       "const { Pool } = require('pg');",
-      "const { parseAndValidateDatabaseUrl, railwaySsl } = require('../scripts/database-url.cjs');",
-      "const { registerBulkImportV2Routes } = require('../server/bulk-import-v2-router.cjs');",
+      "const { parseAndValidateDatabaseUrl, railwaySsl } = require('./scripts/database-url.cjs');",
+      "const { registerBulkImportV2Routes } = require('./server/bulk-import-v2-router.cjs');",
       'let __bulkImportV2Pool;',
       'function __getBulkImportV2Pool() {',
       "  if (!__bulkImportV2Pool) { const { databaseUrl } = parseAndValidateDatabaseUrl('bulk-import-v2'); __bulkImportV2Pool = new Pool({ connectionString: databaseUrl, ssl: railwaySsl(databaseUrl), max: 5 }); }",
       '  return __bulkImportV2Pool;',
       '}',
-      `appVarPlaceholder.get('/api/healthz', (_req, res) => res.status(200).json({ ok: true, service: 'unique-pos' }));`,
-      `registerBulkImportV2Routes({ app: appVarPlaceholder, pool: __getBulkImportV2Pool(), requireAuth: typeof requireAuth === 'function' ? requireAuth : undefined });`,
+      `${appVar}.get('/api/healthz', (_req, res) => res.status(200).json({ ok: true, service: 'unique-pos' }));`,
+      `registerBulkImportV2Routes({ app: ${appVar}, pool: __getBulkImportV2Pool(), requireAuth: typeof requireAuth === 'function' ? requireAuth : undefined });`,
       ''
-    ].join('\n').replaceAll('appVarPlaceholder', appVar) });
+    ].join('\n') });
   }
 
   injections.sort((a, b) => b.index - a.index);
