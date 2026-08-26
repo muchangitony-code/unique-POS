@@ -1,9 +1,8 @@
 (function () {
   'use strict';
 
-  // Final Sales catalogue bridge. This runs independently of the older
-  // compatibility layer and explicitly carries the login token + selected
-  // branch so Sales can read the same product catalogue as Inventory/Bulk Import.
+  // Final Sales catalogue bridge. Bulk Import and Inventory V3 use
+  // inventory_products_v2, so Sales must read the same V3 catalogue.
   var TOKEN_KEY = 'uniquepos.token';
   var timer = null;
   var busy = false;
@@ -15,7 +14,6 @@
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/\"/g, '&quot;').replace(/'/g, '&#39;');
   }
-
   function list(payload) {
     if (Array.isArray(payload)) return payload;
     if (payload && Array.isArray(payload.data)) return payload.data;
@@ -23,13 +21,11 @@
     if (payload && Array.isArray(payload.products)) return payload.products;
     return [];
   }
-
   function branchId() {
     var select = document.getElementById('branchSelect');
     var value = select && select.value ? String(select.value) : '';
     return value && value !== 'all' ? value : '';
   }
-
   function headers() {
     var h = new Headers({ Accept: 'application/json' });
     var token = localStorage.getItem(TOKEN_KEY) || '';
@@ -38,7 +34,6 @@
     if (branch && /^\d+$/.test(branch)) h.set('x-branch-id', branch);
     return h;
   }
-
   function normalize(row) {
     return {
       id: row.id,
@@ -51,35 +46,31 @@
       image: row.image_url || row.imageUrl || ''
     };
   }
-
   async function loadProducts() {
     var branch = branchId();
-    var url = '/api/products?limit=500&in_stock_only=false&fallback_product_stock=true';
-    if (branch && /^\d+$/.test(branch)) url += '&branchId=' + encodeURIComponent(branch);
+    var url = '/api/v3/inventory/products';
+    if (branch && /^\d+$/.test(branch)) url += '?branchId=' + encodeURIComponent(branch);
     var response = await fetch(url, { headers: headers(), cache: 'no-store' });
-    if (!response.ok) throw new Error('Products API returned ' + response.status);
+    if (!response.ok) throw new Error('Inventory V3 API returned ' + response.status);
     return list(await response.json()).map(normalize).filter(function (p) { return p.id != null; });
   }
-
   function categoryFilter() {
     var active = document.querySelector('.pos-categories-panel .chip.active');
     if (!active) return 'All Products';
     return String(active.getAttribute('data-value') || active.textContent || '').trim();
   }
-
   function searchFilter() {
     var input = document.getElementById('posProductSearch');
     return String(input ? input.value : '').trim().toLowerCase();
   }
-
   function matches(p) {
     var category = categoryFilter();
     var query = searchFilter();
-    var categoryOk = !category || category === 'All Products' || p.category.toLowerCase() === category.toLowerCase() || (category === 'Others' && ['solar panels','inverters','batteries','accessories','cables','electricals'].indexOf(p.category.toLowerCase()) === -1);
+    var normalized = p.category.toLowerCase();
+    var categoryOk = !category || category === 'All Products' || normalized === category.toLowerCase() || (category === 'Others' && ['solar panels','inverters','batteries','accessories','cables','electricals'].indexOf(normalized) === -1);
     var text = (p.name + ' ' + p.sku + ' ' + p.barcode + ' ' + p.category).toLowerCase();
     return categoryOk && (!query || text.indexOf(query) !== -1);
   }
-
   function card(p) {
     var stockKnown = p.stock != null && Number.isFinite(p.stock);
     var inStock = !stockKnown || p.stock > 0;
@@ -93,7 +84,6 @@
       '<button type="button" class="btn ' + (inStock ? 'btn-primary' : 'btn-outline') + '" data-action="' + action + '" data-id="' + esc(p.id) + '"' + (inStock ? '' : ' disabled') + '>' + (inStock ? '<i class="fa-solid fa-plus"></i> Add to Basket' : 'Out of stock') + '</button>' +
       '</div></article>';
   }
-
   function render(panel, products) {
     var filtered = products.filter(matches);
     var signature = branchId() + '|' + categoryFilter() + '|' + searchFilter() + '|' + filtered.map(function (p) { return p.id + ':' + p.stock; }).join(',');
@@ -105,13 +95,10 @@
     }
     panel.innerHTML = '<div class="product-grid">' + filtered.map(card).join('') + '</div>';
   }
-
   async function sync() {
     if (busy) return;
     var panel = document.querySelector('.pos-products-panel');
     if (!panel) return;
-    // Do not interfere with an already populated, live product grid unless
-    // branch/search/category changed. An empty panel is always repaired.
     var needsLoad = !panel.querySelector('.product-card') || !cache || cache.branch !== branchId();
     if (!needsLoad) {
       render(panel, cache.products);
@@ -131,12 +118,10 @@
       busy = false;
     }
   }
-
   function schedule() {
     clearTimeout(timer);
     timer = setTimeout(sync, 200);
   }
-
   var observer = new MutationObserver(function () {
     if (document.querySelector('.pos-products-panel')) schedule();
   });
@@ -145,8 +130,9 @@
   document.addEventListener('click', function (e) {
     if (e.target.closest('[data-action="pos-category"]') || e.target.closest('.pos-categories-panel .chip')) { lastSignature = ''; schedule(); }
   });
-  var branch = document.getElementById('branchSelect');
-  if (branch) branch.addEventListener('change', function () { cache = null; lastSignature = ''; schedule(); });
+  document.addEventListener('change', function (e) {
+    if (e.target && e.target.id === 'branchSelect') { cache = null; lastSignature = ''; schedule(); }
+  });
   window.addEventListener('load', schedule);
   window.addEventListener('hashchange', schedule);
   schedule();
