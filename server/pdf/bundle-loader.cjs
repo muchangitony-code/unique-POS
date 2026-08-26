@@ -43,6 +43,7 @@ function prepareRuntimeSource(filename) {
       'function __getBulkImportV2Pool() {',
       "  if (!__bulkImportV2Pool) { const { Pool: BulkImportPool } = require('pg'); const { databaseUrl } = parseAndValidateDatabaseUrl('bulk-import-v2'); __bulkImportV2Pool = new BulkImportPool({ connectionString: databaseUrl, ssl: railwaySsl(databaseUrl), max: 5 }); }",
       '  return __bulkImportV2Pool;',
+      '}',
       `${appVar}.get('/api/healthz', (_req, res) => res.status(200).json({ ok: true, service: 'unique-pos' }));`,
       `registerBulkImportV2Routes({ app: ${appVar}, pool: __getBulkImportV2Pool(), requireAuth: typeof requireAuth === 'function' ? requireAuth : undefined });`,
       ''
