@@ -1,5 +1,7 @@
 name: Fix Sales inventory read path
 
+# One-shot repair workflow. It removes itself after the verified commit.
+
 on:
   push:
     branches: [main]
@@ -99,16 +101,13 @@ jobs:
   }`;
 
           const updated = original.slice(0, start) + replacement + original.slice(end);
-
           const beforeOutside = original.slice(0, start) + original.slice(end);
           const afterOutside = updated.slice(0, start) + updated.slice(start + replacement.length);
           if (beforeOutside !== afterOutside) throw new Error('Safety check failed: content outside loadSalesData changed');
           if (oldFunction === replacement) throw new Error('loadSalesData replacement made no change');
-
           fs.writeFileSync(appPath, updated);
-          console.log('Original app.js SHA:', crypto.createHash('sha256').update(original).digest('hex'));
-          console.log('Updated app.js SHA:', crypto.createHash('sha256').update(updated).digest('hex'));
           console.log('Verified: only loadSalesData changed in app.js.');
+          console.log('Updated app.js SHA-256:', crypto.createHash('sha256').update(updated).digest('hex'));
           NODE
 
           node -e "const p=require('./package.json'); if (p.scripts.build !== 'node scripts/build.cjs') { throw new Error('Unexpected build command: '+p.scripts.build); }"
@@ -117,37 +116,25 @@ jobs:
           p = Path('public/index.html')
           s = p.read_text()
           old = '    <script src="/sales-v3-bridge.js?v=20260826-7" defer></script>\n'
-          if old not in s:
-              raise SystemExit('Expected sales-v3-bridge script tag not found')
+          if old not in s: raise SystemExit('Expected sales bridge tag not found')
           p.write_text(s.replace(old, '', 1))
-
           p = Path('package.json')
           s = p.read_text()
           old = '"build": "node scripts/counter-runtime-patch.cjs && node scripts/build.cjs"'
-          if old not in s:
-              raise SystemExit('Expected counter runtime build command not found')
+          if old not in s: raise SystemExit('Expected counter patch build command not found')
           p.write_text(s.replace(old, '"build": "node scripts/build.cjs"', 1))
           PY
 
+          rm -f public/sales-v3-bridge.js scripts/counter-runtime-patch.cjs
           node --check public/app.js
-          node --check public/index.html 2>/dev/null || true
           node -e "const p=require('./package.json'); if (p.scripts.build !== 'node scripts/build.cjs') throw new Error('Build command verification failed');"
           test ! -e public/sales-v3-bridge.js
           test ! -e scripts/counter-runtime-patch.cjs
-
-          rm -f public/sales-v3-bridge.js scripts/counter-runtime-patch.cjs
+          if grep -R "sales-v3-bridge\|counter-runtime-patch" -n public/index.html package.json public/app.js 2>/dev/null; then exit 1; fi
 
           git diff --check
-          echo '--- app.js diff stat ---'
-          git diff --stat -- public/app.js
-          echo '--- app.js diff ---'
+          echo '--- verified app.js change ---'
           git diff --unified=3 -- public/app.js
-          echo '--- remaining legacy references ---'
-          if grep -R "sales-v3-bridge\|counter-runtime-patch" -n public/index.html package.json public/app.js 2>/dev/null; then
-            echo 'Legacy reference remains' >&2
-            exit 1
-          fi
-
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add public/app.js public/index.html package.json public/sales-v3-bridge.js scripts/counter-runtime-patch.cjs .github/workflows/fix-sales-inventory.yml
