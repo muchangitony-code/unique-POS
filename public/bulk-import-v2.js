@@ -1,57 +1,32 @@
 (() => {
   'use strict';
-
-  const FIELDS = [
-    ['product_code','Product Code / SKU'], ['barcode','Barcode'], ['product_name','Product Name'],
-    ['category','Category'], ['brand','Brand'], ['unit','Unit'], ['cost_price','Cost Price'],
-    ['selling_price','Selling Price'], ['vat_rate','VAT'], ['reorder_level','Reorder Level'],
-    ['opening_stock','Opening Stock'], ['supplier','Supplier'], ['location','Location'],
-    ['description','Description'], ['image_url','Image URL']
-  ];
-  const ALIASES = {
-    product_code:['productcode','productcodesku','sku','code','itemcode'], barcode:['barcode','ean','upc'],
-    product_name:['productname','name','itemname'], category:['category','categoryname'], brand:['brand','brandname'],
-    unit:['unit','uom'], cost_price:['costprice','cost','buyprice','purchaseprice'], selling_price:['sellingprice','saleprice','price','retailprice'],
-    vat_rate:['vat','vatrate','tax','taxrate'], reorder_level:['reorderlevel','minimumstock','minstock'],
-    opening_stock:['openingstock','stock','currentstock','qty','quantity'], supplier:['supplier','suppliername'],
-    location:['location','branch','branchcode','branchname'], description:['description','details','notes'], image_url:['imageurl','image','photourl']
-  };
-
-  const state = { file:null, rows:[], headers:[], mapping:{}, branchId:'' };
-  const norm = (v) => String(v ?? '').toLowerCase().replace(/[^a-z0-9]/g,'');
-  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-
-  function parseCsv(text) {
-    const lines = text.replace(/\r\n?/g,'\n').split('\n').filter(Boolean);
-    if (!lines.length) return [];
-    const delimiter = lines[0].includes('\t') ? '\t' : ',';
-    return lines.map(line => { const out=[]; let cell='', quoted=false; for(let i=0;i<line.length;i++){const c=line[i],n=line[i+1]; if(c==='"'){if(quoted&&n==='"'){cell+='"';i++;}else quoted=!quoted;} else if(c===delimiter&&!quoted){out.push(cell.trim());cell='';} else cell+=c;} out.push(cell.trim()); return out; });
+  const FIELDS=[['product_code','Product Code / SKU'],['barcode','Barcode'],['product_name','Product Name'],['category','Category'],['brand','Brand'],['unit','Unit'],['cost_price','Cost Price'],['selling_price','Selling Price'],['vat_rate','VAT'],['reorder_level','Reorder Level'],['opening_stock','Opening Stock'],['supplier','Supplier'],['location','Location'],['description','Description'],['image_url','Image URL']];
+  const state={file:null,preview:null,mapping:{},branchId:''};
+  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  function toast(message,type='info'){if(typeof window.showToast==='function')window.showToast(message,type);else console[type==='error'?'error':'log'](message);}
+  function mount(root,branchId){root.innerHTML='<div class="section-card"><div class="section-card__header"><div><h3>Bulk Import — New Catalogue</h3><p>Upload CSV or Excel, review the mapping and validation, then import into the clean inventory.</p></div></div><div class="stack-form"><label><span>Catalogue file</span><input id="bulkV2File" type="file" accept=".csv,.xlsx,.xls" /></label><div id="bulkV2Status" class="inline-message">Choose a CSV or Excel catalogue.</div><div id="bulkV2Mapping"></div><div id="bulkV2Preview"></div><div class="modal-actions"><button id="bulkV2Import" class="btn btn-primary" disabled>Import Valid Products</button></div></div></div>';
+    state.branchId=branchId||'';
+    root.querySelector('#bulkV2File').onchange=previewFile;
+    root.querySelector('#bulkV2Import').onclick=importProducts;
   }
-  function mapHeaders(headers) {
-    const map={};
-    FIELDS.forEach(([field]) => { const aliases=ALIASES[field]||[]; const match=headers.find(h=>aliases.includes(norm(h))); if(match) map[field]=match; });
-    return map;
+  async function previewFile(){
+    const input=document.getElementById('bulkV2File');state.file=input?.files?.[0]||null;if(!state.file)return;
+    const status=document.getElementById('bulkV2Status');status.textContent='Reading and validating catalogue…';
+    try{const buffer=await state.file.arrayBuffer();let binary='';const bytes=new Uint8Array(buffer);const chunk=0x8000;for(let i=0;i<bytes.length;i+=chunk)binary+=String.fromCharCode(...bytes.subarray(i,Math.min(i+chunk,bytes.length)));const base64=btoa(binary);
+      const response=await fetch('/api/v2/products/bulk-import/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_name:state.file.name,file_base64:base64})});
+      const data=await response.json();if(!response.ok)throw new Error(data.error||'Preview failed');state.preview=data;state.mapping={...data.mapping};renderPreview();
+    }catch(error){state.preview=null;status.textContent=error.message;toast(error.message,'error');}
   }
-  function parseRows(matrix) {
-    if(!matrix.length) return [];
-    const headers=matrix[0].map((v,i)=>String(v||`Column ${i+1}`).trim());
-    state.headers=headers; state.mapping=mapHeaders(headers);
-    return matrix.slice(1).map((cells,i)=>{const raw={};headers.forEach((h,j)=>raw[h]=cells[j]??'');return {rowNumber:i+2,raw};}).filter(r=>Object.values(r.raw).some(v=>String(v).trim()));
+  function renderPreview(){
+    const p=state.preview;if(!p)return;const status=document.getElementById('bulkV2Status');status.textContent=`${state.file.name}: ${p.total} rows — ${p.valid} valid, ${p.invalid} invalid.`;
+    document.getElementById('bulkV2Mapping').innerHTML='<h4>Column Mapping</h4><div class="table-wrap"><table><thead><tr><th>POS Field</th><th>Catalogue Column</th></tr></thead><tbody>'+FIELDS.map(([field,label])=>`<tr><td>${esc(label)}</td><td><select data-bulk-map="${field}"><option value="">— Not mapped —</option>${p.headers.map(h=>`<option value="${esc(h)}" ${state.mapping[field]===h?'selected':''}>${esc(h)}</option>`).join('')}</select></td></tr>`).join('')+'</tbody></table></div>';
+    document.querySelectorAll('[data-bulk-map]').forEach(el=>el.onchange=()=>{state.mapping[el.dataset.bulkMap]=el.value;revalidatePreview();});
+    document.getElementById('bulkV2Preview').innerHTML=`<div class="table-wrap"><table><thead><tr><th>Row</th><th>Product</th><th>SKU/Barcode</th><th>Selling Price</th><th>Opening Stock</th><th>Status</th></tr></thead><tbody>${p.rows.slice(0,100).map(r=>`<tr><td>${r.rowNumber}</td><td>${esc(r.raw?.[state.mapping.product_name]||'')}</td><td>${esc(r.raw?.[state.mapping.product_code]||r.raw?.[state.mapping.barcode]||'')}</td><td>${esc(r.raw?.[state.mapping.selling_price]||'')}</td><td>${esc(r.raw?.[state.mapping.opening_stock]||'')}</td><td>${r.errors?.length?`<span class="inline-message">${esc(r.errors.map(e=>e.message).join('; '))}</span>`:'Ready'}</td></tr>`).join('')}</tbody></table></div>`;
+    document.getElementById('bulkV2Import').disabled=p.valid===0;
   }
-  function val(raw,field){return String(raw[state.mapping[field]]??'').trim();}
-  function validate(row){const errors=[]; const name=val(row.raw,'product_name'), sku=val(row.raw,'product_code'), barcode=val(row.raw,'barcode'), sell=val(row.raw,'selling_price'); if(!name)errors.push('Product Name'); if(!sku&&!barcode)errors.push('SKU or Barcode'); if(sell===''||Number.isNaN(Number(sell)))errors.push('Selling Price'); return errors;}
-  function render(){
-    const root=document.getElementById('bulkImportV2'); if(!root)return;
-    const valid=state.rows.filter(r=>!validate(r).length).length, invalid=state.rows.length-valid;
-    root.innerHTML=`<div class="section-card"><div class="section-card__header"><div><h3>Bulk Import Products</h3><p>Upload a new catalogue, map columns, validate, then import.</p></div></div><div class="stack-form"><label><span>Product catalogue (CSV or Excel)</span><input id="bulkV2File" type="file" accept=".csv,.xlsx,.xls" /></label><div id="bulkV2Summary" class="inline-message">${state.file?`${esc(state.file.name)} — ${state.rows.length} rows, ${valid} valid, ${invalid} invalid.`:'Choose a CSV or Excel file to begin.'}</div><div id="bulkV2Mapping"></div><div class="modal-actions"><button id="bulkV2Import" class="btn btn-primary" ${state.rows.length&&valid?'':'disabled'}>Import ${valid} products</button></div></div></div>`;
-    const file=document.getElementById('bulkV2File'); file.onchange=async()=>{state.file=file.files[0]||null;if(!state.file){state.rows=[];render();return;} const buffer=await state.file.arrayBuffer(); const ext=state.file.name.toLowerCase().split('.').pop(); if(ext==='csv'){state.rows=parseRows(parseCsv(new TextDecoder().decode(buffer)));}else{showToast('Excel mapping is handled by the server preview. Upload the file to continue.','info');state.rows=[];} render();};
-    document.getElementById('bulkV2Import').onclick=importRows;
-    if(state.rows.length){document.getElementById('bulkV2Mapping').innerHTML='<div class="table-wrap"><table><thead><tr><th>Field</th><th>Mapped column</th></tr></thead><tbody>'+FIELDS.map(([f,label])=>`<tr><td>${esc(label)}</td><td><select data-bulk-map="${f}"><option value="">— Not mapped —</option>${state.headers.map(h=>`<option ${state.mapping[f]===h?'selected':''} value="${esc(h)}">${esc(h)}</option>`).join('')}</select></td></tr>`).join('')+'</tbody></table></div>'; document.querySelectorAll('[data-bulk-map]').forEach(el=>el.onchange=()=>{state.mapping[el.dataset.bulkMap]=el.value;render();});}
-  }
-  async function importRows(){
-    const rows=state.rows.filter(r=>!validate(r).length).map(r=>{const n={};FIELDS.forEach(([f])=>{const v=val(r,f); n[f]=v;}); return {rowNumber:r.rowNumber,normalized:n};});
-    if(!rows.length){showToast('There are no valid rows to import.','error');return;}
-    try{const response=await fetch('/api/v2/products/bulk-import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({branch_id:state.branchId,rows})});const data=await response.json();if(!response.ok)throw new Error(data.error||'Import failed');showToast(`Import complete: ${data.created} created, ${data.updated} updated.`,'success');state.rows=[];state.file=null;render();}catch(error){showToast(error.message,'error');}
-  }
-  window.UniquePOSBulkImportV2={mount(root,branchId){root.id='bulkImportV2';state.branchId=branchId||'';render();}};
+  function revalidatePreview(){
+    if(!state.preview)return;const rows=state.preview.rows.map(r=>{const raw=r.raw||{};const value=f=>String(raw[state.mapping[f]]??'').trim();const n={product_code:value('product_code'),barcode:value('barcode'),product_name:value('product_name'),category:value('category'),brand:value('brand'),unit:value('unit')||'pcs',cost_price:num(value('cost_price')),selling_price:num(value('selling_price')),vat_rate:num(value('vat_rate'))??16,reorder_level:num(value('reorder_level'))??0,opening_stock:num(value('opening_stock'))??0,supplier:value('supplier'),location:value('location'),description:value('description'),image_url:value('image_url')};const errors=[];if(!n.product_name)errors.push({message:'Product Name is required'});if(!n.product_code&&!n.barcode)errors.push({message:'Product Code/SKU or Barcode is required'});if(n.selling_price===null||n.selling_price<0)errors.push({message:'Selling Price must be valid'});if(n.cost_price!==null&&n.cost_price<0)errors.push({message:'Cost Price must be non-negative'});if(n.vat_rate<0)errors.push({message:'VAT must be non-negative'});if(n.reorder_level<0)errors.push({message:'Reorder Level must be non-negative'});if(n.opening_stock<0)errors.push({message:'Opening Stock must be non-negative'});return {...r,normalized:n,errors};});state.preview.rows=rows;state.preview.valid=rows.filter(r=>!r.errors.length).length;state.preview.invalid=rows.filter(r=>r.errors.length).length;renderPreview();}
+  function num(v){if(String(v??'').trim()==='')return null;const n=Number(String(v).replace(/,/g,''));return Number.isFinite(n)?n:null;}
+  async function importProducts(){const p=state.preview;if(!p)return;const branchId=Number(state.branchId||document.getElementById('branchSelect')?.value||0);if(!branchId){toast('Select a branch before importing.','error');return;}const rows=p.rows.filter(r=>!r.errors.length).map(r=>({rowNumber:r.rowNumber,normalized:r.normalized}));if(!rows.length){toast('There are no valid products to import.','error');return;}const button=document.getElementById('bulkV2Import');button.disabled=true;button.textContent='Importing…';try{const response=await fetch('/api/v2/products/bulk-import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({branch_id:branchId,rows})});const data=await response.json();if(!response.ok)throw new Error(data.error||'Import failed');toast(`Import complete: ${data.created} created, ${data.updated} updated.`,'success');state.preview=null;state.file=null;document.getElementById('bulkV2File').value='';document.getElementById('bulkV2Status').textContent='Import complete. Upload another catalogue when ready.';document.getElementById('bulkV2Mapping').innerHTML='';document.getElementById('bulkV2Preview').innerHTML='';}catch(error){button.disabled=false;button.textContent='Import Valid Products';toast(error.message,'error');}}
+  window.UniquePOSBulkImportV2={mount};
 })();
