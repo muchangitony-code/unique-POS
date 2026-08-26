@@ -27,14 +27,15 @@ function mountInventoryV3BranchRoutes(app) {
     try {
       const q = String(req.query.q || '').trim();
       const params = [id];
-      let where = 'p.is_active = TRUE';
+      let where = 'p.is_active = TRUE AND p.pos_enabled = TRUE';
       if (q) {
         params.push(`%${q}%`);
-        where += ` AND (p.name ILIKE $2 OR p.sku ILIKE $2 OR COALESCE(p.barcode,\'\') ILIKE $2)`;
+        where += ` AND (p.name ILIKE $2 OR p.sku ILIKE $2 OR COALESCE(p.barcode,'') ILIKE $2)`;
       }
       const result = await db().query(`
         SELECT p.id, p.sku, p.barcode, p.name, p.category, p.brand, p.unit,
                p.cost_price, p.selling_price, p.vat_rate, p.reorder_level,
+               p.is_active, p.pos_enabled,
                COALESCE(s.quantity_on_hand, 0) AS quantity_on_hand
         FROM inventory_products_v2 p
         LEFT JOIN inventory_stock_v2 s
