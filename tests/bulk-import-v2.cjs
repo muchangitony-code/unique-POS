@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const { parseCsv, detectMapping, normalizeRow, validateRow, buildPreview } = require('../server/bulk-import-v2.cjs');
+const { AUTHORIZED_IMPORT_ROLES } = require('../server/bulk-import-v2-router.cjs');
 
 const matrix = parseCsv('SKU,Product Name,Cost Price,Selling Price,VAT,Opening Stock\nEL-001,LED Bulb,50,80,16,12\nEL-002,Socket,100,150,16,4');
 assert.equal(matrix.length, 3);
@@ -18,4 +19,9 @@ assert.equal(normalized.opening_stock, 12);
 assert.deepEqual(validateRow(normalized, 2), []);
 const bad = normalizeRow({ SKU: '', 'Product Name': '', 'Selling Price': 'abc' }, detectMapping(['SKU','Product Name','Selling Price']));
 assert.ok(validateRow(bad, 2).length >= 2);
+assert.ok(AUTHORIZED_IMPORT_ROLES.includes('administrator'), 'Administrator must be allowed to bulk import');
+assert.ok(AUTHORIZED_IMPORT_ROLES.includes('super_admin'));
+assert.ok(AUTHORIZED_IMPORT_ROLES.includes('business_owner'));
+assert.ok(AUTHORIZED_IMPORT_ROLES.includes('branch_manager'));
+assert.ok(AUTHORIZED_IMPORT_ROLES.includes('inventory_manager'));
 console.log('[bulk-import-v2] PASS');
