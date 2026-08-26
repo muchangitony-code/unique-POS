@@ -4,54 +4,31 @@ const fs = require('node:fs');
 const path = require('node:path');
 const Module = require('node:module');
 
-const INVENTORY_MOUNT_MARKER = 'UNIQUEPOS_INVENTORY_V3_MOUNT_V3';
-const BULK_IMPORT_MOUNT_MARKER = 'UNIQUEPOS_BULK_IMPORT_V2_MOUNT_V2';
+const RUNTIME_MOUNT_MARKER = 'UNIQUEPOS_RUNTIME_MOUNTS_V4';
+
+function findExpressAppDeclaration(source) {
+  const patterns = [
+    /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*express\(\)\s*;?/m,
+    /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(0,\s*[A-Za-z_$][\w$]*\.default\)\(\)\s*;?/m
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(source);
+    if (match) return { appVar: match[1], end: match.index + match[0].length };
+  }
+  return null;
+}
 
 function prepareRuntimeSource(filename) {
   let source = fs.readFileSync(filename, 'utf8');
-  const injections = [];
+  if (source.includes(RUNTIME_MOUNT_MARKER)) return source;
 
-  if (!source.includes(INVENTORY_MOUNT_MARKER)) {
-    const expressMatch = source.match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*express\(\)/)
-      || source.match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(0,\s*[A-Za-z_$][\w$]*\.default\)\(\)/);
-    if (!expressMatch) throw new Error('Inventory V3 integration: Express application not found in runtime bundle.');
-    const appVar = expressMatch[1];
-    const appStatementEnd = source.indexOf('\n', expressMatch.index);
-    if (appStatementEnd < 0) throw new Error('Inventory V3 integration: Express application declaration is incomplete.');
-    injections.push({ index: appStatementEnd + 1, code: [
-      `// ${INVENTORY_MOUNT_MARKER}`,
-      "const { mountInventoryV3BranchRoutes } = require('./server/inventory-v3-branch-routes.cjs');",
-      "const { mountInventoryV3 } = require('./server/inventory-v3.cjs');",
-      `mountInventoryV3BranchRoutes(${appVar});`,
-      `mountInventoryV3(${appVar});`,
-      ''
-    ].join('\n') });
-  }
+  const declaration = findExpressAppDeclaration(source);
+  if (!declaration) throw new Error('Runtime integration: Express application declaration not found.');
 
-  if (!source.includes(BULK_IMPORT_MOUNT_MARKER)) {
-    const expressMatch = source.match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*express\(\)/)
-      || source.match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(0,\s*[A-Za-z_$][\w$]*\.default\)\(\)/);
-    if (!expressMatch) throw new Error('Bulk Import V2 integration: Express application not found in runtime bundle.');
-    const appVar = expressMatch[1];
-    const appStatementEnd = source.indexOf('\n', expressMatch.index);
-    if (appStatementEnd < 0) throw new Error('Bulk Import V2 integration: Express application declaration is incomplete.');
-    injections.push({ index: appStatementEnd + 1, code: [
-      `// ${BULK_IMPORT_MOUNT_MARKER}`,
-      "const { parseAndValidateDatabaseUrl, railwaySsl } = require('./scripts/database-url.cjs');",
-      "const { registerBulkImportV2Routes } = require('./server/bulk-import-v2-router.cjs');",
-      'let __bulkImportV2Pool;',
-      'function __getBulkImportV2Pool() {',
-      "  if (!__bulkImportV2Pool) { const { Pool: BulkImportPool } = require('pg'); const { databaseUrl } = parseAndValidateDatabaseUrl('bulk-import-v2'); __bulkImportV2Pool = new BulkImportPool({ connectionString: databaseUrl, ssl: railwaySsl(databaseUrl), max: 5 }); }",
-      '  return __bulkImportV2Pool;',
-      '}',
-      `${appVar}.get('/api/healthz', (_req, res) => res.status(200).json({ ok: true, service: 'unique-pos' }));`,
-      `registerBulkImportV2Routes({ app: ${appVar}, pool: __getBulkImportV2Pool(), requireAuth: typeof requireAuth === 'function' ? requireAuth : undefined });`,
-      ''
-    ].join('\n') });
-  }
+  const { appVar, end } = declaration;
+  const code = `\n/* ${RUNTIME_MOUNT_MARKER} */\n(() => {\n  const { mountInventoryV3BranchRoutes } = require('./server/inventory-v3-branch-routes.cjs');\n  const { mountInventoryV3 } = require('./server/inventory-v3.cjs');\n  const { parseAndValidateDatabaseUrl, railwaySsl } = require('./scripts/database-url.cjs');\n  const { registerBulkImportV2Routes } = require('./server/bulk-import-v2-router.cjs');\n  let bulkImportPool;\n  const getBulkImportPool = () => {\n    if (!bulkImportPool) {\n      const { Pool: PgPool } = require('pg');\n      const { databaseUrl } = parseAndValidateDatabaseUrl('bulk-import-v2');\n      bulkImportPool = new PgPool({ connectionString: databaseUrl, ssl: railwaySsl(databaseUrl), max: 5 });\n    }\n    return bulkImportPool;\n  };\n  ${appVar}.get('/api/healthz', (_req, res) => res.status(200).json({ ok: true, service: 'unique-pos' }));\n  mountInventoryV3BranchRoutes(${appVar});\n  mountInventoryV3(${appVar});\n  registerBulkImportV2Routes({ app: ${appVar}, pool: getBulkImportPool(), requireAuth: typeof requireAuth === 'function' ? requireAuth : undefined });\n})();\n`;
 
-  injections.sort((a, b) => b.index - a.index);
-  for (const injection of injections) source = source.slice(0, injection.index) + injection.code + source.slice(injection.index);
+  source = source.slice(0, end) + code + source.slice(end);
   return source;
 }
 
@@ -60,6 +37,9 @@ function loadIndex() {
   const source = prepareRuntimeSource(filename);
   if (source === fs.readFileSync(filename, 'utf8')) return require(filename);
 
+  // Compile the transformed source in a fresh module. This avoids changing the
+  // on-disk deterministic runtime bundle and keeps all injected declarations
+  // scoped inside the runtime-mount IIFE.
   const runtimeModule = new Module(filename, module);
   runtimeModule.filename = filename;
   runtimeModule.paths = Module._nodeModulePaths(path.dirname(filename));
