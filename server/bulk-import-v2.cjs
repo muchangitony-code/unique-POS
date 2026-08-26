@@ -8,7 +8,20 @@ function number(v){if(v===null||v===undefined||text(v)==='')return null;const n=
 function detectMapping(headers){const r={};for(const f of FIELDS){const m=headers.find(h=>(ALIASES[f]||[]).includes(key(h)));if(m)r[f]=m;}return r;}
 function normalizeRow(raw,m){const v=f=>text(raw[m[f]]);return{product_code:v('product_code'),barcode:v('barcode'),product_name:v('product_name'),category:v('category'),brand:v('brand'),unit:v('unit')||'pcs',cost_price:number(v('cost_price')),selling_price:number(v('selling_price')),vat_rate:number(v('vat_rate'))??16,reorder_level:number(v('reorder_level'))??0,opening_stock:number(v('opening_stock'))??0,supplier:v('supplier'),location:v('location'),description:v('description')};}
 function validateRow(r,n){const e=[];if(!r.product_name)e.push('Product Name is required');if(!r.product_code&&!r.barcode)e.push('Product Code/SKU or Barcode is required');if(r.selling_price===null||r.selling_price<0)e.push('Selling Price must be a valid non-negative number');if(r.cost_price!==null&&r.cost_price<0)e.push('Cost Price must be non-negative');if(r.vat_rate<0)e.push('VAT must be non-negative');if(r.reorder_level<0)e.push('Reorder Level must be non-negative');if(r.opening_stock<0)e.push('Opening Stock must be non-negative');return e.map(message=>({row:n,message}));}
-function matrixToRecords(matrix){if(!Array.isArray(matrix)||!matrix.length)return{headers:[],records:[]};const headers=matrix[0].map((v,i)=>text(v)||`Column ${i+1}`);const records=matrix.slice(1).map((cells,i)=>{const raw={};headers.forEach((h,j)=>raw[h]=cells[j]??'');return{rowNumber:i+2,raw};}).filter(x=>Object.values(x.raw).some(v=>text(v)));return{headers,records};}
+function matrixToRecords(matrix){
+  if(!Array.isArray(matrix)||!matrix.length)return{headers:[],records:[]};
+  // read-excel-file normally returns an array of cell arrays. Some XLS/XLSX
+  // readers/configurations can return row objects, so support both shapes.
+  if(!Array.isArray(matrix[0]) && matrix[0] && typeof matrix[0]==='object'){
+    const headers=Object.keys(matrix[0]).map((h,i)=>text(h)||`Column ${i+1}`);
+    const records=matrix.map((row,i)=>{const raw={};headers.forEach(h=>raw[h]=row[h]??'');return{rowNumber:i+2,raw};}).filter(x=>Object.values(x.raw).some(v=>text(v)));
+    return{headers,records};
+  }
+  if(!Array.isArray(matrix[0]))throw new Error('The Excel file could not be read as a table. Please save it as .xlsx and try again.');
+  const headers=matrix[0].map((v,i)=>text(v)||`Column ${i+1}`);
+  const records=matrix.slice(1).map((cells,i)=>{const raw={};headers.forEach((h,j)=>raw[h]=cells[j]??'');return{rowNumber:i+2,raw};}).filter(x=>Object.values(x.raw).some(v=>text(v)));
+  return{headers,records};
+}
 function parseCsv(value){const lines=String(value||'').replace(/\r\n?/g,'\n').split('\n').filter(l=>l.trim());if(!lines.length)return[];const d=lines[0].includes('\t')?'\t':',';return lines.map(line=>{const a=[];let c='',q=false;for(let i=0;i<line.length;i++){const x=line[i],n=line[i+1];if(x==='"'){if(q&&n==='"'){c+='"';i++;}else q=!q;}else if(x===d&&!q){a.push(c.trim());c='';}else c+=x;}a.push(c.trim());return a;});}
 async function parseFile(buffer,fileName){const ext=path.extname(text(fileName)).toLowerCase();if(ext==='.csv'||ext==='.txt')return parseCsv(buffer.toString('utf8'));if(ext==='.xlsx'||ext==='.xls')return readXlsxFile(buffer);throw new Error('Unsupported file. Use CSV, XLSX or XLS.');}
 function buildPreview(matrix){const {headers,records}=matrixToRecords(matrix);const mapping=detectMapping(headers);const rows=records.map(({rowNumber,raw})=>{const normalized=normalizeRow(raw,mapping);return{rowNumber,raw,normalized,errors:validateRow(normalized,rowNumber)};});return{headers,mapping,rows,total:rows.length,valid:rows.filter(r=>!r.errors.length).length,invalid:rows.filter(r=>r.errors.length).length};}
