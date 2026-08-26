@@ -30,7 +30,18 @@ function mountInventoryV3(app) {
   if (app.__inventoryV3Mounted) return;
   app.__inventoryV3Mounted = true;
 
-  app.get('/api/v3/inventory/products',async(req,res)=>{try{const q=text(req.query.q),params=[];let where='p.is_active=TRUE';if(q){params.push(`%${q}%`);where+=` AND (p.name ILIKE $1 OR p.sku ILIKE $1 OR COALESCE(p.barcode,'') ILIKE $1)`;}const result=await db().query(`SELECT p.id,p.sku,p.barcode,p.name,p.category,p.brand,p.unit,p.cost_price,p.selling_price,p.vat_rate,p.reorder_level,p.is_active,p.pos_enabled,COALESCE(SUM(s.quantity_on_hand),0) AS quantity_on_hand FROM inventory_products_v2 p LEFT JOIN inventory_stock_v2 s ON s.product_id=p.id WHERE ${where} GROUP BY p.id ORDER BY p.name ASC`,params);res.set('Cache-Control','no-store').json({products:result.rows});}catch(error){console.error('[inventory-v3] list failed',error);res.status(500).json({error:'Unable to load inventory.'});}});
+  app.get('/api/v3/inventory/products',async(req,res)=>{try{
+    const q=text(req.query.q);
+    const requestedBranchId=Number(req.query.branchId);
+    const params=[];
+    const branchExpression=Number.isInteger(requestedBranchId)&&requestedBranchId>0
+      ? (params.push(requestedBranchId),'$1')
+      : "(SELECT id FROM branches WHERE is_active=TRUE AND (code='MAIN' OR lower(trim(name))='main branch') ORDER BY CASE WHEN code='MAIN' THEN 0 ELSE 1 END,id LIMIT 1)";
+    let where='p.is_active=TRUE AND COALESCE(p.pos_enabled,TRUE)=TRUE';
+    if(q){params.push(`%${q}%`);where+=` AND (p.name ILIKE $${params.length} OR p.sku ILIKE $${params.length} OR COALESCE(p.barcode,'') ILIKE $${params.length})`;}
+    const result=await db().query(`SELECT p.id,p.sku,p.barcode,p.name,p.category,p.brand,p.unit,p.cost_price,p.selling_price,p.vat_rate,p.reorder_level,p.is_active,p.pos_enabled,COALESCE(s.quantity_on_hand,0) AS quantity_on_hand FROM inventory_products_v2 p LEFT JOIN inventory_stock_v2 s ON s.product_id=p.id AND s.branch_id=${branchExpression} WHERE ${where} ORDER BY p.name ASC`,params);
+    res.set('Cache-Control','no-store').json({products:result.rows});
+  }catch(error){console.error('[inventory-v3] list failed',error);res.status(500).json({error:'Unable to load inventory.'});}});
 
   app.get('/api/v3/inventory/dashboard',async(_req,res)=>{try{const result=await db().query(`SELECT COUNT(DISTINCT p.id)::BIGINT AS total_products,COALESCE(SUM(s.quantity_on_hand),0) AS total_units,COUNT(*) FILTER(WHERE COALESCE(s.quantity_on_hand,0)=0)::BIGINT AS out_of_stock_items,COUNT(*) FILTER(WHERE COALESCE(s.quantity_on_hand,0)>0 AND COALESCE(s.quantity_on_hand,0)<=p.reorder_level)::BIGINT AS low_stock_items,COALESCE(SUM(s.quantity_on_hand*p.cost_price),0) AS inventory_cost_value,GREATEST(COALESCE(MAX(p.updated_at),TIMESTAMPTZ 'epoch'),COALESCE(MAX(s.updated_at),TIMESTAMPTZ 'epoch')) AS last_updated FROM inventory_products_v2 p LEFT JOIN inventory_stock_v2 s ON s.product_id=p.id WHERE p.is_active=TRUE`);res.set('Cache-Control','no-store').json(result.rows[0]);}catch(error){console.error('[inventory-v3] dashboard failed',error);res.status(500).json({error:'Unable to load live inventory dashboard data.'});}});
 
