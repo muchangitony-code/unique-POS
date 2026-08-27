@@ -31,6 +31,7 @@
     "bcryptjs": "^3.0.3",
     "bwip-js": "^4.11.2",
     "drizzle-orm": "^0.45.2",
+    "express": "^4.21.2",
     "fontkit": "^2.0.4",
     "nodemailer": "^9.0.3",
     "pdf-lib": "^1.17.1",
