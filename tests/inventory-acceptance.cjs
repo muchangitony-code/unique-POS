@@ -8,6 +8,14 @@ const BASE_URL = process.env.BASE_URL || 'http://localhost:8080';
 const poolInfo = parseAndValidateDatabaseUrl('inventory-acceptance');
 const pool = new Pool({ connectionString: poolInfo.databaseUrl, ssl: railwaySsl(poolInfo.databaseUrl), max: 20 });
 
+function assertValidEan13(value) {
+  assert.match(String(value), /^\d{13}$/, 'Generated barcode must be a 13-digit EAN-13 value');
+  const digits = String(value);
+  let sum = 0;
+  for (let i = 0; i < 12; i += 1) sum += Number(digits[i]) * (i % 2 === 0 ? 1 : 3);
+  assert.equal(Number(digits[12]), (10 - (sum % 10)) % 10, 'Generated EAN-13 check digit is invalid');
+}
+
 async function api(path, options = {}) {
   const response = await fetch(`${BASE_URL}${path}`, {
     ...options,
@@ -42,6 +50,32 @@ async function main() {
     assert.ok(branches.rowCount >= 1, 'At least one active branch is required');
     const branchA = Number(branches.rows[0].id);
     const branchB = branches.rowCount > 1 ? Number(branches.rows[1].id) : null;
+
+    // Regression: SKU and barcode are now generated server-side when neither is supplied.
+    const generatedA = await api('/api/v3/inventory/products', {
+      method: 'POST', body: JSON.stringify({ name: 'Generated Identifier A', category: 'Lighting', sellingPrice: 100 })
+    });
+    const generatedB = await api('/api/v3/inventory/products', {
+      method: 'POST', body: JSON.stringify({ name: 'Generated Identifier B', category: 'Lighting', sellingPrice: 120 })
+    });
+    createdIds.push(generatedA.product.id, generatedB.product.id);
+    assert.ok(generatedA.product.sku, 'Generated SKU is missing');
+    assert.ok(generatedA.product.barcode, 'Generated barcode is missing');
+    assert.ok(generatedB.product.sku, 'Second generated SKU is missing');
+    assert.ok(generatedB.product.barcode, 'Second generated barcode is missing');
+    assert.notEqual(generatedA.product.sku, generatedB.product.sku, 'Generated SKUs are not unique');
+    assert.notEqual(generatedA.product.barcode, generatedB.product.barcode, 'Generated barcodes are not unique');
+    assert.match(generatedA.product.sku, /^LIGH-\d{6,}$/);
+    assertValidEan13(generatedA.product.barcode);
+    assertValidEan13(generatedB.product.barcode);
+
+    const manualBarcode = '6291041500213';
+    const manual = await api('/api/v3/inventory/products', {
+      method: 'POST', body: JSON.stringify({ name: 'Manufacturer Barcode Product', barcode: manualBarcode, sellingPrice: 150 })
+    });
+    createdIds.push(manual.product.id);
+    assert.equal(manual.product.barcode, manualBarcode, 'Manual manufacturer barcode was overwritten');
+    assert.ok(manual.product.sku, 'SKU should still be generated when only barcode is supplied');
 
     const sku = `ACCEPT-${Date.now()}`;
     const created = await api('/api/v3/inventory/products', {
