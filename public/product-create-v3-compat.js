@@ -1,113 +1,93 @@
 (() => {
   'use strict';
 
-  function text(value) { return String(value ?? '').trim(); }
+  const text = value => String(value ?? '').trim();
 
-  function findProductName(form) {
-    const candidates = [
-      form.elements.name,
-      form.elements.product_name,
-      form.elements.productName,
-      form.querySelector('#productName'),
-      form.querySelector('#product_name'),
-      form.querySelector('input[name="name"]'),
-      form.querySelector('input[name="product_name"]'),
-      form.querySelector('input[name="productName"]'),
-      form.querySelector('[data-field="product-name"]')
+  function nameFrom(form) {
+    const selectors = [
+      '[name="name"]', '[name="product_name"]', '[name="productName"]',
+      '#productName', '#product_name', '#name', '[data-field="product-name"]'
     ];
-    for (const field of candidates) {
+    for (const selector of selectors) {
+      const field = form.querySelector(selector);
       const value = text(field && field.value);
       if (value) return value;
     }
-    return '';
+    const labelled = Array.from(form.querySelectorAll('input[type="text"], input:not([type]), textarea'))
+      .find(field => /product\s*name/i.test(field.name || '') || /product\s*name/i.test(field.id || '') || /product\s*name/i.test(field.closest('label')?.textContent || ''));
+    return text(labelled && labelled.value);
   }
 
-  function normalizeLegacyEditor() {
-    const form = document.getElementById('productEditorForm');
-    if (!form) return;
-    const sku = form.elements.product_code || form.elements.sku;
-    if (sku) {
-      sku.required = false;
-      sku.removeAttribute('required');
-      sku.placeholder = 'Auto-generated';
+  function numberFrom(fd, ...keys) {
+    for (const key of keys) {
+      const value = fd.get(key);
+      if (value !== null && text(value) !== '') return Number(value);
     }
+    return 0;
   }
 
-  new MutationObserver(normalizeLegacyEditor).observe(document.documentElement, { childList: true, subtree: true });
-
-  document.addEventListener('input', event => {
-    const form = event.target && event.target.closest && event.target.closest('#productEditorForm');
-    if (!form) return;
-    const name = findProductName(form);
-    if (name) {
-      ['name', 'product_name', 'productName'].forEach(key => {
-        const field = form.elements[key];
-        if (field && field.setCustomValidity) field.setCustomValidity('');
-      });
-    }
-  }, true);
-
-  document.addEventListener('submit', async event => {
+  async function save(event) {
     const form = event.target;
-    if (!form || form.id !== 'productEditorForm') return;
+    if (!(form instanceof HTMLFormElement)) return;
+    if (form.id !== 'productEditorForm' && form.id !== 'inventoryV3Form') return;
+
     event.preventDefault();
+    event.stopPropagation();
     event.stopImmediatePropagation();
 
-    const fd = new FormData(form);
-    const productId = text(fd.get('product_id'));
-    const name = findProductName(form);
+    const name = nameFrom(form);
     if (!name) {
-      const field = form.elements.name || form.elements.product_name || form.elements.productName || form.querySelector('input,textarea');
-      if (field) {
-        field.focus();
-        if (field.setCustomValidity) {
-          field.setCustomValidity('Product name is required.');
-          field.reportValidity();
-          field.setCustomValidity('');
-        }
-      } else {
-        alert('Product name is required.');
-      }
+      const field = form.querySelector('[name="name"], [name="product_name"], [name="productName"], #productName, #product_name, #name');
+      if (field) field.focus();
+      alert('Product name is required.');
       return;
     }
 
-    const body = {
+    const fd = new FormData(form);
+    const productId = text(fd.get('product_id') || form.dataset.productId);
+    const payload = {
       name,
       product_name: name,
-      sku: text(fd.get('sku')) || text(fd.get('product_code')),
+      productName: name,
+      sku: text(fd.get('sku') || fd.get('product_code')),
+      product_code: text(fd.get('sku') || fd.get('product_code')),
       barcode: text(fd.get('barcode')),
       category: text(fd.get('category')),
       brand: text(fd.get('brand')),
-      unit: text(fd.get('unit')) || text(fd.get('unit_of_measure')) || 'pcs',
-      costPrice: Number(fd.get('costPrice') || fd.get('cost_price') || 0),
-      sellingPrice: Number(fd.get('sellingPrice') || fd.get('selling_price') || 0),
-      vatRate: Number(fd.get('vatRate') || fd.get('vat_rate') || 0),
-      reorderLevel: Number(fd.get('reorderLevel') || fd.get('min_stock') || 0),
+      unit: text(fd.get('unit') || fd.get('unit_of_measure')) || 'pcs',
+      costPrice: numberFrom(fd, 'costPrice', 'cost_price'),
+      cost_price: numberFrom(fd, 'costPrice', 'cost_price'),
+      sellingPrice: numberFrom(fd, 'sellingPrice', 'selling_price'),
+      selling_price: numberFrom(fd, 'sellingPrice', 'selling_price'),
+      vatRate: numberFrom(fd, 'vatRate', 'vat_rate'),
+      vat_rate: numberFrom(fd, 'vatRate', 'vat_rate'),
+      reorderLevel: numberFrom(fd, 'reorderLevel', 'min_stock'),
+      min_stock: numberFrom(fd, 'reorderLevel', 'min_stock'),
       supplier: text(fd.get('supplier')),
       description: text(fd.get('description'))
     };
 
-    const url = productId ? '/api/v3/inventory/products/' + encodeURIComponent(productId) : '/api/v3/inventory/products';
+    const url = productId ? `/api/v3/inventory/products/${encodeURIComponent(productId)}` : '/api/v3/inventory/products';
+    const method = productId ? 'PATCH' : 'POST';
     try {
       const response = await fetch(url, {
-        method: productId ? 'PATCH' : 'POST',
+        method,
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
         cache: 'no-store'
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        alert(data.error || data.message || 'Unable to save product.');
-        return;
-      }
+      if (!response.ok) throw new Error(data.error || data.message || `Unable to save product (${response.status}).`);
       const overlay = document.getElementById('modalOverlay');
       if (overlay) overlay.classList.add('hidden');
-      window.location.hash = '#products';
-      window.location.reload();
+      if (form.id === 'inventoryV3Form') location.reload();
+      else location.hash = '#products';
     } catch (error) {
-      alert(error && error.message ? error.message : 'Unable to save product.');
+      alert(error.message || 'Unable to save product.');
     }
-  }, true);
+  }
 
-  normalizeLegacyEditor();
+  // Capture phase guarantees this compatibility layer runs before the legacy
+  // delegated app.js submit handler, so only one request can be sent.
+  document.addEventListener('submit', save, true);
 })();
