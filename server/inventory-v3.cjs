@@ -48,7 +48,55 @@ function mountInventoryV3(app) {
 
   app.post('/api/v3/inventory/products',async(req,res)=>{const b=req.body||{},values=productPayload(b);if(!values[2])return res.status(400).json({error:'Product name is required.'});try{const product=await withTransaction(async client=>{const identifiers=await allocateProductIdentifiers(client,{sku:values[0],barcode:values[1],category:values[3]});values[0]=identifiers.sku;values[1]=identifiers.barcode;const result=await client.query(`INSERT INTO inventory_products_v2(sku,barcode,name,category,brand,unit,cost_price,selling_price,vat_rate,reorder_level,supplier,description,pos_enabled) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,values);await client.query(`INSERT INTO inventory_stock_v2(product_id,branch_id,quantity_on_hand) SELECT $1,id,0 FROM branches WHERE is_active=TRUE ON CONFLICT(product_id,branch_id) DO NOTHING`,[result.rows[0].id]);return result.rows[0];});res.status(201).json({product});}catch(error){if(error.code==='23505')return res.status(409).json({error:'SKU or barcode already exists.'});res.status(400).json({error:error.message});}});
 
-  app.patch('/api/v3/inventory/products/:id',async(req,res)=>{const id=Number(req.params.id);if(!Number.isInteger(id))return res.status(400).json({error:'Invalid product ID.'});const b=req.body||{},values=[],fields=[];const add=(f,v)=>{values.push(v);fields.push(`${f}=$${values.length}`);};if(b.sku!==undefined)add('sku',text(b.sku));if(b.barcode!==undefined)add('barcode',text(b.barcode)||null);if(b.name!==undefined)add('name',text(b.name));if(b.category!==undefined)add('category',text(b.category)||null);if(b.brand!==undefined)add('brand',text(b.brand)||null);if(b.unit!==undefined)add('unit',text(b.unit)||'pcs');if(b.costPrice!==undefined)add('cost_price',number(b.costPrice,'cost price'));if(b.sellingPrice!==undefined)add('selling_price',number(b.sellingPrice,'selling price'));if(b.vatRate!==undefined)add('vat_rate',number(b.vatRate,'VAT rate'));if(b.reorderLevel!==undefined)add('reorder_level',number(b.reorderLevel,'reorder level'));if(b.supplier!==undefined)add('supplier',text(b.supplier)||null);if(b.description!==undefined)add('description',text(b.description)||null);if(b.posEnabled!==undefined)add('pos_enabled',Boolean(b.posEnabled));if(!fields.length)return res.status(400).json({error:'No changes supplied.'});values.push(id);try{const result=await db().query(`UPDATE inventory_products_v2 SET ${fields.join(',')},updated_at=NOW() WHERE id=$${values.length} AND is_active=TRUE RETURNING *`,values);if(!result.rowCount)return res.status(404).json({error:'Product not found.'});res.set('Cache-Control','no-store').json({product:result.rows[0]});}catch(error){if(error.code==='23505')return res.status(409).json({error:'SKU or barcode already exists.'});res.status(400).json({error:error.message});}});
+  // Editing is intentionally separate from creation. An existing SKU/barcode may
+  // remain on the same product; uniqueness is only checked against OTHER rows.
+  app.patch('/api/v3/inventory/products/:id',async(req,res)=>{
+    const id=Number(req.params.id);
+    if(!Number.isInteger(id)||id<=0)return res.status(400).json({error:'Invalid product ID.'});
+    const b=req.body||{};
+    try {
+      const product=await withTransaction(async client=>{
+        const currentResult=await client.query(`SELECT * FROM inventory_products_v2 WHERE id=$1 AND is_active=TRUE FOR UPDATE`,[id]);
+        if(!currentResult.rowCount){const e=new Error('Product not found.');e.status=404;throw e;}
+        const current=currentResult.rows[0];
+
+        // Preserve identifiers unless the edit explicitly supplies a different,
+        // non-blank value. This prevents an unchanged identifier being treated as
+        // a duplicate of the product currently being edited.
+        const requestedSku=b.sku===undefined||!text(b.sku) ? current.sku : text(b.sku);
+        const requestedBarcode=b.barcode===undefined ? current.barcode : (text(b.barcode)||null);
+
+        const duplicate=await client.query(`SELECT id,sku,barcode FROM inventory_products_v2 WHERE id<>$1 AND ((sku=$2) OR ($3::text IS NOT NULL AND barcode=$3)) LIMIT 1`,[id,requestedSku,requestedBarcode]);
+        if(duplicate.rowCount){const e=new Error('SKU or barcode already exists on another product.');e.status=409;e.code='DUPLICATE_IDENTIFIER';throw e;}
+
+        const values=[],fields=[];
+        const add=(f,v)=>{values.push(v);fields.push(`${f}=$${values.length}`);};
+        if(requestedSku!==current.sku)add('sku',requestedSku);
+        if(requestedBarcode!==current.barcode)add('barcode',requestedBarcode);
+        if(b.name!==undefined)add('name',text(b.name));
+        if(b.category!==undefined)add('category',text(b.category)||null);
+        if(b.brand!==undefined)add('brand',text(b.brand)||null);
+        if(b.unit!==undefined)add('unit',text(b.unit)||'pcs');
+        if(b.costPrice!==undefined)add('cost_price',number(b.costPrice,'cost price'));
+        if(b.sellingPrice!==undefined)add('selling_price',number(b.sellingPrice,'selling price'));
+        if(b.vatRate!==undefined)add('vat_rate',number(b.vatRate,'VAT rate'));
+        if(b.reorderLevel!==undefined)add('reorder_level',number(b.reorderLevel,'reorder level'));
+        if(b.supplier!==undefined)add('supplier',text(b.supplier)||null);
+        if(b.description!==undefined)add('description',text(b.description)||null);
+        if(b.posEnabled!==undefined)add('pos_enabled',Boolean(b.posEnabled));
+        if(!fields.length)return current;
+        values.push(id);
+        const result=await client.query(`UPDATE inventory_products_v2 SET ${fields.join(',')},updated_at=NOW() WHERE id=$${values.length} RETURNING *`,values);
+        return result.rows[0];
+      });
+      res.set('Cache-Control','no-store').json({product});
+    } catch(error) {
+      if(error.status===404)return res.status(404).json({error:error.message});
+      if(error.status===409||error.code==='23505'||error.code==='DUPLICATE_IDENTIFIER')return res.status(409).json({error:error.message==='SKU or barcode already exists on another product.'?error.message:'SKU or barcode already exists on another product.'});
+      console.error('[inventory-v3] update failed',error);
+      res.status(400).json({error:error.message});
+    }
+  });
 
   app.delete('/api/v3/inventory/products/:id',async(req,res)=>{const id=Number(req.params.id);if(!Number.isInteger(id))return res.status(400).json({error:'Invalid product ID.'});try{await withTransaction(async client=>{const result=await client.query('DELETE FROM inventory_products_v2 WHERE id=$1 RETURNING id',[id]);if(!result.rowCount){const e=new Error('Product not found.');e.status=404;throw e;}});res.sendStatus(204);}catch(error){if(error.status===404)return res.status(404).json({error:error.message});res.status(400).json({error:error.message});}});
 
