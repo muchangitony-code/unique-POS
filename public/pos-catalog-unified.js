@@ -1,12 +1,8 @@
 (() => {
   'use strict';
 
-  // Single source of truth for the Sales catalogue.
-  // Sales historically read /api/products while Inventory and bulk import use
-  // inventory_products_v2 + inventory_stock_v2. That split created two
-  // catalogues with different category and stock fields. The adapter below
-  // makes the legacy Sales request read the same V3 inventory catalogue.
-
+  // Sales and Inventory must read one catalogue. This adapter keeps the existing
+  // Sales UI but forwards every product search/category request to Inventory V3.
   const nativeFetch = window.fetch.bind(window);
   const text = value => String(value ?? '').trim();
   const normalKey = value => text(value).toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -16,12 +12,7 @@
     ['accessory', 'Accessories'], ['accessories', 'Accessories'], ['cable', 'Cables'], ['cables', 'Cables'],
     ['electrical', 'Electricals'], ['electricals', 'Electricals'], ['other', 'Others'], ['others', 'Others']
   ]);
-
-  function categoryName(value) {
-    const raw = text(value);
-    if (!raw) return 'Others';
-    return aliases.get(normalKey(raw)) || raw;
-  }
+  const canonicalCategory = value => aliases.get(normalKey(value)) || text(value);
 
   function selectedBranchId() {
     const element = document.getElementById('branchSelect');
@@ -29,27 +20,33 @@
     return Number.isInteger(id) && id > 0 ? id : null;
   }
 
-  function isLegacyProductsRequest(input) {
-    try {
-      const url = new URL(typeof input === 'string' ? input : input.url, location.origin);
-      return url.pathname === '/api/products';
-    } catch (_) { return false; }
+  function requestUrl(input) {
+    return new URL(typeof input === 'string' ? input : input.url, location.origin);
+  }
+
+  function isProductsRequest(input) {
+    try { return requestUrl(input).pathname === '/api/products'; }
+    catch (_) { return false; }
   }
 
   function buildInventoryUrl(input) {
-    const original = new URL(typeof input === 'string' ? input : input.url, location.origin);
+    const original = requestUrl(input);
     const url = new URL('/api/v3/inventory/products', location.origin);
     const branchId = selectedBranchId();
     if (branchId) url.searchParams.set('branchId', String(branchId));
-    const q = text(original.searchParams.get('q') || original.searchParams.get('search'));
+    const q = text(original.searchParams.get('q') || original.searchParams.get('search') || original.searchParams.get('query'));
     if (q) url.searchParams.set('q', q);
+    const category = text(original.searchParams.get('category') || original.searchParams.get('category_name') || original.searchParams.get('categoryName'));
+    if (category && normalKey(category) !== 'all products' && normalKey(category) !== 'all') {
+      url.searchParams.set('category', canonicalCategory(category));
+    }
     return url.toString();
   }
 
   function toSalesProduct(product) {
     const row = product && typeof product === 'object' ? product : {};
     const quantity = Number(row.quantity_on_hand ?? row.current_stock ?? row.stock ?? 0);
-    const category = categoryName(row.category_name ?? row.categoryName ?? row.category);
+    const category = canonicalCategory(row.category_name ?? row.categoryName ?? row.category);
     return {
       ...row,
       id: row.id,
@@ -72,24 +69,17 @@
   }
 
   window.fetch = async function(input, init) {
-    if (!isLegacyProductsRequest(input)) return nativeFetch(input, init);
-
+    if (!isProductsRequest(input)) return nativeFetch(input, init);
     const response = await nativeFetch(buildInventoryUrl(input), init);
     if (!response.ok) return response;
-
     let payload;
     try { payload = await response.clone().json(); }
     catch (_) { return response; }
-
     const products = Array.isArray(payload.products) ? payload.products.map(toSalesProduct) : [];
     const body = { data: products, products, total: products.length, source: 'inventory-v3' };
     const headers = new Headers(response.headers);
     headers.set('Content-Type', 'application/json');
     headers.set('Cache-Control', 'no-store');
-    return new Response(JSON.stringify(body), {
-      status: response.status,
-      statusText: response.statusText,
-      headers
-    });
+    return new Response(JSON.stringify(body), { status: response.status, statusText: response.statusText, headers });
   };
 })();
