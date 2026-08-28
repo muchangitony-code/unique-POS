@@ -1,2 +1,2 @@
-/* Legacy catalogue adapter retired. Sales catalogue V4 is the only active browser. */
-(()=>{const s=document.createElement('script');s.src='/sales-catalog-v4.js?v=20260828-clean-1';s.defer=true;document.head.appendChild(s)})();
+/* Legacy catalogue adapter retired. Sales Catalogue V4 owns the Sales panel. */
+(()=>{const s=document.createElement('script');s.src='/sales-catalog-v4.js?v=20260828-layout-2';s.defer=true;document.head.appendChild(s)})();
