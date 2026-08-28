@@ -1,0 +1,3 @@
+Deployment trigger for the current product-driven sales categories build.
+Commit: 32d842793b4b46854833fce294016fc0b20f96aa
+This file intentionally creates a pull-request diff so the deployment service can detect and deploy the current build.
