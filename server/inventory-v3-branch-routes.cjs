@@ -17,6 +17,17 @@ function branchId(req) {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
+function normalizeCategory(value) {
+  const key = String(value || '').trim().toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ');
+  const aliases = {
+    'solar panel': 'solar panels', 'solar panels': 'solar panels', 'pv panel': 'solar panels', 'pv panels': 'solar panels',
+    inverter: 'inverters', inverters: 'inverters', battery: 'batteries', batteries: 'batteries',
+    accessory: 'accessories', accessories: 'accessories', cable: 'cables', cables: 'cables',
+    electrical: 'electricals', electricals: 'electricals', other: 'others', others: 'others'
+  };
+  return aliases[key] || key;
+}
+
 function mountInventoryV3BranchRoutes(app) {
   if (app.__inventoryV3BranchRoutesMounted) return;
   app.__inventoryV3BranchRoutesMounted = true;
@@ -26,11 +37,26 @@ function mountInventoryV3BranchRoutes(app) {
     if (!id) return res.status(400).json({ error: 'A valid branchId is required.' });
     try {
       const q = String(req.query.q || '').trim();
+      const category = normalizeCategory(req.query.category || req.query.category_name || req.query.categoryName);
       const params = [id];
-      let where = 'p.is_active = TRUE AND p.pos_enabled = TRUE';
+      const clauses = ['p.is_active = TRUE', 'p.pos_enabled = TRUE'];
       if (q) {
         params.push(`%${q}%`);
-        where += ` AND (p.name ILIKE $2 OR p.sku ILIKE $2 OR COALESCE(p.barcode,'') ILIKE $2)`;
+        clauses.push(`(p.name ILIKE $${params.length} OR p.sku ILIKE $${params.length} OR COALESCE(p.barcode,'') ILIKE $${params.length})`);
+      }
+      if (category && category !== 'all' && category !== 'all products') {
+        params.push(category);
+        const n = params.length;
+        clauses.push(`CASE
+          WHEN regexp_replace(lower(trim(COALESCE(p.category,''))), '[^a-z0-9]+', ' ', 'g') IN ('solar panel','solar panels','pv panel','pv panels') THEN 'solar panels'
+          WHEN regexp_replace(lower(trim(COALESCE(p.category,''))), '[^a-z0-9]+', ' ', 'g') IN ('inverter','inverters') THEN 'inverters'
+          WHEN regexp_replace(lower(trim(COALESCE(p.category,''))), '[^a-z0-9]+', ' ', 'g') IN ('battery','batteries') THEN 'batteries'
+          WHEN regexp_replace(lower(trim(COALESCE(p.category,''))), '[^a-z0-9]+', ' ', 'g') IN ('accessory','accessories') THEN 'accessories'
+          WHEN regexp_replace(lower(trim(COALESCE(p.category,''))), '[^a-z0-9]+', ' ', 'g') IN ('cable','cables') THEN 'cables'
+          WHEN regexp_replace(lower(trim(COALESCE(p.category,''))), '[^a-z0-9]+', ' ', 'g') IN ('electrical','electricals') THEN 'electricals'
+          WHEN regexp_replace(lower(trim(COALESCE(p.category,''))), '[^a-z0-9]+', ' ', 'g') IN ('other','others') THEN 'others'
+          ELSE regexp_replace(lower(trim(COALESCE(p.category,''))), '[^a-z0-9]+', ' ', 'g')
+        END = $${n}`);
       }
       const result = await db().query(`
         SELECT p.id, p.sku, p.barcode, p.name, p.category, p.brand, p.unit,
@@ -40,7 +66,7 @@ function mountInventoryV3BranchRoutes(app) {
         FROM inventory_products_v2 p
         LEFT JOIN inventory_stock_v2 s
           ON s.product_id = p.id AND s.branch_id = $1
-        WHERE ${where}
+        WHERE ${clauses.join(' AND ')}
         ORDER BY p.name ASC
       `, params);
       res.set('Cache-Control', 'no-store').json({ products: result.rows, branch_id: id });
@@ -55,20 +81,14 @@ function mountInventoryV3BranchRoutes(app) {
     if (!id) return res.status(400).json({ error: 'A valid branchId is required.' });
     try {
       const result = await db().query(`
-        SELECT
-          COUNT(DISTINCT p.id)::BIGINT AS total_products,
-          COALESCE(SUM(s.quantity_on_hand), 0) AS total_units,
-          COUNT(*) FILTER (WHERE COALESCE(s.quantity_on_hand, 0) = 0)::BIGINT AS out_of_stock_items,
-          COUNT(*) FILTER (WHERE COALESCE(s.quantity_on_hand, 0) > 0
-                            AND COALESCE(s.quantity_on_hand, 0) <= p.reorder_level)::BIGINT AS low_stock_items,
-          COALESCE(SUM(s.quantity_on_hand * p.cost_price), 0) AS inventory_cost_value,
-          GREATEST(
-            COALESCE(MAX(p.updated_at), TIMESTAMPTZ 'epoch'),
-            COALESCE(MAX(s.updated_at), TIMESTAMPTZ 'epoch')
-          ) AS last_updated
+        SELECT COUNT(DISTINCT p.id)::BIGINT AS total_products,
+               COALESCE(SUM(s.quantity_on_hand), 0) AS total_units,
+               COUNT(*) FILTER (WHERE COALESCE(s.quantity_on_hand, 0) = 0)::BIGINT AS out_of_stock_items,
+               COUNT(*) FILTER (WHERE COALESCE(s.quantity_on_hand, 0) > 0 AND COALESCE(s.quantity_on_hand, 0) <= p.reorder_level)::BIGINT AS low_stock_items,
+               COALESCE(SUM(s.quantity_on_hand * p.cost_price), 0) AS inventory_cost_value,
+               GREATEST(COALESCE(MAX(p.updated_at), TIMESTAMPTZ 'epoch'), COALESCE(MAX(s.updated_at), TIMESTAMPTZ 'epoch')) AS last_updated
         FROM inventory_products_v2 p
-        LEFT JOIN inventory_stock_v2 s
-          ON s.product_id = p.id AND s.branch_id = $1
+        LEFT JOIN inventory_stock_v2 s ON s.product_id = p.id AND s.branch_id = $1
         WHERE p.is_active = TRUE
       `, [id]);
       res.set('Cache-Control', 'no-store').json({ ...result.rows[0], branch_id: id });
