@@ -1,0 +1,1 @@
+Trigger deployment of migration 0030_categorize_all_existing_products.sql and the current product-driven category build.
