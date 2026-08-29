@@ -36,19 +36,13 @@ process.env.BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups
 process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dirname, "storage");
 if (!process.env.PORT) process.env.PORT = "8080";
 
-function ensureRuntimeBundle() {
-  const runtimeBundle = path.join(__dirname, "index.runtime.cjs");
-  console.log("[startup] Rebuilding deterministic runtime bundle");
-  require("./scripts/build.cjs");
-  if (!fs.existsSync(runtimeBundle)) throw new Error(`Build completed without creating ${runtimeBundle}`);
-}
-
 async function start() {
   try {
     assertFonts();
     console.log("[startup] PDF fonts: PDFKit built-in Helvetica / Helvetica-Bold");
     validateStartupEnv();
-    ensureRuntimeBundle();
+    const runtimeBundle = path.join(__dirname, "index.runtime.cjs");
+    if (!fs.existsSync(runtimeBundle)) throw new Error(`Missing ${runtimeBundle}; run the explicit deployment build before starting the application.`);
     const { bootstrapDatabaseIfNeeded } = require("./scripts/bootstrap-db.cjs");
     const result = await bootstrapDatabaseIfNeeded();
     console.log("[startup] Database bootstrap complete", result);
