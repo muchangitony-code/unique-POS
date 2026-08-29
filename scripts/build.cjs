@@ -31,67 +31,6 @@ function findFunctionEnd(source, start) {
   throw new Error('Build: unterminated function');
 }
 
-function patchSalesInventoryFrontend() {
-  const file = path.join(root, 'public', 'app.js');
-  if (!fs.existsSync(file)) throw new Error('Build: missing public/app.js');
-  const source = fs.readFileSync(file, 'utf8');
-  const marker = 'async function loadSalesData() {';
-  const start = source.indexOf(marker);
-  if (start < 0) throw new Error('Build: loadSalesData not found in public/app.js');
-  const end = findFunctionEnd(source, start);
-  const current = source.slice(start, end);
-  if (current.includes('/api/v3/inventory/products?branchId=')) return;
-
-  const replacement = `async function loadSalesData() {
-    const branchId = Number(state.currentBranchId || (els.branchSelect && els.branchSelect.value) || 0);
-    const query = firstText(state.pos.search, '').trim();
-
-    const [products, categories, customers, sales] = await Promise.all([
-      branchId > 0
-        ? apiJson('/api/v3/inventory/products?branchId=' + encodeURIComponent(String(branchId)) + (query ? '&q=' + encodeURIComponent(query) : '')).catch(function () { return { products: [] }; })
-        : Promise.resolve({ products: [] }),
-      apiJson('/api/categories').catch(function () { return []; }),
-      apiJson('/api/customers?limit=200').catch(function () { return { data: [] }; }),
-      apiJson('/api/pos/sales?limit=12').catch(function () { return { data: [] }; })
-    ]);
-
-    const liveProducts = normalizeList(products && products.products ? products.products : products).map(function (row) {
-      const stock = firstNumber(row.quantity_on_hand, 0);
-      const category = firstText(row.category, 'Others');
-      return Object.assign({}, row, {
-        product_id: row.id,
-        product_code: firstText(row.sku, row.product_code, row.barcode, ''),
-        sku: firstText(row.sku, row.product_code, ''),
-        product_name: firstText(row.name, row.product_name, 'Product'),
-        name: firstText(row.name, row.product_name, 'Product'),
-        category_name: category,
-        category: category,
-        min_stock: firstNumber(row.reorder_level, row.min_stock, 0),
-        current_stock: stock,
-        stock: stock,
-        available_stock: stock,
-        quantity_on_hand: stock,
-        is_out_of_stock: stock <= 0,
-        out_of_stock: stock <= 0,
-        in_stock: stock > 0
-      });
-    });
-
-    state.pos.products = liveProducts;
-    state.pos.categories = normalizeList(categories);
-    state.pos.customers = normalizeList(customers);
-    state.cache.sales = { recentSales: normalizeList(sales) };
-  }`;
-
-  const updated = source.slice(0, start) + replacement + source.slice(end);
-  const beforeOutside = source.slice(0, start) + source.slice(end);
-  const afterOutside = updated.slice(0, start) + updated.slice(start + replacement.length);
-  if (beforeOutside !== afterOutside) throw new Error('Build: Sales loader safety check failed; content outside loadSalesData would change');
-  fs.writeFileSync(file, updated, 'utf8');
-  if (!fs.readFileSync(file, 'utf8').includes('/api/v3/inventory/products?branchId=')) throw new Error('Build: Sales V3 loader was not installed');
-  console.log('[build] Sales loader now reads branch-scoped V3 inventory and quantity_on_hand.');
-}
-
 function installPdfEngine(source) {
   const marker = 'async function renderPdfBuffer(payload, paper)'; const start = source.indexOf(marker); if (start < 0) throw new Error('Build: application PDF entrypoint not found'); const end = findFunctionEnd(source, start);
   const replacement = `async function renderPdfBuffer(payload, paper) {
@@ -140,7 +79,6 @@ function verifyFiles() {
   const receipt=fs.readFileSync(path.join(root,'server/pdf/receipt.cjs'),'utf8'); if(!receipt.includes("require('../document-branding.cjs')"))throw new Error('Build: receipt renderer is not using shared document branding'); if(!receipt.includes('company?.logoUrl'))throw new Error('Build: receipt renderer is not consuming the settings logo'); if(!receipt.includes('refusing to generate an unbranded receipt'))throw new Error('Build: receipt renderer must refuse unbranded output');
 }
 
-patchSalesInventoryFrontend();
 for(const font of fonts)if(!fs.existsSync(font)||!fs.statSync(font).isFile()||fs.statSync(font).size===0)throw new Error(`Build: invalid PDF font ${font}`);
 buildRuntime();verifyFiles();
 for(const file of ['server/document-branding.cjs','server/pdf/index.cjs','server/pdf/a4-renderer.cjs','server/pdf/receipt.cjs','server/pdf/schema.cjs','server/pdf/document-adapter.cjs','scripts/user-management-server.cjs','scripts/bulk-import-server.cjs','scripts/pdf-fixtures.js','index.runtime.cjs']){const result=spawnSync(process.execPath,['--check',path.join(root,file)],{stdio:'inherit'});if(result.status!==0)process.exit(result.status||1);}
