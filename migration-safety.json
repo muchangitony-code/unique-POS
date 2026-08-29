@@ -1,3 +1,6 @@
 {
+  "0023_production_catalog_clean_slate.sql": {"action": "retired"},
+  "0023_production_catalog_wipe.sql": {"action": "retired"},
+  "0023_production_clean_slate_catalog.sql": {"action": "retired"},
   "0028_initialize_clean_inventory_catalog.sql": {"action": "fresh_start"}
 }
