@@ -1,90 +1,13 @@
 'use strict';
-
-const express = require('express');
-const { Pool } = require('pg');
-const path = require('node:path');
-const { parseAndValidateDatabaseUrl, railwaySsl } = require('./scripts/database-url.cjs');
-
-const app = express();
-app.use(express.json({ limit: '10mb' }));
-
-const { databaseUrl } = parseAndValidateDatabaseUrl('unique-pos-clean');
-const pool = new Pool({ connectionString: databaseUrl, ssl: railwaySsl(databaseUrl) });
-
-app.get('/api/healthz', async (_req, res) => {
-  try { await pool.query('SELECT 1'); res.json({ ok: true, service: 'unique-pos' }); }
-  catch (error) { res.status(503).json({ ok: false, error: 'database_unavailable' }); }
-});
-
-app.get('/api/inventory/dashboard', async (_req, res, next) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        COUNT(*)::int AS products,
-        COUNT(*) FILTER (WHERE COALESCE(qty.quantity, 0) <= 0)::int AS out_of_stock,
-        COALESCE(SUM(COALESCE(qty.quantity,0) * p.cost_price),0)::numeric(14,2) AS stock_value
-      FROM products p
-      LEFT JOIN LATERAL (
-        SELECT COALESCE(SUM(quantity_delta),0) AS quantity
-        FROM stock_movements m WHERE m.product_id=p.id
-      ) qty ON true
-      WHERE p.active=true
-    `);
-    res.json(result.rows[0]);
-  } catch (error) { next(error); }
-});
-
-app.get('/api/inventory/products', async (_req, res, next) => {
-  try {
-    const result = await pool.query(`
-      SELECT p.*, COALESCE(q.quantity,0) AS quantity
-      FROM products p
-      LEFT JOIN LATERAL (SELECT SUM(quantity_delta) AS quantity FROM stock_movements m WHERE m.product_id=p.id) q ON true
-      WHERE p.active=true ORDER BY p.name
-    `);
-    res.json(result.rows);
-  } catch (error) { next(error); }
-});
-
-app.post('/api/inventory/products', async (req, res, next) => {
-  try {
-    const { sku, barcode, name, description = null, cost_price = 0, selling_price = 0 } = req.body || {};
-    if (!sku || !name) return res.status(400).json({ error: 'sku and name are required' });
-    const result = await pool.query('INSERT INTO products (sku,barcode,name,description,cost_price,selling_price) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',[sku,barcode||null,name,description,Number(cost_price),Number(selling_price)]);
-    res.status(201).json(result.rows[0]);
-  } catch (error) { next(error); }
-});
-
-app.post('/api/inventory/receive', async (req, res, next) => {
-  const client = await pool.connect();
-  try {
-    const { branch_id, product_id, quantity, unit_cost = null, note = null } = req.body || {};
-    if (!branch_id || !product_id || !(Number(quantity) > 0)) return res.status(400).json({ error: 'branch_id, product_id and positive quantity are required' });
-    await client.query('BEGIN');
-    const result = await client.query(`INSERT INTO stock_movements (branch_id,product_id,movement_type,quantity_delta,unit_cost,note) VALUES ($1,$2,'receive',$3,$4,$5) RETURNING *`,[branch_id,product_id,Number(quantity),unit_cost,note]);
-    await client.query('COMMIT');
-    res.status(201).json(result.rows[0]);
-  } catch (error) { await client.query('ROLLBACK').catch(()=>{}); next(error); } finally { client.release(); }
-});
-
-app.post('/api/inventory/adjust', async (req, res, next) => {
-  try {
-    const { branch_id, product_id, quantity_delta, note = null } = req.body || {};
-    if (!branch_id || !product_id || !Number.isFinite(Number(quantity_delta)) || Number(quantity_delta) === 0) return res.status(400).json({ error: 'branch_id, product_id and non-zero quantity_delta are required' });
-    const result = await pool.query(`INSERT INTO stock_movements (branch_id,product_id,movement_type,quantity_delta,note) VALUES ($1,$2,'adjustment',$3,$4) RETURNING *`,[branch_id,product_id,Number(quantity_delta),note]);
-    res.status(201).json(result.rows[0]);
-  } catch (error) { next(error); }
-});
-
-app.get('/api/inventory/movements', async (_req, res, next) => {
-  try { const result = await pool.query('SELECT * FROM stock_movements ORDER BY created_at DESC LIMIT 200'); res.json(result.rows); } catch (error) { next(error); }
-});
-
-app.get('/api/branches', async (_req,res,next)=>{try{res.json((await pool.query('SELECT * FROM branches ORDER BY name')).rows);}catch(error){next(error);}});
-
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('*', (_req,res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.use((error,_req,res,_next)=>{console.error(error);res.status(500).json({ error: 'internal_error', detail: process.env.NODE_ENV==='production'?undefined:error.message });});
-
-const port = Number(process.env.PORT || 8080);
-app.listen(port, () => console.log(`[unique-pos] listening on ${port}`));
+const express=require('express'),{Pool}=require('pg'),path=require('node:path'),bcrypt=require('bcryptjs');const {parseAndValidateDatabaseUrl,railwaySsl}=require('./scripts/database-url.cjs');const app=express();app.use(express.json({limit:'10mb'}));const {databaseUrl}=parseAndValidateDatabaseUrl('unique-pos-clean');const pool=new Pool({connectionString:databaseUrl,ssl:railwaySsl(databaseUrl)});const N=v=>Number(v)||0,I=v=>Number.parseInt(v,10),Q=(s,p=[])=>pool.query(s,p),S=p=>p+'-'+Date.now()+'-'+Math.random().toString(36).slice(2,7).toUpperCase();
+app.get('/api/healthz',async(_,r)=>{try{await Q('select 1');r.json({ok:true})}catch(e){r.status(503).json({ok:false})}});
+app.post('/api/setup',async(req,res,next)=>{const c=await pool.connect();try{const x=req.body||{};if(!x.business?.name||!x.branch?.name||!x.admin?.name||!x.admin?.password)return res.status(400).json({error:'business branch and admin required'});await c.query('begin');const b=(await c.query('insert into businesses(name) values($1) returning *',[x.business.name])).rows[0],br=(await c.query('insert into branches(business_id,name,code) values($1,$2,$3) returning *',[b.id,x.branch.name,x.branch.code||'MAIN'])).rows[0];const h=await bcrypt.hash(x.admin.password,12);const u=(await c.query("insert into users(branch_id,name,email,password_hash,role) values($1,$2,$3,$4,'admin') returning id,name,email,role,branch_id",[br.id,x.admin.name,x.admin.email||null,h])).rows[0];await c.query('commit');res.status(201).json({business:b,branch:br,admin:u})}catch(e){await c.query('rollback').catch(()=>{});next(e)}finally{c.release()}});
+app.get('/api/inventory/products',async(req,res,next)=>{try{const p=req.query.branch_id?[I(req.query.branch_id)]:[];const f=p.length?'and m.branch_id=$1':'';res.json((await Q(`select p.*,coalesce((select sum(quantity_delta) from stock_movements m where m.product_id=p.id ${f}),0) quantity from products p where active=true order by name`,p)).rows)}catch(e){next(e)}});
+app.post('/api/inventory/products',async(req,res,next)=>{try{const x=req.body||{};if(!x.sku||!x.name)return res.status(400).json({error:'sku and name required'});res.status(201).json((await Q('insert into products(sku,barcode,name,description,cost_price,selling_price) values($1,$2,$3,$4,$5,$6) returning *',[x.sku,x.barcode||null,x.name,x.description||null,N(x.cost_price),N(x.selling_price)])).rows[0])}catch(e){next(e)}});
+app.post('/api/inventory/movements',async(req,res,next)=>{try{const x=req.body||{};if(!x.branch_id||!x.product_id||!N(x.quantity_delta))return res.status(400).json({error:'branch_id product_id quantity_delta required'});const type=['opening','receive','adjustment','return'].includes(x.movement_type)?x.movement_type:'adjustment';res.status(201).json((await Q('insert into stock_movements(branch_id,product_id,movement_type,quantity_delta,unit_cost,note) values($1,$2,$3,$4,$5,$6) returning *',[I(x.branch_id),I(x.product_id),type,N(x.quantity_delta),x.unit_cost==null?null:N(x.unit_cost),x.note||null])).rows[0])}catch(e){next(e)}});
+app.get('/api/inventory/dashboard',async(req,res,next)=>{try{const p=req.query.branch_id?[I(req.query.branch_id)]:[],f=p.length?'and m.branch_id=$1':'';res.json((await Q(`select count(*)::int products,count(*) filter(where coalesce(x.qty,0)<=0)::int out_of_stock,coalesce(sum(coalesce(x.qty,0)*p.cost_price),0) stock_value from products p left join lateral(select coalesce(sum(m.quantity_delta),0) qty from stock_movements m where m.product_id=p.id ${f})x on true where p.active=true`,p)).rows[0])}catch(e){next(e)}});
+app.get('/api/inventory/movements',async(req,res,next)=>{try{res.json((await Q('select * from stock_movements order by created_at desc limit 500')).rows)}catch(e){next(e)}});
+app.post('/api/customers',async(req,res,next)=>{try{const x=req.body||{};if(!x.name)return res.status(400).json({error:'name required'});res.status(201).json((await Q('insert into customers(name,phone,email,address) values($1,$2,$3,$4) returning *',[x.name,x.phone||null,x.email||null,x.address||null])).rows[0])}catch(e){next(e)}});app.get('/api/customers',async(_,r,n)=>{try{r.json((await Q('select * from customers order by name')).rows)}catch(e){n(e)}});
+app.post('/api/sales',async(req,res,next)=>{const c=await pool.connect();try{const x=req.body||{},a=Array.isArray(x.items)?x.items:[];if(!x.branch_id||!a.length)return res.status(400).json({error:'branch_id and items required'});await c.query('begin');let sub=0;for(const z of a){if(!z.product_id||N(z.quantity)<=0)throw Error('invalid sale item');const st=(await c.query('select coalesce(sum(quantity_delta),0) q from stock_movements where branch_id=$1 and product_id=$2',[I(x.branch_id),I(z.product_id)])).rows[0].q;if(N(st)<N(z.quantity))throw Error('insufficient stock');sub+=N(z.quantity)*N(z.unit_price)-N(z.discount)}const sale=(await c.query("insert into sales(branch_id,customer_id,sale_number,status,subtotal,discount,tax,total,created_by) values($1,$2,$3,'completed',$4,$5,$6,$7,$8) returning *",[I(x.branch_id),x.customer_id?I(x.customer_id):null,S('SALE'),sub,N(x.discount),N(x.tax),sub-N(x.discount)+N(x.tax),x.created_by?I(x.created_by):null])).rows[0];for(const z of a){const line=N(z.quantity)*N(z.unit_price)-N(z.discount);await c.query('insert into sale_items(sale_id,product_id,quantity,unit_price,discount,line_total) values($1,$2,$3,$4,$5,$6)',[sale.id,I(z.product_id),N(z.quantity),N(z.unit_price),N(z.discount),line]);await c.query("insert into stock_movements(branch_id,product_id,movement_type,quantity_delta,reference_type,reference_id) values($1,$2,'sale',$3,'sale',$4)",[I(x.branch_id),I(z.product_id),-N(z.quantity),String(sale.id)])}for(const z of x.payments||[])if(N(z.amount)>0)await c.query('insert into payments(sale_id,method,amount,reference) values($1,$2,$3,$4)',[sale.id,z.method||'cash',N(z.amount),z.reference||null]);await c.query('commit');res.status(201).json(sale)}catch(e){await c.query('rollback').catch(()=>{});next(e)}finally{c.release()}});app.get('/api/sales',async(_,r,n)=>{try{r.json((await Q('select * from sales order by created_at desc limit 500')).rows)}catch(e){n(e)}});
+function docs(kind){const T=kind==='invoice'?'invoices':'quotations',L=kind==='invoice'?'invoice_items':'quotation_items',F=kind==='invoice'?'invoice_id':'quotation_id',K=kind==='invoice'?'invoice_number':'quotation_number',P=kind==='invoice'?'INV':'QUO';app.post('/api/'+kind+'s',async(req,res,next)=>{const c=await pool.connect();try{const x=req.body||{},a=Array.isArray(x.items)?x.items:[];if(!x.branch_id||!a.length)return res.status(400).json({error:'branch_id and items required'});await c.query('begin');let sub=0;for(const z of a)sub+=N(z.quantity)*N(z.unit_price)-N(z.discount);const total=sub-N(x.discount)+N(x.tax),d=(await c.query(`insert into ${T}(branch_id,customer_id,${K},subtotal,discount,tax,total,notes) values($1,$2,$3,$4,$5,$6,$7,$8) returning *`,[I(x.branch_id),x.customer_id?I(x.customer_id):null,S(P),sub,N(x.discount),N(x.tax),total,x.notes||null])).rows[0];for(const z of a)await c.query(`insert into ${L}(${F},product_id,description,quantity,unit_price,discount,line_total) values($1,$2,$3,$4,$5,$6,$7)`,[d.id,z.product_id?I(z.product_id):null,z.description||'',N(z.quantity),N(z.unit_price),N(z.discount),N(z.quantity)*N(z.unit_price)-N(z.discount)]);await c.query('commit');res.status(201).json(d)}catch(e){await c.query('rollback').catch(()=>{});next(e)}finally{c.release()}});app.get('/api/'+kind+'s',async(_,r,n)=>{try{r.json((await Q(`select * from ${T} order by created_at desc limit 500`)).rows)}catch(e){n(e)}})}docs('invoice');docs('quotation');
+app.get('/api/reports/sales',async(req,res,next)=>{try{const p=req.query.branch_id?[I(req.query.branch_id)]:[],w=p.length?' where branch_id=$1':'';res.json((await Q('select count(*)::int sales,coalesce(sum(total),0) revenue from sales'+w,p)).rows[0])}catch(e){next(e)}});app.get('/api/branches',async(_,r,n)=>{try{r.json((await Q('select * from branches order by name')).rows)}catch(e){n(e)}});app.use(express.static(path.join(__dirname,'public')));app.get('*',(_,r)=>r.sendFile(path.join(__dirname,'public','index.html')));app.use((e,_,r,n)=>{console.error(e);r.status(500).json({error:e.message||'internal_error'})});app.listen(Number(process.env.PORT||8080));
