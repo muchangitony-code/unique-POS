@@ -41,8 +41,6 @@ async function start() {
     assertFonts();
     console.log("[startup] PDF fonts: PDFKit built-in Helvetica / Helvetica-Bold");
     validateStartupEnv();
-    const runtimeBundle = path.join(__dirname, "index.runtime.cjs");
-    if (!fs.existsSync(runtimeBundle)) throw new Error(`Missing ${runtimeBundle}; run the explicit deployment build before starting the application.`);
     const { bootstrapDatabaseIfNeeded } = require("./scripts/bootstrap-db.cjs");
     const result = await bootstrapDatabaseIfNeeded();
     console.log("[startup] Database bootstrap complete", result);
