@@ -1,48 +1,13 @@
-// UniquePOS standalone entrypoint.
-"use strict";
-const fs = require("node:fs");
-const path = require("node:path");
-const { validateStartupEnv } = require("./scripts/validate-startup-env.cjs");
-const { assertFonts } = require("./server/pdf/fonts.cjs");
-const { loadIndex } = require("./server/pdf/bundle-loader.cjs");
-
-const envPath = path.join(__dirname, ".env");
-if (fs.existsSync(envPath)) {
-  for (const line of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
-    const t = line.trim();
-    if (!t || t.startsWith("#")) continue;
-    const eq = t.indexOf("=");
-    if (eq === -1) continue;
-    const key = t.slice(0, eq).trim();
-    let val = line.slice(eq + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) val = val.slice(1, -1);
-    if (key === "DATABASE_URL") continue;
-    if (!(key in process.env)) process.env[key] = val;
-  }
-}
-process.env.NODE_ENV = process.env.NODE_ENV || "production";
-process.env.UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS = "1";
-const defaultClientDir = path.join(__dirname, "public");
-const configuredClientDir = process.env.SERVE_CLIENT_DIR ? path.resolve(process.env.SERVE_CLIENT_DIR) : "";
-const configuredClientIndex = configuredClientDir ? path.join(configuredClientDir, "index.html") : "";
-const defaultClientIndex = path.join(defaultClientDir, "index.html");
-if (configuredClientDir && !fs.existsSync(configuredClientIndex)) {
-  if (fs.existsSync(defaultClientIndex)) process.env.SERVE_CLIENT_DIR = defaultClientDir;
-  else delete process.env.SERVE_CLIENT_DIR;
-} else if (!configuredClientDir && fs.existsSync(defaultClientIndex)) process.env.SERVE_CLIENT_DIR = defaultClientDir;
-process.env.BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups");
-process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dirname, "storage");
-if (!process.env.PORT) process.env.PORT = "8080";
-
-async function start() {
-  try {
-    assertFonts();
-    console.log("[startup] PDF fonts: PDFKit built-in Helvetica / Helvetica-Bold");
-    validateStartupEnv();
-    loadIndex();
-  } catch (err) {
-    console.error("[startup] Startup failed", err);
-    process.exit(1);
-  }
-}
-start();
+'use strict';
+const express=require('express'),{Pool}=require('pg'),path=require('node:path'),bcrypt=require('bcryptjs');const {parseAndValidateDatabaseUrl,railwaySsl}=require('./scripts/database-url.cjs');const app=express();app.use(express.json({limit:'10mb'}));const {databaseUrl}=parseAndValidateDatabaseUrl('unique-pos-clean');const pool=new Pool({connectionString:databaseUrl,ssl:railwaySsl(databaseUrl)});const N=v=>Number(v)||0,I=v=>Number.parseInt(v,10),Q=(s,p=[])=>pool.query(s,p),S=p=>p+'-'+Date.now()+'-'+Math.random().toString(36).slice(2,7).toUpperCase();
+app.get('/api/healthz',async(_,r)=>{try{await Q('select 1');r.json({ok:true})}catch(e){r.status(503).json({ok:false})}});
+app.post('/api/setup',async(req,res,next)=>{const c=await pool.connect();try{const x=req.body||{};if(!x.business?.name||!x.branch?.name||!x.admin?.name||!x.admin?.password)return res.status(400).json({error:'business branch and admin required'});await c.query('begin');const b=(await c.query('insert into businesses(name) values($1) returning *',[x.business.name])).rows[0],br=(await c.query('insert into branches(business_id,name,code) values($1,$2,$3) returning *',[b.id,x.branch.name,x.branch.code||'MAIN'])).rows[0];const h=await bcrypt.hash(x.admin.password,12);const u=(await c.query("insert into users(branch_id,name,email,password_hash,role) values($1,$2,$3,$4,'admin') returning id,name,email,role,branch_id",[br.id,x.admin.name,x.admin.email||null,h])).rows[0];await c.query('commit');res.status(201).json({business:b,branch:br,admin:u})}catch(e){await c.query('rollback').catch(()=>{});next(e)}finally{c.release()}});
+app.get('/api/inventory/products',async(req,res,next)=>{try{const p=req.query.branch_id?[I(req.query.branch_id)]:[];const f=p.length?'and m.branch_id=$1':'';res.json((await Q(`select p.*,coalesce((select sum(quantity_delta) from stock_movements m where m.product_id=p.id ${f}),0) quantity from products p where active=true order by name`,p)).rows)}catch(e){next(e)}});
+app.post('/api/inventory/products',async(req,res,next)=>{try{const x=req.body||{};if(!x.sku||!x.name)return res.status(400).json({error:'sku and name required'});res.status(201).json((await Q('insert into products(sku,barcode,name,description,cost_price,selling_price) values($1,$2,$3,$4,$5,$6) returning *',[x.sku,x.barcode||null,x.name,x.description||null,N(x.cost_price),N(x.selling_price)])).rows[0])}catch(e){next(e)}});
+app.post('/api/inventory/movements',async(req,res,next)=>{try{const x=req.body||{};if(!x.branch_id||!x.product_id||!N(x.quantity_delta))return res.status(400).json({error:'branch_id product_id quantity_delta required'});const type=['opening','receive','adjustment','return'].includes(x.movement_type)?x.movement_type:'adjustment';res.status(201).json((await Q('insert into stock_movements(branch_id,product_id,movement_type,quantity_delta,unit_cost,note) values($1,$2,$3,$4,$5,$6) returning *',[I(x.branch_id),I(x.product_id),type,N(x.quantity_delta),x.unit_cost==null?null:N(x.unit_cost),x.note||null])).rows[0])}catch(e){next(e)}});
+app.get('/api/inventory/dashboard',async(req,res,next)=>{try{const p=req.query.branch_id?[I(req.query.branch_id)]:[],f=p.length?'and m.branch_id=$1':'';res.json((await Q(`select count(*)::int products,count(*) filter(where coalesce(x.qty,0)<=0)::int out_of_stock,coalesce(sum(coalesce(x.qty,0)*p.cost_price),0) stock_value from products p left join lateral(select coalesce(sum(m.quantity_delta),0) qty from stock_movements m where m.product_id=p.id ${f})x on true where p.active=true`,p)).rows[0])}catch(e){next(e)}});
+app.get('/api/inventory/movements',async(req,res,next)=>{try{res.json((await Q('select * from stock_movements order by created_at desc limit 500')).rows)}catch(e){next(e)}});
+app.post('/api/customers',async(req,res,next)=>{try{const x=req.body||{};if(!x.name)return res.status(400).json({error:'name required'});res.status(201).json((await Q('insert into customers(name,phone,email,address) values($1,$2,$3,$4) returning *',[x.name,x.phone||null,x.email||null,x.address||null])).rows[0])}catch(e){next(e)}});app.get('/api/customers',async(_,r,n)=>{try{r.json((await Q('select * from customers order by name')).rows)}catch(e){n(e)}});
+app.post('/api/sales',async(req,res,next)=>{const c=await pool.connect();try{const x=req.body||{},a=Array.isArray(x.items)?x.items:[];if(!x.branch_id||!a.length)return res.status(400).json({error:'branch_id and items required'});await c.query('begin');let sub=0;for(const z of a){if(!z.product_id||N(z.quantity)<=0)throw Error('invalid sale item');const st=(await c.query('select coalesce(sum(quantity_delta),0) q from stock_movements where branch_id=$1 and product_id=$2',[I(x.branch_id),I(z.product_id)])).rows[0].q;if(N(st)<N(z.quantity))throw Error('insufficient stock');sub+=N(z.quantity)*N(z.unit_price)-N(z.discount)}const sale=(await c.query("insert into sales(branch_id,customer_id,sale_number,status,subtotal,discount,tax,total,created_by) values($1,$2,$3,'completed',$4,$5,$6,$7,$8) returning *",[I(x.branch_id),x.customer_id?I(x.customer_id):null,S('SALE'),sub,N(x.discount),N(x.tax),sub-N(x.discount)+N(x.tax),x.created_by?I(x.created_by):null])).rows[0];for(const z of a){const line=N(z.quantity)*N(z.unit_price)-N(z.discount);await c.query('insert into sale_items(sale_id,product_id,quantity,unit_price,discount,line_total) values($1,$2,$3,$4,$5,$6)',[sale.id,I(z.product_id),N(z.quantity),N(z.unit_price),N(z.discount),line]);await c.query("insert into stock_movements(branch_id,product_id,movement_type,quantity_delta,reference_type,reference_id) values($1,$2,'sale',$3,'sale',$4)",[I(x.branch_id),I(z.product_id),-N(z.quantity),String(sale.id)])}for(const z of x.payments||[])if(N(z.amount)>0)await c.query('insert into payments(sale_id,method,amount,reference) values($1,$2,$3,$4)',[sale.id,z.method||'cash',N(z.amount),z.reference||null]);await c.query('commit');res.status(201).json(sale)}catch(e){await c.query('rollback').catch(()=>{});next(e)}finally{c.release()}});app.get('/api/sales',async(_,r,n)=>{try{r.json((await Q('select * from sales order by created_at desc limit 500')).rows)}catch(e){n(e)}});
+function docs(kind){const T=kind==='invoice'?'invoices':'quotations',L=kind==='invoice'?'invoice_items':'quotation_items',F=kind==='invoice'?'invoice_id':'quotation_id',K=kind==='invoice'?'invoice_number':'quotation_number',P=kind==='invoice'?'INV':'QUO';app.post('/api/'+kind+'s',async(req,res,next)=>{const c=await pool.connect();try{const x=req.body||{},a=Array.isArray(x.items)?x.items:[];if(!x.branch_id||!a.length)return res.status(400).json({error:'branch_id and items required'});await c.query('begin');let sub=0;for(const z of a)sub+=N(z.quantity)*N(z.unit_price)-N(z.discount);const total=sub-N(x.discount)+N(x.tax),d=(await c.query(`insert into ${T}(branch_id,customer_id,${K},subtotal,discount,tax,total,notes) values($1,$2,$3,$4,$5,$6,$7,$8) returning *`,[I(x.branch_id),x.customer_id?I(x.customer_id):null,S(P),sub,N(x.discount),N(x.tax),total,x.notes||null])).rows[0];for(const z of a)await c.query(`insert into ${L}(${F},product_id,description,quantity,unit_price,discount,line_total) values($1,$2,$3,$4,$5,$6,$7)`,[d.id,z.product_id?I(z.product_id):null,z.description||'',N(z.quantity),N(z.unit_price),N(z.discount),N(z.quantity)*N(z.unit_price)-N(z.discount)]);await c.query('commit');res.status(201).json(d)}catch(e){await c.query('rollback').catch(()=>{});next(e)}finally{c.release()}});app.get('/api/'+kind+'s',async(_,r,n)=>{try{r.json((await Q(`select * from ${T} order by created_at desc limit 500`)).rows)}catch(e){n(e)}})}docs('invoice');docs('quotation');
+app.get('/api/reports/sales',async(req,res,next)=>{try{const p=req.query.branch_id?[I(req.query.branch_id)]:[],w=p.length?' where branch_id=$1':'';res.json((await Q('select count(*)::int sales,coalesce(sum(total),0) revenue from sales'+w,p)).rows[0])}catch(e){next(e)}});app.get('/api/branches',async(_,r,n)=>{try{r.json((await Q('select * from branches order by name')).rows)}catch(e){n(e)}});app.use(express.static(path.join(__dirname,'public')));app.get('*',(_,r)=>r.sendFile(path.join(__dirname,'public','index.html')));app.use((e,_,r,n)=>{console.error(e);r.status(500).json({error:e.message||'internal_error'})});app.listen(Number(process.env.PORT||8080));
