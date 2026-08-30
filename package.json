@@ -5,7 +5,7 @@
   "main": "app.js",
   "engines": { "node": ">=22" },
   "scripts": {
-    "build": "echo 'no build'",
+    "build": "node scripts/build.cjs",
     "start": "node app.js",
     "db:clean-reset": "node scripts/clean-reset.cjs",
     "startup:validate": "node -e \"require('./scripts/startup-validate.cjs')\"",
