@@ -108,6 +108,30 @@ function mountInventoryCore(app) {
     } catch (error) { console.error('[inventory-core] dashboard failed', error); res.status(400).json({ error: error.message }); }
   });
 
+  // Temporary debug route to inspect per-product aggregated stock (remove after debugging)
+  app.get('/api/v3/inventory/dashboard-debug', async (req, res) => {
+    try {
+      const rows = await db().query(`
+        SELECT p.id, p.sku, p.name, p.reorder_level,
+               COALESCE(sq.total_units,0) AS total_units,
+               COALESCE(sq.row_count,0) AS stock_rows
+        FROM inventory_products_v2 p
+        LEFT JOIN (
+          SELECT product_id, SUM(quantity_on_hand) AS total_units, COUNT(*) AS row_count
+          FROM inventory_stock_v2
+          GROUP BY product_id
+        ) sq ON sq.product_id = p.id
+        WHERE p.is_active = TRUE
+        ORDER BY total_units ASC NULLS FIRST
+        LIMIT 1000
+      `);
+      res.set('Cache-Control','no-store').json({ rows: rows.rows });
+    } catch (err) {
+      console.error('[inventory-core] dashboard-debug failed', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/v3/inventory/products', async (req, res) => {
     const b = req.body || {};
     const name = text(b.name);
