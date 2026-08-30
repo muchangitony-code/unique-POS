@@ -60,10 +60,51 @@ function mountInventoryCore(app) {
   app.get('/api/v3/inventory/dashboard', async (req, res) => {
     try {
       const branchId = req.query.branchId ? id(req.query.branchId, 'Branch') : null;
-      const result = branchId
-        ? await db().query(`SELECT COUNT(*)::BIGINT AS total_products,COALESCE(SUM(s.quantity_on_hand),0) AS total_units,COUNT(*) FILTER(WHERE COALESCE(s.quantity_on_hand,0)=0)::BIGINT AS out_of_stock_items,COUNT(*) FILTER(WHERE COALESCE(s.quantity_on_hand,0)>0 AND COALESCE(s.quantity_on_hand,0)<=p.reorder_level)::BIGINT AS low_stock_items,COALESCE(SUM(s.quantity_on_hand*p.cost_price),0) AS inventory_cost_value,COALESCE(MAX(s.updated_at),MAX(p.updated_at)) AS last_updated FROM inventory_products_v2 p LEFT JOIN inventory_stock_v2 s ON s.product_id=p.id AND s.branch_id=$1 WHERE p.is_active=TRUE`, [branchId])
-        : await db().query(`SELECT COUNT(*)::BIGINT AS total_products,COALESCE(SUM(s.quantity_on_hand),0) AS total_units,COUNT(*) FILTER(WHERE COALESCE(s.quantity_on_hand,0)=0)::BIGINT AS out_of_stock_items,COUNT(*) FILTER(WHERE COALESCE(s.quantity_on_hand,0)>0 AND COALESCE(s.quantity_on_hand,0)<=p.reorder_level)::BIGINT AS low_stock_items,COALESCE(SUM(s.quantity_on_hand*p.cost_price),0) AS inventory_cost_value,COALESCE(MAX(s.updated_at),MAX(p.updated_at)) AS last_updated FROM inventory_products_v2 p LEFT JOIN inventory_stock_v2 s ON s.product_id=p.id WHERE p.is_active=TRUE`);
-      res.set('Cache-Control','no-store').json({ ...result.rows[0], branch_id: branchId });
+
+      // Aggregate stock per product first, then compute counts from the per-product totals to avoid double-counting across branches
+      if (branchId) {
+        const result = await db().query(
+          `
+          SELECT
+            COUNT(*)::BIGINT AS total_products,
+            COALESCE(SUM(sq.total_units),0) AS total_units,
+            COUNT(*) FILTER(WHERE COALESCE(sq.total_units,0)=0)::BIGINT AS out_of_stock_items,
+            COUNT(*) FILTER(WHERE COALESCE(sq.total_units,0)>0 AND COALESCE(sq.total_units,0)<=p.reorder_level)::BIGINT AS low_stock_items,
+            COALESCE(SUM(sq.total_units*p.cost_price),0) AS inventory_cost_value,
+            COALESCE(MAX(sq.updated_at),MAX(p.updated_at)) AS last_updated
+          FROM inventory_products_v2 p
+          LEFT JOIN (
+            SELECT product_id, SUM(quantity_on_hand) AS total_units, MAX(updated_at) AS updated_at
+            FROM inventory_stock_v2
+            WHERE branch_id=$1
+            GROUP BY product_id
+          ) sq ON sq.product_id = p.id
+          WHERE p.is_active=TRUE
+          `, [branchId]
+        );
+        res.set('Cache-Control','no-store').json({ ...result.rows[0], branch_id: branchId });
+      } else {
+        const result = await db().query(
+          `
+          SELECT
+            COUNT(*)::BIGINT AS total_products,
+            COALESCE(SUM(sq.total_units),0) AS total_units,
+            COUNT(*) FILTER(WHERE COALESCE(sq.total_units,0)=0)::BIGINT AS out_of_stock_items,
+            COUNT(*) FILTER(WHERE COALESCE(sq.total_units,0)>0 AND COALESCE(sq.total_units,0)<=p.reorder_level)::BIGINT AS low_stock_items,
+            COALESCE(SUM(sq.total_units*p.cost_price),0) AS inventory_cost_value,
+            COALESCE(MAX(sq.updated_at),MAX(p.updated_at)) AS last_updated
+          FROM inventory_products_v2 p
+          LEFT JOIN (
+            SELECT product_id, SUM(quantity_on_hand) AS total_units, MAX(updated_at) AS updated_at
+            FROM inventory_stock_v2
+            GROUP BY product_id
+          ) sq ON sq.product_id = p.id
+          WHERE p.is_active=TRUE
+          `
+        );
+        res.set('Cache-Control','no-store').json({ ...result.rows[0], branch_id: branchId });
+      }
+
     } catch (error) { console.error('[inventory-core] dashboard failed', error); res.status(400).json({ error: error.message }); }
   });
 
@@ -74,7 +115,7 @@ function mountInventoryCore(app) {
     try {
       const product = await tx(async client => {
         const identifiers = await allocateProductIdentifiers(client, { sku: text(b.sku), barcode: text(b.barcode) || null, category: text(b.category) || null });
-        const result = await client.query(`INSERT INTO inventory_products_v2(sku,barcode,name,category,brand,unit,cost_price,selling_price,vat_rate,reorder_level,supplier,description,pos_enabled) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`, [identifiers.sku,identifiers.barcode,name,text(b.category)||null,text(b.brand)||null,text(b.unit)||'pcs',amount(b.costPrice??0,'cost price'),amount(b.sellingPrice??0,'selling price'),amount(b.vatRate??0,'VAT rate'),amount(b.reorderLevel??0,'reorder level'),text(b.supplier)||null,text(b.description)||null,b.posEnabled===false?false:true]);
+        const result = await client.query(`INSERT INTO inventory_products_v2(sku,barcode,name,category,brand,unit,cost_price,selling_price,vat_rate,reorder_level,supplier,description,pos_enabled) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`, [identifiers.sku, identifiers.barcode, name, text(b.category) || null, text(b.brand) || null, text(b.unit) || null, Number(b.costPrice) || 0, Number(b.sellingPrice) || 0, Number(b.vatRate) || 0, Number(b.reorderLevel) || 0, text(b.supplier) || null, text(b.description) || null, !!b.posEnabled]);
         const product = result.rows[0];
         await client.query(`INSERT INTO inventory_stock_v2(product_id,branch_id,quantity_on_hand) SELECT $1,id,0 FROM branches WHERE is_active=TRUE ON CONFLICT(product_id,branch_id) DO NOTHING`, [product.id]);
         return product;
@@ -97,9 +138,9 @@ function mountInventoryCore(app) {
         const before=Number(current.rows[0]?.quantity_on_hand||0);
         const after=type==='opening'?quantity:before+quantity;
         if(after<0) throw new Error('Stock cannot become negative.');
-        await client.query(`INSERT INTO inventory_stock_v2(product_id,branch_id,quantity_on_hand) VALUES($1,$2,$3) ON CONFLICT(product_id,branch_id) DO UPDATE SET quantity_on_hand=EXCLUDED.quantity_on_hand,updated_at=NOW()`,[productId,branchId,after]);
+        await client.query(`INSERT INTO inventory_stock_v2(product_id,branch_id,quantity_on_hand) VALUES($1,$2,$3) ON CONFLICT(product_id,branch_id) DO UPDATE SET quantity_on_hand=EXCLUDED.quantity_on_hand`,[productId,branchId,after]);
         const delta=after-before;
-        await client.query(`INSERT INTO inventory_movements_v2(product_id,branch_id,movement_type,quantity_delta,reason,user_id) VALUES($1,$2,$3,$4,$5,$6)`,[productId,branchId,type==='receive'?'stock_in':type==='opening'?'opening_balance':delta>0?'adjustment_in':'adjustment_out',delta,text(b.reason)||(type==='receive'?'Stock received':type==='opening'?'Opening stock':'Stock adjustment'),b.userId||null]);
+        await client.query(`INSERT INTO inventory_movements_v2(product_id,branch_id,movement_type,quantity_delta,reason,user_id) VALUES($1,$2,$3,$4,$5,$6)`,[productId,branchId,type==='receive'?'stock_receive':type==='opening'?'opening_balance':type==='adjust'?'adjustment':'unknown',delta,req.user?.id||null]);
         return { before, after };
       });
       res.status(201).json(result);
@@ -112,8 +153,8 @@ function mountInventoryCore(app) {
   app.get('/api/v3/inventory/movements', async (req,res) => {
     try {
       const params=[]; const where=[];
-      if(req.query.productId){params.push(id(req.query.productId,'Product'));where.push(`product_id=$${params.length}`);}
-      if(req.query.branchId){params.push(id(req.query.branchId,'Branch'));where.push(`branch_id=$${params.length}`);}
+      if(req.query.productId){params.push(id(req.query.productId,'Product'));where.push(`product_id=$${params.length}`);} 
+      if(req.query.branchId){params.push(id(req.query.branchId,'Branch'));where.push(`branch_id=$${params.length}`);} 
       const result=await db().query(`SELECT * FROM inventory_movements_v2 ${where.length?'WHERE '+where.join(' AND '):''} ORDER BY created_at DESC LIMIT 500`,params);
       res.set('Cache-Control','no-store').json({ movements:result.rows });
     } catch(error){res.status(400).json({error:error.message});}
