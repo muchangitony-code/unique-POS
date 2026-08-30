@@ -1,0 +1,1 @@
+Railway startup must run npm start only. Database migrations are an explicit deployment operation and must not execute from the application start command.
