@@ -867,30 +867,17 @@
     };
   }
 
-    async function loadSalesData() {
-    const branchId = firstText(state.currentBranchId, "");
-    const inventoryUrl = "/api/v3/inventory/products?limit=200" + (branchId && branchId !== "all" ? "&branch_id=" + encodeURIComponent(branchId) : "");
+  async function loadSalesData() {
     const [products, categories, customers, sales] = await Promise.all([
-      apiJson(inventoryUrl).catch(function () { return { data: [] }; }),
+      apiJson("/api/products?limit=200&in_stock_only=true&fallback_product_stock=true").catch(function () { return { data: [] }; }),
       apiJson("/api/categories").catch(function () { return []; }),
       apiJson("/api/customers?limit=200").catch(function () { return { data: [] }; }),
       apiJson("/api/pos/sales?limit=12").catch(function () { return { data: [] }; })
     ]);
-    const categoryList = normalizeList(categories);
-    const categoryNameById = {};
-    categoryList.forEach(function (cat) {
-      categoryNameById[String(cat.id)] = firstText(cat.name, "");
-    });
-    state.pos.products = normalizeList(products).map(function (item) {
-      return Object.assign({}, item, {
-        current_stock: firstNumber(item.quantity_on_hand, item.current_stock, item.stock, 0),
-        category_name: firstText(item.category_name, item.category, categoryNameById[String(item.category_id)], "")
-      });
-    });
-    state.pos.categories = categoryList;
+    state.pos.products = normalizeList(products);
+    state.pos.categories = normalizeList(categories);
     state.pos.customers = normalizeList(customers);
     state.cache.sales = { recentSales: normalizeList(sales) };
-  }
   }
 
   async function loadProductsData(keepArchivedFlag) {
