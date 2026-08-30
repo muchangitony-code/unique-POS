@@ -41,10 +41,8 @@ async function start() {
     assertFonts();
     console.log("[startup] PDF fonts: PDFKit built-in Helvetica / Helvetica-Bold");
     validateStartupEnv();
-    const { bootstrapDatabaseIfNeeded } = require("./scripts/bootstrap-db.cjs");
-    const result = await bootstrapDatabaseIfNeeded();
-    console.log("[startup] Database bootstrap complete", result);
-    if (result.adminBootstrapped) console.log("[bootstrap-db] Admin account ensured");
+    // Database schema changes are deployment-only. Runtime startup must not
+    // bootstrap, migrate, seed, or reject the process based on migration state.
     loadIndex();
   } catch (err) {
     console.error("[startup] Startup failed", err);
