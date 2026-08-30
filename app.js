@@ -5,6 +5,7 @@ const path = require("node:path");
 const { validateStartupEnv } = require("./scripts/validate-startup-env.cjs");
 const { assertFonts } = require("./server/pdf/fonts.cjs");
 const { loadIndex } = require("./server/pdf/bundle-loader.cjs");
+const { repairInventoryStock } = require("./server/inventory-stock-repair.cjs");
 
 const envPath = path.join(__dirname, ".env");
 if (fs.existsSync(envPath)) {
@@ -21,8 +22,6 @@ if (fs.existsSync(envPath)) {
   }
 }
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
-// Migration execution is deployment-only. Set the guard before any runtime or
-// database bootstrap code is loaded so startup can never accidentally migrate.
 process.env.UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS = "1";
 const defaultClientDir = path.join(__dirname, "public");
 const configuredClientDir = process.env.SERVE_CLIENT_DIR ? path.resolve(process.env.SERVE_CLIENT_DIR) : "";
@@ -41,8 +40,10 @@ async function start() {
     assertFonts();
     console.log("[startup] PDF fonts: PDFKit built-in Helvetica / Helvetica-Bold");
     validateStartupEnv();
-    // Database schema changes are deployment-only. Runtime startup must not
-    // bootstrap, migrate, seed, or reject the process based on migration state.
+    // Targeted additive repair for the V2 inventory cutover. This is idempotent:
+    // it only restores positive historical quantities and never reduces live stock.
+    const stockRepair = await repairInventoryStock();
+    console.log("[startup] Inventory stock repair:", stockRepair);
     loadIndex();
   } catch (err) {
     console.error("[startup] Startup failed", err);
