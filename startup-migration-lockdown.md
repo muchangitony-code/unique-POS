@@ -1,3 +1,3 @@
-# Railway startup
+# Railway startup lockdown
 
-The Railway web process starts the application with `npm start`. Database migrations are explicit deployment operations and are not part of application startup.
+Railway application startup must use `npm start` only. Database migrations are deployment operations and must not be executed implicitly by the web-process start command.
