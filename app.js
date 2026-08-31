@@ -6,6 +6,7 @@ const { validateStartupEnv } = require("./scripts/validate-startup-env.cjs");
 const { assertFonts } = require("./server/pdf/fonts.cjs");
 const { loadIndex } = require("./server/pdf/bundle-loader.cjs");
 const { repairInventoryStock } = require("./server/inventory-stock-repair.cjs");
+const { recoverInventoryFromLedger } = require("./server/inventory-ledger-recovery.cjs");
 
 const envPath = path.join(__dirname, ".env");
 if (fs.existsSync(envPath)) {
@@ -42,6 +43,8 @@ async function start() {
     validateStartupEnv();
     const stockRepair = await repairInventoryStock();
     console.log("[startup] Inventory stock repair:", stockRepair);
+    const ledgerRecovery = await recoverInventoryFromLedger();
+    console.log("[startup] Inventory ledger recovery:", ledgerRecovery);
     loadIndex();
   } catch (err) {
     console.error("[startup] Startup failed", err);
