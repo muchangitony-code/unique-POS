@@ -5,6 +5,7 @@ const path = require("node:path");
 const { validateStartupEnv } = require("./scripts/validate-startup-env.cjs");
 const { assertFonts } = require("./server/pdf/fonts.cjs");
 const { loadIndex } = require("./server/pdf/bundle-loader.cjs");
+const { repairInventoryStock } = require("./server/inventory-stock-repair.cjs");
 
 const envPath = path.join(__dirname, ".env");
 if (fs.existsSync(envPath)) {
@@ -39,6 +40,8 @@ async function start() {
     assertFonts();
     console.log("[startup] PDF fonts: PDFKit built-in Helvetica / Helvetica-Bold");
     validateStartupEnv();
+    const stockRepair = await repairInventoryStock();
+    console.log("[startup] Inventory stock repair:", stockRepair);
     loadIndex();
   } catch (err) {
     console.error("[startup] Startup failed", err);
