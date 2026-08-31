@@ -3,18 +3,35 @@
 
   const route = () => String(location.hash || '').replace(/^#/, '').split('?')[0];
 
-  function setKpi(label, value, money) {
-    document.querySelectorAll('.kpi-card').forEach(card => {
+  function findKpi(label) {
+    return Array.from(document.querySelectorAll('.kpi-card')).find(card => {
       const labelEl = card.querySelector('.kpi-card__label');
-      const valueEl = card.querySelector('.kpi-card__value');
-      if (!labelEl || !valueEl || labelEl.textContent.trim().toLowerCase() !== label.toLowerCase()) return;
-      const number = Number(value || 0);
-      valueEl.textContent = money
-        ? 'KES ' + new Intl.NumberFormat('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(number)
-        : new Intl.NumberFormat('en-KE', { maximumFractionDigits: 0 }).format(number);
-      const trend = card.querySelector('.kpi-card__trend');
-      if (trend) trend.textContent = 'Live inventory query';
+      return labelEl && labelEl.textContent.trim().toLowerCase() === label.toLowerCase();
     });
+  }
+
+  function setKpi(label, value, money) {
+    const card = findKpi(label);
+    if (!card) return;
+    const valueEl = card.querySelector('.kpi-card__value');
+    if (!valueEl) return;
+    const number = Number(value || 0);
+    valueEl.textContent = money
+      ? 'KES ' + new Intl.NumberFormat('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(number)
+      : new Intl.NumberFormat('en-KE', { maximumFractionDigits: 0 }).format(number);
+    const trend = card.querySelector('.kpi-card__trend');
+    if (trend) trend.textContent = 'Live inventory query';
+  }
+
+  function setTotalUnits(value) {
+    const card = findKpi('Low Stock');
+    if (!card) return;
+    const labelEl = card.querySelector('.kpi-card__label');
+    const valueEl = card.querySelector('.kpi-card__value');
+    if (labelEl) labelEl.textContent = 'Total Units';
+    if (valueEl) valueEl.textContent = new Intl.NumberFormat('en-KE', { maximumFractionDigits: 0 }).format(Number(value || 0));
+    const trend = card.querySelector('.kpi-card__trend');
+    if (trend) trend.textContent = 'Live inventory query';
   }
 
   function renderUpdated(timestamp) {
@@ -40,7 +57,7 @@
       if (!response.ok) return;
       const data = await response.json();
       setKpi('Stock Lines', data.total_products);
-      setKpi('Low Stock', data.low_stock_items);
+      setTotalUnits(data.total_units);
       setKpi('Out of Stock', data.out_of_stock_items);
       setKpi('Stock Value', data.inventory_cost_value, true);
       renderUpdated(data.last_updated);
