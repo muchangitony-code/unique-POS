@@ -20,6 +20,7 @@
     "startup:validate": "node scripts/validate-startup-env.cjs",
     "category:qa": "node scripts/product-category-regression.cjs",
     "test:inventory": "node tests/inventory-acceptance.cjs",
+    "test:startup-stock": "node tests/startup-stock-reconciliation.cjs",
     "pdf:sample": "node scripts/pdf-fixtures.js",
     "pdf:qa": "node scripts/pdf-fixtures.js && node tests/pdf-branding-integrity.cjs && node tests/pdf-logo-propagation.cjs && node tests/pdf-document-smoke.cjs && node tests/pdf-structural.cjs && node scripts/pdf-production-regression.cjs && node scripts/pdf-receipt-smoke.cjs",
     "pdf:receipt-smoke": "node scripts/pdf-receipt-smoke.cjs",
