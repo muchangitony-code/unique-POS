@@ -1,0 +1,1 @@
+Pending branch isolation: Railway startup should use npm start and not npm run db:migrate && npm start.
