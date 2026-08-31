@@ -106,8 +106,23 @@ async function repairInventoryStock() {
       // sources did not restore. Run it regardless of partial earlier matches.
       const recoveryPath = path.join(__dirname,'..','migrations','0029_restore_main_branch_opening_stock.sql');
       if (fs.existsSync(recoveryPath)) {
-        await client.query(fs.readFileSync(recoveryPath,'utf8'));
-        sources.push('authoritative-opening-stock');
+        const recoverySql = fs.readFileSync(recoveryPath,'utf8');
+        await client.query(recoverySql);
+
+        // Reconcile per product, not through an all-or-nothing fallback.
+        // First preserve exact historical price matches, then run the same
+        // workbook seed against normalized product names for rows still at
+        // zero. GREATEST() in the migration makes the second pass additive:
+        // it cannot reduce or replace stock already restored by another source.
+        const relaxedRecoverySql = recoverySql.replace(
+          /\n\s*AND p\.selling_price = s\.selling_price\n\s*AND p\.is_active = TRUE/,
+          '\n     AND p.is_active = TRUE'
+        );
+        if (relaxedRecoverySql === recoverySql) {
+          throw new Error('Opening-stock recovery SQL did not contain the expected strict price matcher');
+        }
+        await client.query(relaxedRecoverySql);
+        sources.push('authoritative-opening-stock+normalized-name-reconciliation');
       }
 
       const count = await client.query(`SELECT COUNT(*)::int AS lines
