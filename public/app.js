@@ -2271,8 +2271,21 @@
     }).join("") + '</div>';
   }
 
+  function getPosCategoryNames() {
+    return normalizeList(state.pos.categories).map(function (item) {
+      return firstText(item.name, item.category_name, "");
+    }).filter(function (name) { return !!name; });
+  }
+
   function renderPosCategoryChips() {
-    return '<div class="filter-chips">' + SALE_CATEGORIES.map(function (name) {
+    const seen = {};
+    const names = ["All Products"].concat(getPosCategoryNames()).concat(["Others"]).filter(function (name) {
+      const key = name.toLowerCase();
+      if (seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+    return '<div class="filter-chips">' + names.map(function (name) {
       return '<button class="chip' + (state.pos.categoryFilter === name ? ' active' : '') + '" data-action="pos-category" data-value="' + escapeAttr(name) + '">' + escapeHtml(name) + '</button>';
     }).join("") + '</div>';
   }
@@ -2500,9 +2513,10 @@
     });
     const filter = state.pos.categoryFilter;
     if (filter && filter !== "All Products") {
+      const liveCategoryNames = getPosCategoryNames().map(function (name) { return name.toLowerCase(); });
       products = products.filter(function (item) {
         const category = firstText(item.category_name, item.category, "Others");
-        if (filter === "Others") return SALE_CATEGORIES.indexOf(category) === -1;
+        if (filter === "Others") return liveCategoryNames.indexOf(category.toLowerCase()) === -1;
         return category.toLowerCase() === filter.toLowerCase();
       });
     }
@@ -3472,7 +3486,7 @@
       '<div id="productPhotoDropzone" class="inventory-upload-dropzone"><i class="fa-solid fa-cloud-arrow-up"></i><strong>' + escapeHtml(state.productWorkspace.editor.uploading ? 'Uploading product photos…' : 'Drop product images here') + '</strong><p>PNG, JPG, WebP or SVG. Uploaded files are stored securely for the catalog.</p></div>' +
       '<div id="productPhotoPreviewGrid" class="inventory-photo-grid">' + renderProductEditorPhotoGrid(photos) + '</div></div>' +
       '<label><span>Product Name</span><input id="productNameInput" name="product_name" required value="' + escapeAttr(firstText(product && product.product_name, '')) + '" /></label>' +
-      '<label><span>SKU</span><input name="product_code" required value="' + escapeAttr(firstText(product && (product.sku || product.product_code), '')) + '" /></label>' +
+      '<label><span>SKU</span><input name="product_code" value="' + escapeAttr(firstText(product && (product.sku || product.product_code), '')) + '" /></label>' +
       '<label><span>Barcode</span><input name="barcode" value="' + escapeAttr(firstText(product && product.barcode, '')) + '" /></label>' +
       '<label><span>Brand</span><select name="brand_id"><option value="">Select brand</option>' + brands.map(function (item) { return '<option value="' + escapeAttr(String(item.id)) + '"' + (String(firstText(product && product.brand_id, '')) === String(item.id) ? ' selected' : '') + '>' + escapeHtml(firstText(item.name, 'Brand')) + '</option>'; }).join('') + '</select></label>' +
       '<label><span>Category</span><select id="productCategorySelect" name="category_id"><option value="">Select category</option>' + categories.map(function (item) { return '<option value="' + escapeAttr(String(item.id)) + '"' + (String(firstText(product && product.category_id, '')) === String(item.id) ? ' selected' : '') + '>' + escapeHtml(firstText(item.name, 'Category')) + '</option>'; }).join('') + '</select></label>' +
