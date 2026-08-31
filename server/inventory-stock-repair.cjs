@@ -5,6 +5,24 @@ const path = require('node:path');
 const { Pool } = require('pg');
 const { parseAndValidateDatabaseUrl, railwaySsl } = require('../scripts/database-url.cjs');
 
+function parseOpeningStockSeed(sql) {
+  const match = sql.match(/WITH\s+seed\s*\(\s*product_name\s*,\s*selling_price\s*,\s*opening_stock\s*\)\s+AS\s*\(\s*VALUES([\s\S]*?)\n\s*\)\s*,/i);
+  if (!match) throw new Error('Opening-stock recovery SQL did not contain the expected seed VALUES block');
+
+  const rows = [];
+  const tuple = /\(\s*'((?:''|[^'])*)'\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)/g;
+  let item;
+  while ((item = tuple.exec(match[1]))) {
+    rows.push({
+      productName: item[1].replace(/''/g, "'"),
+      sellingPrice: Number(item[2]),
+      openingStock: Number(item[3])
+    });
+  }
+  if (!rows.length) throw new Error('Opening-stock recovery SQL contained no seed rows');
+  return rows;
+}
+
 async function repairInventoryStock() {
   const { databaseUrl } = parseAndValidateDatabaseUrl('inventory-stock-repair');
   const pool = new Pool({ connectionString: databaseUrl, ssl: railwaySsl(databaseUrl), max: 1 });
@@ -102,27 +120,54 @@ async function repairInventoryStock() {
         throw error;
       }
 
-      // The workbook recovery is authoritative and fills products that legacy
-      // sources did not restore. Run it regardless of partial earlier matches.
-      const recoveryPath = path.join(__dirname,'..','migrations','0029_restore_main_branch_opening_stock.sql');
+      // The workbook seed is authoritative. Do not execute its bulk UPSERT directly:
+      // multiple catalogue rows can resolve to the same product_id, which causes
+      // PostgreSQL SQLSTATE 21000 before ON CONFLICT can resolve the duplicate.
+      // Parse the seed once and reconcile each seed row independently.
+      const recoveryPath = path.join(__dirname, '..', 'migrations', '0029_restore_main_branch_opening_stock.sql');
       if (fs.existsSync(recoveryPath)) {
-        const recoverySql = fs.readFileSync(recoveryPath,'utf8');
-        await client.query(recoverySql);
-
-        // Reconcile per product, not through an all-or-nothing fallback.
-        // First preserve exact historical price matches, then run the same
-        // workbook seed against normalized product names for rows still at
-        // zero. GREATEST() in the migration makes the second pass additive:
-        // it cannot reduce or replace stock already restored by another source.
-        const relaxedRecoverySql = recoverySql.replace(
-          /\n\s*AND p\.selling_price = s\.selling_price\n\s*AND p\.is_active = TRUE/,
-          '\n     AND p.is_active = TRUE'
-        );
-        if (relaxedRecoverySql === recoverySql) {
-          throw new Error('Opening-stock recovery SQL did not contain the expected strict price matcher');
+        const seed = parseOpeningStockSeed(fs.readFileSync(recoveryPath, 'utf8'));
+        const seen = new Map();
+        for (const row of seed) {
+          const key = `${row.productName.toLocaleLowerCase()}\u0000${row.sellingPrice}`;
+          const previous = seen.get(key);
+          if (!previous || row.openingStock > previous.openingStock) seen.set(key, row);
         }
-        await client.query(relaxedRecoverySql);
-        sources.push('authoritative-opening-stock+normalized-name-reconciliation');
+
+        let strictMatches = 0;
+        let relaxedMatches = 0;
+        for (const row of seen.values()) {
+          if (row.openingStock <= 0) continue;
+
+          let product = await client.query(`
+            SELECT id FROM inventory_products_v2
+            WHERE is_active=TRUE
+              AND lower(trim(name))=lower(trim($1))
+              AND selling_price=$2
+            ORDER BY id
+            LIMIT 1`, [row.productName, row.sellingPrice]);
+          if (product.rowCount) strictMatches += 1;
+
+          if (!product.rowCount) {
+            product = await client.query(`
+              SELECT id FROM inventory_products_v2
+              WHERE is_active=TRUE
+                AND lower(trim(name))=lower(trim($1))
+              ORDER BY id
+              LIMIT 1`, [row.productName]);
+            if (product.rowCount) relaxedMatches += 1;
+          }
+          if (!product.rowCount) continue;
+
+          await client.query(`
+            INSERT INTO inventory_stock_v2(product_id,branch_id,quantity_on_hand)
+            VALUES($1,$2,$3)
+            ON CONFLICT(product_id,branch_id) DO UPDATE
+              SET quantity_on_hand=GREATEST(inventory_stock_v2.quantity_on_hand,EXCLUDED.quantity_on_hand),
+                  updated_at=NOW()`,
+            [product.rows[0].id, branchId, row.openingStock]);
+        }
+        sources.push(`authoritative-opening-stock-per-product:${strictMatches}-strict:${relaxedMatches}-name`);
       }
 
       const count = await client.query(`SELECT COUNT(*)::int AS lines
@@ -138,4 +183,4 @@ async function repairInventoryStock() {
   }
 }
 
-module.exports={repairInventoryStock};
+module.exports = { repairInventoryStock };
