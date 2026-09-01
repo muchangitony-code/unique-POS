@@ -5,6 +5,7 @@ const path = require("node:path");
 const { validateStartupEnv } = require("./scripts/validate-startup-env.cjs");
 const { assertFonts } = require("./server/pdf/fonts.cjs");
 const { loadIndex } = require("./server/pdf/bundle-loader.cjs");
+const { executeAuthoritativeStockRecovery } = require("./server/execute-authoritative-stock-recovery.cjs");
 const { repairInventoryStock } = require("./server/inventory-stock-repair.cjs");
 const { recoverInventoryFromLedger } = require("./server/inventory-ledger-recovery.cjs");
 
@@ -41,6 +42,8 @@ async function start() {
     assertFonts();
     console.log("[startup] PDF fonts: PDFKit built-in Helvetica / Helvetica-Bold");
     validateStartupEnv();
+    const authoritativeRecovery = await executeAuthoritativeStockRecovery();
+    console.log("[startup] Authoritative opening-stock recovery:", authoritativeRecovery);
     const stockRepair = await repairInventoryStock();
     console.log("[startup] Inventory stock repair:", stockRepair);
     const ledgerRecovery = await recoverInventoryFromLedger();
