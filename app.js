@@ -5,6 +5,7 @@ const path = require("node:path");
 const { validateStartupEnv } = require("./scripts/validate-startup-env.cjs");
 const { assertFonts } = require("./server/pdf/fonts.cjs");
 const { loadIndex } = require("./server/pdf/bundle-loader.cjs");
+const { runProductionCleanSlate } = require("./scripts/production-clean-slate.cjs");
 
 const envPath = path.join(__dirname, ".env");
 if (fs.existsSync(envPath)) {
@@ -35,6 +36,8 @@ async function start() {
     console.log("[startup] PDF fonts: PDFKit built-in Helvetica / Helvetica-Bold");
     validateStartupEnv();
     console.log("[startup] Legacy inventory recovery and repair hooks: disabled");
+    const cleanSlate = await runProductionCleanSlate();
+    console.log(cleanSlate.applied ? `[startup] FULL POS CLEAN SLATE APPLIED to ${cleanSlate.tables.length} data tables` : "[startup] Full POS clean slate already completed");
     await loadIndex();
   } catch (err) { console.error("[startup] Startup failed", err); process.exit(1); }
 }
