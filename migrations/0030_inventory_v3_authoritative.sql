@@ -18,14 +18,15 @@ CREATE TABLE IF NOT EXISTS inventory_products_v3 (
   active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT inventory_products_v3_sku_uq UNIQUE (sku),
-  CONSTRAINT inventory_products_v3_barcode_uq UNIQUE NULLS NOT DISTINCT (barcode)
+  CONSTRAINT inventory_products_v3_sku_uq UNIQUE (sku)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS inventory_products_v3_barcode_uq
+  ON inventory_products_v3(barcode) WHERE barcode IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS inventory_stock_v3 (
   product_id BIGINT NOT NULL REFERENCES inventory_products_v3(id) ON DELETE RESTRICT,
   branch_id BIGINT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
-  quantity_on_hand NUMERIC(14,3) NOT NULL DEFAULT 0,
+  quantity_on_hand NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (quantity_on_hand >= 0),
   reserved_quantity NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (reserved_quantity >= 0),
   reorder_level NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (reorder_level >= 0),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -44,7 +45,7 @@ CREATE TABLE IF NOT EXISTS inventory_movements_v3 (
   )),
   quantity_before NUMERIC(14,3) NOT NULL,
   quantity_change NUMERIC(14,3) NOT NULL CHECK (quantity_change <> 0),
-  quantity_after NUMERIC(14,3) NOT NULL,
+  quantity_after NUMERIC(14,3) NOT NULL CHECK (quantity_after >= 0),
   reference_type TEXT,
   reference_id TEXT,
   reason TEXT,
@@ -60,7 +61,6 @@ CREATE INDEX IF NOT EXISTS inventory_movements_v3_reference_idx ON inventory_mov
 CREATE OR REPLACE FUNCTION inventory_v3_touch_product()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN NEW.updated_at = now(); RETURN NEW; END $$;
-
 DROP TRIGGER IF EXISTS inventory_products_v3_touch ON inventory_products_v3;
 CREATE TRIGGER inventory_products_v3_touch BEFORE UPDATE ON inventory_products_v3
 FOR EACH ROW EXECUTE FUNCTION inventory_v3_touch_product();
