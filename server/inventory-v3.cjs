@@ -2,119 +2,19 @@
 
 const { Pool } = require('pg');
 const { parseAndValidateDatabaseUrl, railwaySsl } = require('../scripts/database-url.cjs');
-const { allocateProductIdentifiers } = require('./product-identifiers.cjs');
-
+const TYPES = new Set(['OPENING_BALANCE','PURCHASE_RECEIPT','SALE','SALE_REVERSAL','ADJUSTMENT_IN','ADJUSTMENT_OUT','TRANSFER_OUT','TRANSFER_IN','CUSTOMER_RETURN','SUPPLIER_RETURN']);
 let pool;
-function db() {
-  if (!pool) {
-    const { databaseUrl } = parseAndValidateDatabaseUrl('inventory-v3');
-    pool = new Pool({ connectionString: databaseUrl, ssl: railwaySsl(databaseUrl), max: 10 });
-  }
-  return pool;
+function db(){if(!pool){const {databaseUrl}=parseAndValidateDatabaseUrl('inventory-v3');pool=new Pool({connectionString:databaseUrl,ssl:railwaySsl(databaseUrl),max:10});}return pool;}
+function n(v,label,negative=false){const x=Number(v);if(!Number.isFinite(x)||(!negative&&x<0))throw new Error(`Invalid ${label}`);return x;}
+function s(v){return String(v??'').trim();}
+async function tx(work){const c=await db().connect();try{await c.query('BEGIN');const r=await work(c);await c.query('COMMIT');return r;}catch(e){try{await c.query('ROLLBACK');}catch(_){}throw e;}finally{c.release();}}
+async function changeStock(c,input){const productId=n(input.productId,'productId'),branchId=n(input.branchId,'branchId'),delta=n(input.quantityChange,'quantityChange',true);if(!delta)throw new Error('quantityChange cannot be zero');if(!TYPES.has(input.movementType))throw new Error('Unsupported movement type');await c.query('SELECT pg_advisory_xact_lock($1,$2)',[productId,branchId]);const p=await c.query('SELECT id FROM inventory_products_v3 WHERE id=$1 AND active=TRUE',[productId]);if(!p.rowCount)throw new Error('Active product not found');const b=await c.query('SELECT id FROM branches WHERE id=$1 AND is_active=TRUE',[branchId]);if(!b.rowCount)throw new Error('Active branch not found');await c.query('INSERT INTO inventory_stock_v3(product_id,branch_id,quantity_on_hand) VALUES($1,$2,0) ON CONFLICT(product_id,branch_id) DO NOTHING',[productId,branchId]);const locked=await c.query('SELECT quantity_on_hand FROM inventory_stock_v3 WHERE product_id=$1 AND branch_id=$2 FOR UPDATE',[productId,branchId]);const before=n(locked.rows[0].quantity_on_hand,'quantity_on_hand'),after=before+delta;if(after<0)throw new Error(`Insufficient stock: ${before} available`);await c.query('UPDATE inventory_stock_v3 SET quantity_on_hand=$3,updated_at=now() WHERE product_id=$1 AND branch_id=$2',[productId,branchId,after]);const m=await c.query(`INSERT INTO inventory_movements_v3(product_id,branch_id,movement_type,quantity_before,quantity_change,quantity_after,reference_type,reference_id,reason,user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,[productId,branchId,input.movementType,before,delta,after,input.referenceType||null,input.referenceId==null?null:String(input.referenceId),input.reason||null,input.userId==null?null:n(input.userId,'userId')]);return {productId,branchId,quantityBefore:before,quantityAfter:after,movementId:m.rows[0].id};}
+function mountInventoryV3(app){if(app.__inventoryV3Mounted)return;app.__inventoryV3Mounted=true;
+app.get('/api/v3/inventory/products',async(req,res)=>{try{const branchId=n(req.query.branchId||1,'branchId'),q=s(req.query.q),params=[branchId];let where='p.active=TRUE';if(q){params.push(`%${q}%`);where+=` AND (p.name ILIKE $2 OR p.sku ILIKE $2 OR COALESCE(p.barcode,'') ILIKE $2)`;}const r=await db().query(`SELECT p.*,COALESCE(st.quantity_on_hand,0) quantity_on_hand FROM inventory_products_v3 p LEFT JOIN inventory_stock_v3 st ON st.product_id=p.id AND st.branch_id=$1 WHERE ${where} ORDER BY p.name`,params);res.set('Cache-Control','no-store').json({products:r.rows});}catch(e){res.status(400).json({error:e.message});}});
+app.get('/api/v3/inventory/dashboard',async(req,res)=>{try{const branchId=n(req.query.branchId||1,'branchId');const r=await db().query(`SELECT COUNT(*) FILTER(WHERE p.active)::bigint total_products,COUNT(*) FILTER(WHERE p.active AND COALESCE(st.quantity_on_hand,0)=0)::bigint out_of_stock_items,COUNT(*) FILTER(WHERE p.active AND COALESCE(st.quantity_on_hand,0)>0 AND COALESCE(st.quantity_on_hand,0)<=COALESCE(st.reorder_level,p.reorder_level))::bigint low_stock_items,COALESCE(SUM(CASE WHEN p.active THEN COALESCE(st.quantity_on_hand,0)*p.cost_price ELSE 0 END),0) inventory_cost_value,COALESCE(SUM(CASE WHEN p.active THEN COALESCE(st.quantity_on_hand,0) ELSE 0 END),0) total_units FROM inventory_products_v3 p LEFT JOIN inventory_stock_v3 st ON st.product_id=p.id AND st.branch_id=$1`,[branchId]);res.set('Cache-Control','no-store').json(r.rows[0]);}catch(e){res.status(400).json({error:e.message});}});
+app.post('/api/v3/inventory/products',async(req,res)=>{try{const x=req.body||{},sku=s(x.sku),name=s(x.name);if(!sku||!name)throw new Error('SKU and product name are required');const product=await tx(async c=>{const r=await c.query(`INSERT INTO inventory_products_v3(sku,barcode,name,category,brand,unit,cost_price,selling_price,vat_rate,reorder_level,supplier_id,description) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[sku,s(x.barcode)||null,name,s(x.category)||null,s(x.brand)||null,s(x.unit)||'pcs',n(x.costPrice||0,'costPrice'),n(x.sellingPrice||0,'sellingPrice'),n(x.vatRate||0,'vatRate'),n(x.reorderLevel||0,'reorderLevel'),x.supplierId||null,s(x.description)||null]);if(x.branchId!=null){await changeStock(c,{productId:r.rows[0].id,branchId:x.branchId,quantityChange:n(x.openingStock||0,'openingStock'),movementType:'OPENING_BALANCE',referenceType:'PRODUCT_CREATE',referenceId:r.rows[0].id,reason:'Opening stock'}).catch(e=>{if(n(x.openingStock||0,'openingStock')===0)return;throw e;});}return r.rows[0];});res.status(201).json({product});}catch(e){res.status(e.code==='23505'?409:400).json({error:e.message});}});
+app.post('/api/v3/inventory/receive',async(req,res)=>{try{const x=req.body||{};const r=await tx(c=>changeStock(c,{...x,quantityChange:n(x.quantity,'quantity'),movementType:'PURCHASE_RECEIPT'}));res.status(201).json(r);}catch(e){res.status(400).json({error:e.message});}});
+app.post('/api/v3/inventory/adjust',async(req,res)=>{try{const x=req.body||{};const delta=n(x.quantityChange,'quantityChange',true);const r=await tx(c=>changeStock(c,{...x,quantityChange:delta,movementType:delta>0?'ADJUSTMENT_IN':'ADJUSTMENT_OUT'}));res.status(201).json(r);}catch(e){res.status(400).json({error:e.message});}});
+app.get('/api/v3/inventory/movements',async(req,res)=>{try{const productId=n(req.query.productId,'productId'),branchId=n(req.query.branchId,'branchId');const r=await db().query('SELECT * FROM inventory_movements_v3 WHERE product_id=$1 AND branch_id=$2 ORDER BY created_at DESC,id DESC LIMIT 500',[productId,branchId]);res.json({movements:r.rows});}catch(e){res.status(400).json({error:e.message});}});
 }
-function text(v) { return String(v ?? '').trim(); }
-function number(v, label, allowNegative = false) {
-  const n = Number(v);
-  if (!Number.isFinite(n) || (!allowNegative && n < 0)) throw new Error(`Invalid ${label}`);
-  return n;
-}
-async function withTransaction(work) {
-  const client = await db().connect();
-  try { await client.query('BEGIN'); const result = await work(client); await client.query('COMMIT'); return result; }
-  catch (error) { await client.query('ROLLBACK'); throw error; }
-  finally { client.release(); }
-}
-function productPayload(b) {
-  return [text(b.sku),text(b.barcode)||null,text(b.name),text(b.category)||null,text(b.brand)||null,text(b.unit)||'pcs',number(b.costPrice??0,'cost price'),number(b.sellingPrice??0,'selling price'),number(b.vatRate??0,'VAT rate'),number(b.reorderLevel??0,'reorder level'),text(b.supplier)||null,text(b.description)||null,Boolean(b.posEnabled)];
-}
-function mountInventoryV3(app) {
-  if (app.__inventoryV3Mounted) return;
-  app.__inventoryV3Mounted = true;
-
-  app.get('/api/v3/inventory/products',async(req,res)=>{try{
-    const q=text(req.query.q);
-    const requestedBranchId=Number(req.query.branchId);
-    const params=[];
-    const branchExpression=Number.isInteger(requestedBranchId)&&requestedBranchId>0
-      ? (params.push(requestedBranchId),'$1')
-      : "(SELECT id FROM branches WHERE is_active=TRUE AND (code='MAIN' OR lower(trim(name))='main branch') ORDER BY CASE WHEN code='MAIN' THEN 0 ELSE 1 END,id LIMIT 1)";
-    let where='p.is_active=TRUE AND COALESCE(p.pos_enabled,TRUE)=TRUE';
-    if(q){params.push(`%${q}%`);where+=` AND (p.name ILIKE $${params.length} OR p.sku ILIKE $${params.length} OR COALESCE(p.barcode,'') ILIKE $${params.length})`;}
-    const result=await db().query(`SELECT p.id,p.sku,p.barcode,p.name,p.category,p.brand,p.unit,p.cost_price,p.selling_price,p.vat_rate,p.reorder_level,p.is_active,p.pos_enabled,COALESCE(s.quantity_on_hand,0) AS quantity_on_hand FROM inventory_products_v2 p LEFT JOIN inventory_stock_v2 s ON s.product_id=p.id AND s.branch_id=${branchExpression} WHERE ${where} ORDER BY p.name ASC`,params);
-    res.set('Cache-Control','no-store').json({products:result.rows});
-  }catch(error){console.error('[inventory-v3] list failed',error);res.status(500).json({error:'Unable to load inventory.'});}});
-
-  app.get('/api/v3/inventory/dashboard',async(_req,res)=>{try{
-    // Aggregate stock per product first, then compute counts from the per-product totals to avoid double-counting across branches
-    const result = await db().query(`
-      SELECT
-        COUNT(*)::BIGINT AS total_products,
-        COALESCE(SUM(sq.total_units),0) AS total_units,
-        COUNT(*) FILTER(WHERE COALESCE(sq.total_units,0)=0)::BIGINT AS out_of_stock_items,
-        COUNT(*) FILTER(WHERE COALESCE(sq.total_units,0)>0 AND COALESCE(sq.total_units,0)<=p.reorder_level)::BIGINT AS low_stock_items,
-        COALESCE(SUM(sq.total_units*p.cost_price),0) AS inventory_cost_value,
-        GREATEST(COALESCE(MAX(p.updated_at),TIMESTAMPTZ 'epoch'),COALESCE(MAX(sq.updated_at),TIMESTAMPTZ 'epoch')) AS last_updated
-      FROM inventory_products_v2 p
-      LEFT JOIN (
-        SELECT product_id, SUM(quantity_on_hand) AS total_units, MAX(updated_at) AS updated_at
-        FROM inventory_stock_v2
-        GROUP BY product_id
-      ) sq ON sq.product_id = p.id
-      WHERE p.is_active=TRUE
-    `);
-    res.set('Cache-Control','no-store').json(result.rows[0]);
-  }catch(error){console.error('[inventory-v3] dashboard failed',error);res.status(500).json({error:'Unable to load live inventory dashboard data.'});}});
-
-  app.post('/api/v3/inventory/products',async(req,res)=>{const b=req.body||{},values=productPayload(b);if(!values[2])return res.status(400).json({error:'Product name is required.'});try{const product=await withTransaction(async client=>{const identifiers=await allocateProductIdentifiers(client,{sku:values[0],barcode:values[1],category:values[3]});values[0]=identifiers.sku;values[1]=identifiers.barcode;const result=await client.query(`INSERT INTO inventory_products_v2(sku,barcode,name,category,brand,unit,cost_price,selling_price,vat_rate,reorder_level,supplier,description,pos_enabled) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,values);await client.query(`INSERT INTO inventory_stock_v2(product_id,branch_id,quantity_on_hand) SELECT $1,id,0 FROM branches WHERE is_active=TRUE ON CONFLICT(product_id,branch_id) DO NOTHING`,[result.rows[0].id]);return result.rows[0];});res.status(201).json({product});}catch(error){if(error.code==='23505')return res.status(409).json({error:'SKU or barcode already exists.'});res.status(400).json({error:error.message});}});
-
-  // Editing is intentionally separate from creation. An existing SKU/barcode may
-  // remain on the same product; uniqueness is only checked against OTHER rows.
-  app.patch('/api/v3/inventory/products/:id',async(req,res)=>{
-    const id=Number(req.params.id);
-    if(!Number.isInteger(id)||id<=0)return res.status(400).json({error:'Invalid product ID.'});
-    const b=req.body||{};
-    try {
-      const product=await withTransaction(async client=>{
-        const currentResult=await client.query(`SELECT * FROM inventory_products_v2 WHERE id=$1 AND is_active=TRUE FOR UPDATE`,[id]);
-        if(!currentResult.rowCount){const e=new Error('Product not found.');e.status=404;throw e;}
-        const current=currentResult.rows[0];
-
-        // Preserve identifiers unless the edit explicitly supplies a different,
-        // non-blank value. This prevents an unchanged identifier being treated as
-        // a duplicate of the product currently being edited.
-        const requestedSku=b.sku===undefined||!text(b.sku) ? current.sku : text(b.sku);
-        const requestedBarcode=b.barcode===undefined ? current.barcode : (text(b.barcode)||null);
-
-        const duplicate=await client.query(`SELECT id,sku,barcode FROM inventory_products_v2 WHERE id<>$1 AND ((sku=$2) OR ($3::text IS NOT NULL AND barcode=$3)) LIMIT 1`,[id,requestedSku,requestedBarcode]);
-        if(duplicate.rowCount){const e=new Error('SKU or barcode already exists on another product.');e.status=409;e.code='DUPLICATE_IDENTIFIER';throw e;}
-
-        const values=[],fields=[];
-        const add=(f,v)=>{values.push(v);fields.push(`${f}=$${values.length}`);};
-        if(requestedSku!==current.sku)add('sku',requestedSku);
-        if(requestedBarcode!==current.barcode)add('barcode',requestedBarcode);
-        if(b.name!==undefined)add('name',text(b.name));
-        if(b.category!==undefined)add('category',text(b.category)||null);
-        if(b.brand!==undefined)add('brand',text(b.brand)||null);
-        if(b.unit!==undefined)add('unit',text(b.unit)||'pcs');
-        if(b.costPrice!==undefined)add('cost_price',number(b.costPrice,'cost price'));
-        if(b.sellingPrice!==undefined)add('selling_price',number(b.sellingPrice,'selling price'));
-        if(b.vatRate!==undefined)add('vat_rate',number(b.vatRate,'VAT rate'));
-        if(b.reorderLevel!==undefined)add('reorder_level',number(b.reorderLevel,'reorder level'));
-        if(b.supplier!==undefined)add('supplier',text(b.supplier)||null);
-        if(b.description!==undefined)add('description',text(b.description)||null);
-        if(b.posEnabled!==undefined)add('pos_enabled',Boolean(b.posEnabled));
-        if(!fields.length)return current;
-        values.push(id);
-        const result=await client.query(`UPDATE inventory_products_v2 SET ${fields.join(',')},updated_at=NOW() WHERE id=$${values.length} RETURNING *`,values);
-        return result.rows[0];
-      });
-      res.set('Cache-Control','no-store').json({product});
-    } catch(error) {
-      if(error.status===404)return res.status(404).json({error:error.message});
-      if(error.status===409||error.code==='23505'||error.code==='DUPLICATE_IDENTIFIER')return res.status(409).json({error:error.message==='SKU or barcode already exists on another product.'?error.message:'SKU or barcode already exists.'});
-      console.error('[inventory-v3] update failed',error);
-      res.status(400).json({error:error.message});
-    }
-  });
-
-  app.delete('/api/v3/inventory/products/:id',async(req,res)=>{const id=Number(req.params.id);if(!Number.isInteger(id))return res.status(400).json({error:'Invalid product ID.'});try{await withTra
+module.exports={mountInventoryV3,changeStock,TYPES};
