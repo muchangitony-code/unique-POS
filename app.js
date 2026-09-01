@@ -35,7 +35,7 @@ async function start() {
     console.log("[startup] PDF fonts: PDFKit built-in Helvetica / Helvetica-Bold");
     validateStartupEnv();
     console.log("[startup] Legacy inventory recovery and repair hooks: disabled");
-    loadIndex();
+    await loadIndex();
   } catch (err) { console.error("[startup] Startup failed", err); process.exit(1); }
 }
 start();
