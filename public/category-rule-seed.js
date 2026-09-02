@@ -23,43 +23,92 @@
     { rule_name: 'Electrical Accessories', category_name: 'Accessories', keywords: ['cable lug','lug','busbar','bus bar','battery monitor','din rail','earthing','earth rod','earth clamp','terminal block','cable gland','connector','junction box','electrical accessory'], priority: 190 }
   ];
 
+  function token() { return localStorage.getItem('uniquepos.token'); }
+
   async function request(url, options) {
-    const token = localStorage.getItem('uniquepos.token');
-    if (!token) throw new Error('No active POS session');
+    const auth = token();
+    if (!auth) throw new Error('No active POS session');
     const opts = Object.assign({}, options || {});
-    opts.headers = Object.assign({}, opts.headers || {}, { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' });
+    opts.headers = Object.assign({}, opts.headers || {}, { Authorization: 'Bearer ' + auth, 'Content-Type': 'application/json' });
     const res = await fetch(url, opts);
     if (!res.ok) throw new Error('Request failed: ' + res.status);
     const text = await res.text();
     return text ? JSON.parse(text) : null;
   }
 
-  async function seedRules() {
-    if (!localStorage.getItem('uniquepos.token')) return false;
-    const existingResponse = await request('/api/settings/product-categorization-rules');
-    const existing = Array.isArray(existingResponse) ? existingResponse : (existingResponse && (existingResponse.data || existingResponse.rules)) || [];
-    const names = new Set(existing.map(function (rule) { return String(rule.rule_name || '').trim().toLowerCase(); }));
+  function asArray(response) {
+    return Array.isArray(response) ? response : (response && (response.data || response.categories || response.rules || response.items)) || [];
+  }
+
+  function categoryName(category) {
+    return String(category && (category.name || category.category_name || category.title || category.label) || '').trim();
+  }
+
+  function makeKeywords(name) {
+    const lower = String(name).trim().toLowerCase();
+    const words = lower.split(/[>\\/,&|]+|\s+/).map(function (x) { return x.trim(); }).filter(function (x) { return x.length > 1; });
+    return Array.from(new Set([lower].concat(words)));
+  }
+
+  async function syncRules() {
+    if (!token()) return;
+    const rulesResponse = await request('/api/settings/product-categorization-rules');
+    const existing = asArray(rulesResponse);
+    const existingNames = new Set(existing.map(function (r) { return String(r.rule_name || '').trim().toLowerCase(); }));
+    const existingCategories = new Set(existing.map(function (r) { return String(r.category_name || '').trim().toLowerCase(); }));
+    let nextPriority = existing.reduce(function (max, r) { return Math.max(max, Number(r.priority) || 0); }, 0);
     let created = 0;
+
     for (const rule of RULES) {
-      if (names.has(rule.rule_name.toLowerCase())) continue;
+      const key = rule.rule_name.toLowerCase();
+      if (existingNames.has(key) || existingCategories.has(rule.category_name.toLowerCase())) continue;
+      await request('/api/settings/product-categorization-rules', { method: 'POST', body: JSON.stringify(Object.assign({}, rule, { is_enabled: true })) });
+      existingNames.add(key);
+      existingCategories.add(rule.category_name.toLowerCase());
+      nextPriority = Math.max(nextPriority, rule.priority);
+      created += 1;
+    }
+
+    // Every category currently in the POS gets a rule if one does not already exist.
+    // This also covers categories added later without requiring another code change.
+    let categories = [];
+    try { categories = asArray(await request('/api/categories')); } catch (_) { categories = []; }
+    for (const category of categories) {
+      const name = categoryName(category);
+      const key = name.toLowerCase();
+      if (!name || existingCategories.has(key)) continue;
+      nextPriority += 10;
       await request('/api/settings/product-categorization-rules', {
         method: 'POST',
-        body: JSON.stringify({ rule_name: rule.rule_name, category_name: rule.category_name, keywords: rule.keywords, priority: rule.priority, is_enabled: true })
+        body: JSON.stringify({
+          rule_name: 'Auto: ' + name,
+          category_name: name,
+          keywords: makeKeywords(name),
+          priority: nextPriority,
+          is_enabled: true
+        })
       });
+      existingCategories.add(key);
+      existingNames.add(('Auto: ' + name).toLowerCase());
       created += 1;
     }
     if (created) window.dispatchEvent(new CustomEvent('uniquepos:category-rules-seeded', { detail: { created: created } }));
-    return true;
+  }
+
+  let busy = false;
+  async function run() {
+    if (busy || !token()) return;
+    busy = true;
+    try { await syncRules(); } catch (_) {} finally { busy = false; }
   }
 
   let attempts = 0;
-  const timer = window.setInterval(function () {
+  const startup = window.setInterval(function () {
     attempts += 1;
-    if (!localStorage.getItem('uniquepos.token')) {
-      if (attempts >= 120) window.clearInterval(timer);
-      return;
-    }
-    window.clearInterval(timer);
-    seedRules().catch(function () {});
+    if (!token()) { if (attempts >= 120) window.clearInterval(startup); return; }
+    window.clearInterval(startup);
+    run();
+    // Detect categories added during the active session and create their rules automatically.
+    window.setInterval(run, 5000);
   }, 500);
 })();
