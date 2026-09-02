@@ -1,10 +1,8 @@
 (function () {
   "use strict";
 
-  // Runs after the Counter compatibility layer and before app.js initializes.
-  // It guarantees that every same-origin API request made by the POS carries
-  // the current login token and selected branch scope. This is intentionally
-  // small: it does not own POS state or sales logic.
+  // Compatibility bridge: every same-origin API request carries the active token
+  // and selected branch scope.
   var previousFetch = window.fetch.bind(window);
   var TOKEN_KEY = "uniquepos.token";
 
@@ -34,4 +32,36 @@
     options.headers = headersFor(input, init);
     return previousFetch(input, options);
   };
+
+  // Repair a historical markup/runtime mismatch: app.js requires #password but
+  // some deployed index.html versions omitted the field. Insert it before the
+  // application initializes so authentication receives both credentials.
+  function repairLoginMarkup() {
+    var form = document.getElementById("loginForm");
+    if (!form || document.getElementById("password")) return;
+    var submit = document.getElementById("submitBtn");
+    var label = document.createElement("label");
+    var caption = document.createElement("span");
+    var input = document.createElement("input");
+    caption.textContent = "Password";
+    input.id = "password";
+    input.name = "password";
+    input.type = "password";
+    input.autocomplete = "current-password";
+    input.required = true;
+    label.appendChild(caption);
+    label.appendChild(input);
+    form.insertBefore(label, submit || null);
+
+    // Prevent the login viewport from inheriting a stale horizontal scroll
+    // position or allowing oversized content to clip the hero.
+    document.documentElement.style.overflowX = "hidden";
+    document.body.style.overflowX = "hidden";
+    window.scrollTo(0, 0);
+  }
+
+  repairLoginMarkup();
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", repairLoginMarkup, { once: true });
+  }
 })();
