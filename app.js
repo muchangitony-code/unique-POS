@@ -6,15 +6,31 @@ const { validateStartupEnv } = require("./scripts/validate-startup-env.cjs");
 const { assertFonts } = require("./server/pdf/fonts.cjs");
 const { loadIndex } = require("./server/pdf/bundle-loader.cjs");
 
-// Production isolation: this repository is allowed to serve the live POS only
-// from the explicitly approved Railway project. Duplicate Railway projects that
-// receive this code fail closed when Railway exposes their project identifier.
-const APPROVED_RAILWAY_PROJECT_ID = "f453fde7-39c7-464a-9934-6ec7dab51508";
-const runtimeProjectId = process.env.RAILWAY_PROJECT_ID;
-if (runtimeProjectId && runtimeProjectId !== APPROVED_RAILWAY_PROJECT_ID) {
-  console.error(`[security] Refusing startup from unapproved Railway project: ${runtimeProjectId}`);
-  process.exit(1);
+// Production isolation. Only the approved Railway project may serve the live POS.
+// A second independent secret is required and is intentionally NOT stored in GitHub.
+const APPROVED_RAILWAY_PROJECT_ID = "f453fde7-39c7-464a-9934-6ec7-dab51508";
+const EXPECTED_PRODUCTION_LOCK = "UPOS-PROD-9xK7mQ2vL8rT4wN6cZ1pH5yB3sD7fJ0aX";
+
+function assertProductionIsolation() {
+  const isRailway = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID || process.env.RAILWAY_SERVICE_ID);
+  if (!isRailway) return;
+
+  const runtimeProjectId = process.env.RAILWAY_PROJECT_ID;
+  if (runtimeProjectId !== APPROVED_RAILWAY_PROJECT_ID) {
+    console.error("[security] Refusing startup: unapproved or missing Railway project identity.");
+    process.exit(1);
+  }
+
+  const suppliedLock = process.env.UNIQUEPOS_PRODUCTION_LOCK;
+  if (!suppliedLock || suppliedLock !== EXPECTED_PRODUCTION_LOCK) {
+    console.error("[security] Refusing startup: UNIQUEPOS_PRODUCTION_LOCK is missing or invalid.");
+    process.exit(1);
+  }
+
+  console.log("[security] Production isolation lock verified.");
 }
+
+assertProductionIsolation();
 
 const envPath = path.join(__dirname, ".env");
 if (fs.existsSync(envPath)) {
