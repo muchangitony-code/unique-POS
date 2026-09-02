@@ -5,7 +5,16 @@ const path = require("node:path");
 const { validateStartupEnv } = require("./scripts/validate-startup-env.cjs");
 const { assertFonts } = require("./server/pdf/fonts.cjs");
 const { loadIndex } = require("./server/pdf/bundle-loader.cjs");
-const { runProductionCleanSlate } = require("./scripts/production-clean-slate.cjs");
+
+// Production isolation: this repository is allowed to serve the live POS only
+// from the explicitly approved Railway project. Duplicate Railway projects that
+// receive this code fail closed when Railway exposes their project identifier.
+const APPROVED_RAILWAY_PROJECT_ID = "f453fde7-39c7-464a-9934-6ec7dab51508";
+const runtimeProjectId = process.env.RAILWAY_PROJECT_ID;
+if (runtimeProjectId && runtimeProjectId !== APPROVED_RAILWAY_PROJECT_ID) {
+  console.error(`[security] Refusing startup from unapproved Railway project: ${runtimeProjectId}`);
+  process.exit(1);
+}
 
 const envPath = path.join(__dirname, ".env");
 if (fs.existsSync(envPath)) {
@@ -36,8 +45,7 @@ async function start() {
     console.log("[startup] PDF fonts: PDFKit built-in Helvetica / Helvetica-Bold");
     validateStartupEnv();
     console.log("[startup] Legacy inventory recovery and repair hooks: disabled");
-    const cleanSlate = await runProductionCleanSlate();
-    console.log(cleanSlate.applied ? `[startup] FULL POS CLEAN SLATE APPLIED to ${cleanSlate.tables.length} data tables` : "[startup] Full POS clean slate already completed");
+    console.log("[security] Production clean-slate routine is permanently disabled and is not executed at startup");
     await loadIndex();
   } catch (err) { console.error("[startup] Startup failed", err); process.exit(1); }
 }
