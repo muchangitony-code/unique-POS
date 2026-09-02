@@ -26,16 +26,16 @@
   async function request(url, options) {
     const token = localStorage.getItem('uniquepos.token');
     if (!token) throw new Error('No active POS session');
-    const res = await fetch(url, Object.assign({
-      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }
-    }, options || {}));
+    const opts = Object.assign({}, options || {});
+    opts.headers = Object.assign({}, opts.headers || {}, { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' });
+    const res = await fetch(url, opts);
     if (!res.ok) throw new Error('Request failed: ' + res.status);
     const text = await res.text();
     return text ? JSON.parse(text) : null;
   }
 
   async function seedRules() {
-    if (!localStorage.getItem('uniquepos.token')) return;
+    if (!localStorage.getItem('uniquepos.token')) return false;
     const existingResponse = await request('/api/settings/product-categorization-rules');
     const existing = Array.isArray(existingResponse) ? existingResponse : (existingResponse && (existingResponse.data || existingResponse.rules)) || [];
     const names = new Set(existing.map(function (rule) { return String(rule.rule_name || '').trim().toLowerCase(); }));
@@ -44,33 +44,22 @@
       if (names.has(rule.rule_name.toLowerCase())) continue;
       await request('/api/settings/product-categorization-rules', {
         method: 'POST',
-        body: JSON.stringify({
-          rule_name: rule.rule_name,
-          category_name: rule.category_name,
-          keywords: rule.keywords,
-          priority: rule.priority,
-          is_enabled: true
-        })
+        body: JSON.stringify({ rule_name: rule.rule_name, category_name: rule.category_name, keywords: rule.keywords, priority: rule.priority, is_enabled: true })
       });
       created += 1;
     }
-    if (created) {
-      window.dispatchEvent(new CustomEvent('uniquepos:category-rules-seeded', { detail: { created: created } }));
+    if (created) window.dispatchEvent(new CustomEvent('uniquepos:category-rules-seeded', { detail: { created: created } }));
+    return true;
+  }
+
+  let attempts = 0;
+  const timer = window.setInterval(function () {
+    attempts += 1;
+    if (!localStorage.getItem('uniquepos.token')) {
+      if (attempts >= 120) window.clearInterval(timer);
+      return;
     }
-  }
-
-  function start() {
-    const attempt = function () { seedRules().catch(function () {}); };
-    if (localStorage.getItem('uniquepos.token')) attempt();
-    window.addEventListener('storage', function (event) {
-      if (event.key === 'uniquepos.token' && event.newValue) attempt();
-    });
-    const originalSetItem = localStorage.setItem.bind(localStorage);
-    localStorage.setItem = function (key, value) {
-      originalSetItem(key, value);
-      if (key === 'uniquepos.token' && value) window.setTimeout(attempt, 100);
-    };
-  }
-
-  start();
+    window.clearInterval(timer);
+    seedRules().catch(function () {});
+  }, 500);
 })();
