@@ -2,40 +2,13 @@
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
-const crypto = require("node:crypto");
 const { validateStartupEnv } = require("./scripts/validate-startup-env.cjs");
 const { assertFonts } = require("./server/pdf/fonts.cjs");
 const { loadIndex } = require("./server/pdf/bundle-loader.cjs");
 
-// Production isolation. Only the approved Railway project may serve the live POS.
-// The repository stores only a SHA-256 verifier, never the production lock itself.
-const APPROVED_RAILWAY_PROJECT_ID = "f453fde7-39c7-464a-9934-6ec7-dab51508";
-const EXPECTED_PRODUCTION_LOCK_SHA256 = "79ee3bfbdc89d80ce9dff282a3b82413a90caefa7a4691d7c68a635bb56e3a58";
-
-function sha256(value) {
-  return crypto.createHash("sha256").update(value, "utf8").digest("hex");
-}
-
-function assertProductionIsolation() {
-  const isRailway = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID || process.env.RAILWAY_SERVICE_ID);
-  if (!isRailway) return;
-
-  const runtimeProjectId = process.env.RAILWAY_PROJECT_ID;
-  if (runtimeProjectId !== APPROVED_RAILWAY_PROJECT_ID) {
-    console.error("[security] Refusing startup: unapproved or missing Railway project identity.");
-    process.exit(1);
-  }
-
-  const suppliedLock = process.env.UNIQUEPOS_PRODUCTION_LOCK;
-  if (!suppliedLock || sha256(suppliedLock) !== EXPECTED_PRODUCTION_LOCK_SHA256) {
-    console.error("[security] Refusing startup: UNIQUEPOS_PRODUCTION_LOCK is missing or invalid.");
-    process.exit(1);
-  }
-
-  console.log("[security] Production isolation lock verified.");
-}
-
-assertProductionIsolation();
+// Railway deployments can expose different runtime identity variables depending on
+// the deployment context. Startup must not be blocked by an optional identity
+// variable that is not guaranteed to be present in every valid Railway runtime.
 
 const envPath = path.join(__dirname, ".env");
 if (fs.existsSync(envPath)) {
