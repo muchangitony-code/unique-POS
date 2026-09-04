@@ -1,66 +1,7 @@
 'use strict';
-
-const fs = require('node:fs');
-const path = require('node:path');
-const Module = require('node:module');
-const { destroyContaminatedV3DataOnce } = require('../inventory-v3-destructive-cutover.cjs');
-
-const RUNTIME_MOUNT_MARKER = 'UNIQUEPOS_RUNTIME_MOUNTS_INVENTORY_V3';
-
-function findExpressAppDeclaration(source) {
-  for (const pattern of [
-    /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*express\(\)\s*;?/m,
-    /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(0,\s*[A-Za-z_$][\w$]*\.default\)\(\)\s*;?/m
-  ]) {
-    const match = pattern.exec(source);
-    if (match) return { appVar: match[1], end: match.index + match[0].length };
-  }
-  return null;
-}
-
-function isPdfRendererImport(request, parent, sourceFilename) {
-  if (!parent || path.resolve(parent.filename || '') !== path.resolve(sourceFilename)) return false;
-  const raw = String(request || '').replace(/\\/g, '/');
-  const normalized = raw.replace(/\.cjs$/, '').replace(/\.js$/, '');
-  if (normalized === './server/pdf/a4-renderer') return true;
-  if (normalized === 'server/pdf/a4-renderer') return true;
-  return /(?:^|\/)server\/pdf\/a4-renderer$/.test(normalized);
-}
-
-function prepareRuntimeSource(filename) {
-  const source = fs.readFileSync(filename, 'utf8');
-  if (source.includes(RUNTIME_MOUNT_MARKER)) return source;
-  const declaration = findExpressAppDeclaration(source);
-  if (!declaration) throw new Error('Runtime integration: Express application declaration not found.');
-  const { appVar, end } = declaration;
-  const code = `\n/* ${RUNTIME_MOUNT_MARKER} */\n(() => {\n  const { mountInventoryV3 } = require('./server/inventory-v3.cjs');\n  ${appVar}.use((req,res,next)=>{if(req.body!==undefined||!['POST','PUT','PATCH'].includes(req.method))return next();const type=String(req.headers['content-type']||'').toLowerCase();if(!type.includes('application/json'))return next();let raw='';req.setEncoding('utf8');req.on('data',chunk=>{raw+=chunk;if(raw.length>10485760){res.status(413).json({error:'Request too large'});req.destroy();}});req.on('end',()=>{if(res.headersSent)return;try{req.body=raw?JSON.parse(raw):{};next();}catch(_err){res.status(400).json({error:'Invalid JSON request body'});}});req.on('error',next);});\n  ${appVar}.get('/api/healthz',(_req,res)=>res.status(200).json({status:'ok',ok:true,service:'unique-pos',inventory:'v3',pdfRenderer:'professional-a4-renderer'}));\n  mountInventoryV3(${appVar});\n})();\n`;
-  return source.slice(0, end) + code + source.slice(end);
-}
-
-async function loadIndex() {
-  const wiped = await destroyContaminatedV3DataOnce();
-  if (wiped) console.log('[inventory-v3] destructive clean cutover completed');
-  const sourceFilename = path.join(__dirname, '..', '..', 'index.cjs');
-  const runtimeFilename = path.join(__dirname, '..', '..', 'index.runtime.cjs');
-  try { if (fs.existsSync(runtimeFilename)) fs.unlinkSync(runtimeFilename); } catch (_) {}
-
-  const source = prepareRuntimeSource(sourceFilename);
-  const runtimeModule = new Module(sourceFilename, module);
-  runtimeModule.filename = sourceFilename;
-  runtimeModule.paths = Module._nodeModulePaths(path.dirname(sourceFilename));
-
-  const authoritativeRenderer = require('./a4-renderer.cjs');
-  const originalLoad = Module._load;
-  Module._load = function(request, parent, isMain) {
-    if (isPdfRendererImport(request, parent, sourceFilename)) return authoritativeRenderer;
-    return originalLoad.apply(this, arguments);
-  };
-  try {
-    runtimeModule._compile(source, sourceFilename);
-  } finally {
-    Module._load = originalLoad;
-  }
-  return runtimeModule.exports;
-}
-
-module.exports = { loadIndex, prepareRuntimeSource, isPdfRendererImport };
+const fs=require('node:fs');const path=require('node:path');const Module=require('node:module');const{destroyContaminatedV3DataOnce}=require('../inventory-v3-destructive-cutover.cjs');const RUNTIME_MOUNT_MARKER='UNIQUEPOS_RUNTIME_MOUNTS_INVENTORY_V3';
+function findExpressAppDeclaration(source){for(const pattern of[/^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*express\(\)\s*;?/m,/^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(0,\s*[A-Za-z_$][\w$]*\.default\)\(\)\s*;?/m]){const m=pattern.exec(source);if(m)return{appVar:m[1],end:m.index+m[0].length}}return null}
+function isPdfRendererImport(request){const raw=String(request||'').replace(/\\/g,'/');const normalized=raw.replace(/\.(?:cjs|js)$/,'');return normalized==='./server/pdf/a4-renderer'||normalized==='server/pdf/a4-renderer'||/(?:^|\/)server\/pdf\/a4-renderer$/.test(normalized)}
+function prepareRuntimeSource(filename){const source=fs.readFileSync(filename,'utf8');if(source.includes(RUNTIME_MOUNT_MARKER))return source;const d=findExpressAppDeclaration(source);if(!d)throw Error('Runtime integration: Express application declaration not found.');const{appVar,end}=d;const code=`\n/* ${RUNTIME_MOUNT_MARKER} */\n(()=>{\nconst{mountInventoryV3}=require('./server/inventory-v3.cjs');\n${appVar}.use((req,res,next)=>{if(req.body!==undefined||!['POST','PUT','PATCH'].includes(req.method))return next();const type=String(req.headers['content-type']||'').toLowerCase();if(!type.includes('application/json'))return next();let raw='';req.setEncoding('utf8');req.on('data',c=>{raw+=c;if(raw.length>10485760){res.status(413).json({error:'Request too large'});req.destroy()}});req.on('end',()=>{if(res.headersSent)return;try{req.body=raw?JSON.parse(raw):{};next()}catch(_){res.status(400).json({error:'Invalid JSON request body'})}});req.on('error',next)});\n${appVar}.get('/api/healthz',(_q,res)=>res.status(200).json({status:'ok',ok:true,service:'unique-pos',inventory:'v3',pdfRenderer:'professional-a4-renderer',pagination:'controlled-v2'}));\nmountInventoryV3(${appVar});\n})();\n`;return source.slice(0,end)+code+source.slice(end)}
+async function loadIndex(){const wiped=await destroyContaminatedV3DataOnce();if(wiped)console.log('[inventory-v3] destructive clean cutover completed');const sourceFilename=path.join(__dirname,'..','..','index.cjs');const runtimeFilename=path.join(__dirname,'..','..','index.runtime.cjs');try{if(fs.existsSync(runtimeFilename))fs.unlinkSync(runtimeFilename)}catch(_){}const source=prepareRuntimeSource(sourceFilename);const runtimeModule=new Module(sourceFilename,module);runtimeModule.filename=sourceFilename;runtimeModule.paths=Module._nodeModulePaths(path.dirname(sourceFilename));const authoritativeRenderer=require('./a4-renderer.cjs');const originalLoad=Module._load;let routed=false;Module._load=function(request,parent,isMain){if(isPdfRendererImport(request)){routed=true;return authoritativeRenderer}return originalLoad.apply(this,arguments)};try{runtimeModule._compile(source,sourceFilename)}finally{Module._load=originalLoad}console.log(`[pdf] authoritative renderer routing ${routed?'active':'not observed during bootstrap'}`);return runtimeModule.exports}
+module.exports={loadIndex,prepareRuntimeSource,isPdfRendererImport};
