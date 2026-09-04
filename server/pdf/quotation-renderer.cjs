@@ -1,172 +1,18 @@
 'use strict';
-
-const PDFDocument = require('pdfkit');
-const BRAND = require('../document-branding.cjs');
-const { adaptDocumentPayload } = require('./document-adapter.cjs');
-const { formatMoney, formatNumber, moneyFromInput, mulCents, taxCents } = require('./format');
-const { registerFonts } = require('./fonts.cjs');
-
-const PAGE = { width: 595.28, height: 841.89, margin: 40, footer: 32 };
-const CONTENT_BOTTOM = PAGE.height - PAGE.margin - PAGE.footer;
-
-function money(value, currency) { return formatMoney(value || 0, currency || 'KES'); }
-function lineTotal(item) {
-  const gross = mulCents(moneyFromInput(item.unitPrice), item.qty || 0);
-  const discount = moneyFromInput(item.discount || 0);
-  const net = Math.max(0, gross - discount);
-  const tax = taxCents(net, item.taxRate || 0);
-  return { gross, discount, tax, total: net + tax };
-}
-function calculate(items) {
-  return items.reduce((sum, item) => {
-    const row = lineTotal(item);
-    sum.subtotal += row.gross; sum.discount += row.discount; sum.tax += row.tax; sum.total += row.total;
-    return sum;
-  }, { subtotal: 0, discount: 0, tax: 0, total: 0 });
-}
-
-function renderPdfBuffer(payload, paper = 'a4') {
-  const adapted = adaptDocumentPayload(payload, paper);
-  if (adapted.type !== 'quotation') throw new Error('quotation-renderer only supports quotations');
-
-  const doc = adapted.doc || {};
-  const company = adapted.company || {};
-  const currency = doc.currency || 'KES';
-  const items = Array.isArray(doc.items) ? doc.items : [];
-  const totals = calculate(items);
-
-  registerFonts();
-  const pdf = new PDFDocument({ size: 'A4', margin: PAGE.margin, bufferPages: true });
-  const chunks = [];
-  pdf.on('data', chunk => chunks.push(chunk));
-
-  const usableWidth = PAGE.width - PAGE.margin * 2;
-  let y = PAGE.margin;
-
-  function write(value, x, top, width, opts = {}) {
-    pdf.font(opts.bold ? 'Helvetica-Bold' : 'Helvetica')
-      .fontSize(opts.size || 9)
-      .fillColor(opts.color || '#111827')
-      .text(String(value ?? ''), x, top, { width, align: opts.align || 'left', lineGap: opts.lineGap || 1 });
-  }
-  function measure(value, width, opts = {}) {
-    pdf.font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(opts.size || 9);
-    return pdf.heightOfString(String(value ?? ''), { width, lineGap: opts.lineGap || 1 });
-  }
-  function addPage() { pdf.addPage(); y = PAGE.margin; }
-  function ensure(needed) { if (y + needed > CONTENT_BOTTOM) addPage(); }
-  function block(title, body) {
-    if (!body) return;
-    const bodyH = measure(body, usableWidth, { size: 8.2 });
-    const h = 13 + bodyH + 10;
-    ensure(h);
-    write(title, PAGE.margin, y, usableWidth, { bold: true, size: 8, color: '#475569' });
-    y += 13;
-    write(body, PAGE.margin, y, usableWidth, { size: 8.2, color: '#334155' });
-    y += bodyH + 10;
-  }
-
-  function drawHeader() {
-    const right = PAGE.width - PAGE.margin;
-    const leftW = 320;
-    const rightW = 180;
-    const companyLines = [company.address, company.phone, company.email, company.website, company.taxId ? `KRA PIN: ${company.taxId}` : ''].filter(Boolean);
-    let leftY = y;
-    write(company.name || BRAND.legalName || 'Company', PAGE.margin, leftY, leftW, { bold: true, size: 15 });
-    leftY += 22;
-    for (const value of companyLines) { const h = measure(value, leftW, { size: 8.5 }); write(value, PAGE.margin, leftY, leftW, { size: 8.5, color: '#475569' }); leftY += h + 2; }
-    write('QUOTATION', right - rightW, y, rightW, { bold: true, size: 20, align: 'right' });
-    write(`Quote No. ${doc.number || '—'}`, right - rightW, y + 28, rightW, { size: 8.5, align: 'right' });
-    write(`Date: ${doc.date || '—'}`, right - rightW, y + 42, rightW, { size: 8.5, align: 'right' });
-    write(`Valid Until: ${doc.validUntil || '—'}`, right - rightW, y + 56, rightW, { size: 8.5, align: 'right' });
-    y = Math.max(leftY, y + 72) + 10;
-    pdf.strokeColor('#111827').lineWidth(1).moveTo(PAGE.margin, y).lineTo(right, y).stroke();
-    y += 14;
-  }
-
-  const widths = [32, 245, 45, 55, 98, 40];
-  function drawTableHeader() {
-    ensure(26);
-    const labels = ['#', 'Description', 'Qty', 'Unit', 'Unit Price', 'Total'];
-    let x = PAGE.margin;
-    pdf.fillColor('#f1f5f9').rect(x, y, usableWidth, 22).fill();
-    labels.forEach((label, i) => { write(label, x + 3, y + 6, widths[i] - 6, { bold: true, size: 7.5, align: i >= 2 ? 'right' : 'left' }); x += widths[i]; });
-    y += 26;
-  }
-
-  drawHeader();
-  ensure(80);
-  write('BILL TO', PAGE.margin, y, 240, { bold: true, size: 7.5, color: '#64748b' });
-  write('DOCUMENT INFORMATION', 320, y, 235, { bold: true, size: 7.5, color: '#64748b' });
-  y += 14;
-  const customerName = doc.customer?.name || 'Walk-in Customer';
-  const customerLines = [doc.customer?.address, doc.customer?.phone, doc.customer?.email].filter(Boolean);
-  const infoLines = [`Reference: ${doc.orderReference || doc.number || '—'}`, `Payment Terms: ${doc.terms || 'Quotation valid for 30 days from the date of issue.'}`, `Currency: ${currency}`];
-  let customerH = measure(customerName, 240, { bold: true, size: 10.5 }) + 3;
-  customerH += customerLines.reduce((sum, value) => sum + measure(value, 240, { size: 8.5 }) + 2, 0);
-  const infoH = infoLines.reduce((sum, value) => sum + measure(value, 235, { size: 8.5 }) + 3, 0);
-  ensure(Math.max(customerH, infoH) + 14);
-  let cy = y; write(customerName, PAGE.margin, cy, 240, { bold: true, size: 10.5 }); cy += measure(customerName, 240, { bold: true, size: 10.5 }) + 3;
-  for (const value of customerLines) { write(value, PAGE.margin, cy, 240, { size: 8.5, color: '#475569' }); cy += measure(value, 240, { size: 8.5 }) + 2; }
-  let iy = y; for (const value of infoLines) { write(value, 320, iy, 235, { size: 8.5 }); iy += measure(value, 235, { size: 8.5 }) + 3; }
-  y = Math.max(cy, iy) + 14;
-
-  drawTableHeader();
-  for (let i = 0; i < items.length; i += 1) {
-    const item = items[i];
-    const description = [item.description || 'Item', item.sub].filter(Boolean).join('\n');
-    const rowH = Math.max(30, measure(description, widths[1] - 8, { bold: true, size: 8.7 }) + 12);
-    if (y + rowH > CONTENT_BOTTOM) { addPage(); drawTableHeader(); }
-    const values = [String(i + 1), description, formatNumber(item.qty || 0), item.sub || item.unit || 'pcs', money(item.unitPrice, currency), money(lineTotal(item).total, currency)];
-    let x = PAGE.margin;
-    values.forEach((value, col) => { write(value, x + 3, y + 6, widths[col] - 6, { bold: col === 1, size: col === 1 ? 8.7 : 8, align: col >= 2 ? 'right' : 'left', color: col === 1 ? '#111827' : '#334155' }); x += widths[col]; });
-    pdf.strokeColor('#e2e8f0').lineWidth(.5).moveTo(PAGE.margin, y + rowH).lineTo(PAGE.width - PAGE.margin, y + rowH).stroke();
-    y += rowH;
-  }
-
-  const summaryRows = [['Subtotal', money(totals.subtotal, currency)], ...(totals.discount ? [['Discount', money(totals.discount, currency)]] : []), ['VAT', money(totals.tax, currency)], ['GRAND TOTAL', money(totals.total, currency)]];
-  const summaryH = 12 + summaryRows.reduce((sum, row) => sum + (row[0] === 'GRAND TOTAL' ? 24 : 17), 0);
-  ensure(summaryH);
-  y += 12;
-  for (const [label, value] of summaryRows) { const grand = label === 'GRAND TOTAL'; write(label, 345, y, 90, { bold: grand, size: grand ? 10 : 8.5 }); write(value, 435, y, 120, { bold: grand, size: grand ? 10 : 8.5, align: 'right' }); y += grand ? 24 : 17; }
-
-  block('NOTES', doc.notes);
-  block('TERMS & CONDITIONS', doc.terms);
-  block('WARRANTY', doc.warranty || 'All products are covered by the manufacturer’s warranty where applicable.');
-  block('RETURN POLICY', doc.returnPolicy || 'Returns are subject to the company’s applicable return policy and product condition.');
-
-  const signatureH = 64;
-  ensure(signatureH);
-  const sigW = (usableWidth - 24) / 3;
-  ['Prepared By', 'Customer Acceptance', 'Approved By'].forEach((label, i) => {
-    const x = PAGE.margin + i * (sigW + 12);
-    write(label, x, y, sigW, { bold: true, size: 8 });
-    pdf.strokeColor('#94a3b8').lineWidth(.6).moveTo(x, y + 42).lineTo(x + sigW, y + 42).stroke();
-    write('Signature / Date', x, y + 46, sigW, { size: 7.2, color: '#64748b' });
-  });
-  y += signatureH;
-
-  const payment = doc.paymentDetails || {};
-  const paymentLines = [
-    payment.paybill ? `M-PESA Paybill: ${payment.paybill}` : '',
-    payment.till ? `M-PESA Till: ${payment.till}` : '',
-    payment.account ? `Account No.: ${payment.account}` : '',
-    payment.bank ? `Bank: ${payment.bank}` : ''
-  ].filter(Boolean);
-  if (paymentLines.length) {
-    const paymentH = 14 + paymentLines.reduce((sum, value) => sum + measure(value, usableWidth, { size: 8.2 }) + 2, 0);
-    ensure(paymentH);
-    write('HOW TO PAY', PAGE.margin, y, usableWidth, { bold: true, size: 8, color: '#475569' }); y += 14;
-    for (const value of paymentLines) { write(value, PAGE.margin, y, usableWidth, { size: 8.2 }); y += measure(value, usableWidth, { size: 8.2 }) + 2; }
-  }
-
-  const range = pdf.bufferedPageRange();
-  for (let i = 0; i < range.count; i += 1) {
-    pdf.switchToPage(i);
-    write(`Page ${i + 1} of ${range.count}`, PAGE.margin, PAGE.height - 24, usableWidth, { size: 7, color: '#64748b', align: 'center' });
-  }
-  pdf.end();
-  return new Promise((resolve, reject) => { pdf.on('end', () => resolve(Buffer.concat(chunks))); pdf.on('error', reject); });
-}
-
-module.exports = { renderPdfBuffer };
+const PDFDocument=require('pdfkit');
+const {adaptDocumentPayload}=require('./document-adapter.cjs');
+const {formatMoney,formatNumber,moneyFromInput,mulCents,taxCents}=require('./format');
+const {registerFonts}=require('./fonts.cjs');
+const M=40,FOOT=32;
+function total(i){const g=mulCents(moneyFromInput(i.unitPrice),i.qty||0),d=moneyFromInput(i.discount||0),n=Math.max(0,g-d),t=taxCents(n,i.taxRate||0);return{gross:g,discount:d,tax:t,total:n+t};}
+function renderPdfBuffer(payload,paper='a4'){const a=adaptDocumentPayload(payload,paper);if(a.type!=='quotation')throw Error('quotation-renderer only supports quotations');const d=a.doc||{},c=a.company||{},cur=d.currency||'KES',items=Array.isArray(d.items)?d.items:[];const sums=items.reduce((s,i)=>{const r=total(i);s.subtotal+=r.gross;s.discount+=r.discount;s.tax+=r.tax;s.total+=r.total;return s;},{subtotal:0,discount:0,tax:0,total:0});registerFonts();const p=new PDFDocument({size:'A4',margin:M,bufferPages:true}),chunks=[];p.on('data',x=>chunks.push(x));const W=p.page.width,H=p.page.height,CW=W-M*2,B=H-M-FOOT;let y=M;
+const h=(v,w,o={})=>{p.font(o.bold?'Helvetica-Bold':'Helvetica').fontSize(o.size||9);return Math.ceil(p.heightOfString(String(v??''),{width:w,lineGap:o.gap||0}));};const txt=(v,x,yy,w,o={})=>{p.font(o.bold?'Helvetica-Bold':'Helvetica').fontSize(o.size||9).fillColor(o.color||'#111827').text(String(v??''),x,yy,{width:w,align:o.align||'left',lineGap:o.gap||0});};const page=()=>{p.addPage();y=M;};const need=n=>{if(y+n>B)page();};const rule=yy=>p.strokeColor('#cbd5e1').lineWidth(.6).moveTo(M,yy).lineTo(W-M,yy).stroke();
+let leftW=310,rightW=180,rightX=W-M-rightW,lines=[c.address,c.phone,c.email,c.website,c.taxId&&`KRA PIN: ${c.taxId}`].filter(Boolean),name=c.name||'Company';let lh=h(name,leftW,{bold:true,size:15}),companyH=lh+5+lines.reduce((n,v)=>n+h(v,leftW,{size:8.5})+2,0),headerH=Math.max(companyH,72)+16;need(headerH);let sy=y;txt(name,M,sy,leftW,{bold:true,size:15});let yy=sy+lh+5;for(const v of lines){let z=h(v,leftW,{size:8.5});txt(v,M,yy,leftW,{size:8.5,color:'#475569'});yy+=z+2;}txt('QUOTATION',rightX,sy,rightW,{bold:true,size:19,align:'right'});txt(`Quote No: ${d.number||'—'}`,rightX,sy+28,rightW,{size:8.5,align:'right'});txt(`Date: ${d.date||'—'}`,rightX,sy+42,rightW,{size:8.5,align:'right'});txt(`Valid Until: ${d.validUntil||'—'}`,rightX,sy+56,rightW,{size:8.5,align:'right'});y=sy+headerH-6;rule(y);y+=14;
+const cx=M,cw=245,ix=320,iw=CW-(ix-M),labelH=h('BILL TO',cw,{bold:true,size:7.5}),cn=d.customer?.name||'Walk-in Customer',cl=[d.customer?.address,d.customer?.phone,d.customer?.email].filter(Boolean),il=[`Reference: ${d.orderReference||d.number||'—'}`,`Currency: ${cur}`];let ch=labelH+4+h(cn,cw,{bold:true,size:10})+4+cl.reduce((n,v)=>n+h(v,cw,{size:8.5})+2,0),ih=labelH+4+il.reduce((n,v)=>n+h(v,iw,{size:8.5})+3,0);need(Math.max(ch,ih)+14);sy=y;txt('BILL TO',cx,sy,cw,{bold:true,size:7.5,color:'#64748b'});txt('DOCUMENT INFORMATION',ix,sy,iw,{bold:true,size:7.5,color:'#64748b'});yy=sy+labelH+4;txt(cn,cx,yy,cw,{bold:true,size:10});yy+=h(cn,cw,{bold:true,size:10})+4;for(const v of cl){txt(v,cx,yy,cw,{size:8.5,color:'#475569'});yy+=h(v,cw,{size:8.5})+2;}let iy=sy+labelH+4;for(const v of il){txt(v,ix,iy,iw,{size:8.5});iy+=h(v,iw,{size:8.5})+3;}y=Math.max(yy,iy)+14;
+const cols=[28,230,42,52,103,58],labels=['#','Description','Qty','Unit','Unit Price','Total'];const th=()=>{need(24);p.fillColor('#f1f5f9').rect(M,y,CW,22).fill();let x=M;labels.forEach((v,i)=>{txt(v,x+3,y+6,cols[i]-6,{bold:true,size:7.2,align:i>=2?'right':'left'});x+=cols[i];});y+=22;rule(y);};th();items.forEach((it,i)=>{const desc=[it.description||it.name||'Item',it.sub].filter(Boolean).join('\n'),vals=[String(i+1),desc,formatNumber(it.qty||0),it.unit||'pcs',formatMoney(it.unitPrice||0,cur),formatMoney(total(it).total,cur)],hs=vals.map((v,j)=>h(v,cols[j]-6,{bold:j===1,size:j===1?8.3:7.8})),rh=Math.max(30,...hs.map(z=>z+10));if(y+rh>B){page();th();}let x=M;vals.forEach((v,j)=>{txt(v,x+3,y+5,cols[j]-6,{bold:j===1,size:j===1?8.3:7.8,align:j>=2?'right':'left',color:j===1?'#111827':'#334155'});x+=cols[j];});rule(y+rh);y+=rh;});
+let rows=[['Subtotal',formatMoney(sums.subtotal,cur)],...(sums.discount?[['Discount',formatMoney(sums.discount,cur)]]:[]),['VAT',formatMoney(sums.tax,cur)],['GRAND TOTAL',formatMoney(sums.total,cur)]],sumH=rows.reduce((n,r)=>n+(r[0]==='GRAND TOTAL'?26:18),16);need(sumH);y+=8;for(const r of rows){const g=r[0]==='GRAND TOTAL',rh=g?26:18;if(g)p.strokeColor('#111827').lineWidth(.8).moveTo(355,y).lineTo(W-M,y).stroke();txt(r[0],355,y+4,90,{bold:g,size:g?10:8.5});txt(r[1],445,y+4,110,{bold:g,size:g?10:8.5,align:'right'});y+=rh;}y+=8;
+const section=(title,body)=>{if(!body)return;const z=h(title,CW,{bold:true,size:8})+4+h(body,CW,{size:8.5})+10;need(z);txt(title,M,y,CW,{bold:true,size:8,color:'#475569'});y+=h(title,CW,{bold:true,size:8})+4;txt(body,M,y,CW,{size:8.5,color:'#334155'});y+=h(body,CW,{size:8.5})+10;};section('NOTES',d.notes);section('TERMS & CONDITIONS',d.terms);if(d.warranty)section('WARRANTY',d.warranty);if(d.returnPolicy)section('RETURN POLICY',d.returnPolicy);
+const sigH=66;need(sigH);const gap=12,sw=(CW-gap*2)/3;['Prepared By','Customer Acceptance','Approved By'].forEach((v,i)=>{const x=M+i*(sw+gap);txt(v,x,y,sw,{bold:true,size:8});p.strokeColor('#94a3b8').lineWidth(.6).moveTo(x,y+42).lineTo(x+sw,y+42).stroke();txt('Signature / Date',x,y+46,sw,{size:7.2,color:'#64748b'});});y+=sigH;
+const pay=d.paymentDetails||{},pl=[pay.paybill&&`M-PESA Paybill: ${pay.paybill}`,pay.till&&`M-PESA Till: ${pay.till}`,pay.account&&`Account No.: ${pay.account}`,pay.bank&&`Bank: ${pay.bank}`].filter(Boolean);if(pl.length){const ph=h('HOW TO PAY',CW,{bold:true,size:8})+6+pl.reduce((n,v)=>n+h(v,CW,{size:8.3})+2,0)+8;need(ph);txt('HOW TO PAY',M,y,CW,{bold:true,size:8,color:'#475569'});y+=h('HOW TO PAY',CW,{bold:true,size:8})+4;for(const v of pl){txt(v,M,y,CW,{size:8.3});y+=h(v,CW,{size:8.3})+2;}}
+const range=p.bufferedPageRange();for(let i=0;i<range.count;i++){p.switchToPage(i);txt(`Page ${i+1} of ${range.count}`,M,H-24,CW,{size:7,color:'#64748b',align:'center'});}p.end();return new Promise((resolve,reject)=>{p.on('end',()=>resolve(Buffer.concat(chunks)));p.on('error',reject);});}
+module.exports={renderPdfBuffer};
