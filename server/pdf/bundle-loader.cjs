@@ -21,49 +21,25 @@ function findExpressAppDeclaration(source) {
 function prepareRuntimeSource(filename) {
   let source = fs.readFileSync(filename, 'utf8');
   if (source.includes(RUNTIME_MOUNT_MARKER)) return source;
-
   const declaration = findExpressAppDeclaration(source);
   if (!declaration) throw new Error('Runtime integration: Express application declaration not found.');
-
   const { appVar, end } = declaration;
   const code = `\n/* ${RUNTIME_MOUNT_MARKER} */\n(() => {\n  const { mountInventoryV3 } = require('./server/inventory-v3.cjs');\n  ${appVar}.use((req,res,next)=>{if(req.body!==undefined||!['POST','PUT','PATCH'].includes(req.method))return next();const type=String(req.headers['content-type']||'').toLowerCase();if(!type.includes('application/json'))return next();let raw='';req.setEncoding('utf8');req.on('data',chunk=>{raw+=chunk;if(raw.length>10485760){res.status(413).json({error:'Request too large'});req.destroy();}});req.on('end',()=>{if(res.headersSent)return;try{req.body=raw?JSON.parse(raw):{};next();}catch(_err){res.status(400).json({error:'Invalid JSON request body'});}});req.on('error',next);});\n  ${appVar}.get('/api/healthz',(_req,res)=>res.status(200).json({status:'ok',ok:true,service:'unique-pos',inventory:'v3'}));\n  mountInventoryV3(${appVar});\n})();\n`;
   return source.slice(0, end) + code + source.slice(end);
 }
 
-function isPdfRendererImport(request) {
-  const raw = String(request || '').replace(/\\/g, '/').replace(/\.cjs$/, '');
-  return raw === './server/pdf/a4-renderer' || raw.endsWith('/server/pdf/a4-renderer') || raw === 'server/pdf/a4-renderer';
-}
-
 async function loadIndex() {
   const wiped = await destroyContaminatedV3DataOnce();
   if (wiped) console.log('[inventory-v3] destructive clean cutover completed');
-
   const sourceFilename = path.join(__dirname, '..', '..', 'index.cjs');
   const runtimeFilename = path.join(__dirname, '..', '..', 'index.runtime.cjs');
   try { if (fs.existsSync(runtimeFilename)) fs.unlinkSync(runtimeFilename); } catch (_) {}
-
   const source = prepareRuntimeSource(sourceFilename);
   const runtimeModule = new Module(sourceFilename, module);
   runtimeModule.filename = sourceFilename;
   runtimeModule.paths = Module._nodeModulePaths(path.dirname(sourceFilename));
-
-  // Load the facade before installing the hook so its own dependency on the
-  // legacy renderer is resolved normally. Every subsequent bundled import of
-  // a4-renderer is then redirected to the quotation-aware facade.
-  const quotationFacade = require('./quotation-aware-renderer.cjs');
-  const originalLoad = Module._load;
-  Module._load = function(request, parent, isMain) {
-    if (isPdfRendererImport(request)) return quotationFacade;
-    return originalLoad.apply(this, arguments);
-  };
-
-  try {
-    runtimeModule._compile(source, sourceFilename);
-  } finally {
-    Module._load = originalLoad;
-  }
+  runtimeModule._compile(source, sourceFilename);
   return runtimeModule.exports;
 }
 
-module.exports = { loadIndex, prepareRuntimeSource, isPdfRendererImport };
+module.exports = { loadIndex, prepareRuntimeSource };
