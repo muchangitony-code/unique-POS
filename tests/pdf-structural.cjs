@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const BRAND = require('../document-branding.cjs');
+const BRAND = require('../server/document-branding.cjs');
 const out = path.join(process.cwd(), 'out');
 function run(cmd, args) { const r = spawnSync(cmd, args, { encoding: 'utf8' }); if (r.status) throw new Error(`${cmd}: ${r.stderr || r.stdout}`); return r.stdout; }
 const cases = [];
