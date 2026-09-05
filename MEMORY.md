@@ -1,0 +1,21 @@
+- [UniquePOS stack decisions](uniquepos-stack.md) — Node/Express + Drizzle + bcryptjs; JWT via SESSION_SECRET (must be set or server throws).
+- [UniquePOS DB schema & seed](uniquepos-db.md) — All tables created; seed passwords hashed with bcrypt at runtime via api-server node_modules.
+- [UniquePOS API auth pattern](uniquepos-auth.md) — Global `conditionalAuth` in app.ts protects all routes except PUBLIC_PATHS; `setAuthTokenGetter` wired in AuthContext.
+- [UniquePOS double /api prefix fix](uniquepos-api-prefix.md) — Frontend setBaseUrl('/api') + OpenAPI servers.url=/api doubles the prefix; server rewrites /api/api/* → /api/* to compensate.
+- [UniquePOS audit log](uniquepos-audit-log.md) — logAudit(req,event) after each DB mutation; audit_log table created at startup; GET /audit-log admin-only with date/actor/entity filters.
+- [UniquePOS branding](uniquepos-branding.md) — deep blue + solar gold palette; COMPANY constants; printDoc.ts esc() XSS guard; reports uses useEffect CSS injection (not JSX style tag).
+- [UniquePOS backup email alerts](uniquepos-backup-email.md) — nodemailer; SMTP config in business_settings; password via SMTP_PASSWORD env secret; alerts in backups.ts + scheduler.ts.
+- [UniquePOS security alerts](uniquepos-security-alerts.md) — rule engine in security-alerts.ts; hooked into logAudit; admin_notifications table; NotificationBell in TopNav; Settings → Security Alerts tab.
+- [UniquePOS quotations & invoices](uniquepos-documents.md) — shared 5-step wizard; QTN-/INV- per-year seq numbering; totals mirrored server/client; stock commits only on sent invoice + convert; read-modify-write stock race is accepted (matches POS).
+- [UniquePOS mobile app](uniquepos-mobile.md) — Expo artifact at artifacts/mobile-pos; auth via AsyncStorage + JWT; barcode scan via expo-camera CameraView; setBaseUrl + setAuthTokenGetter at module level in _layout.tsx; pos.ts ANY() bug fixed with inArray().
+- [Branding cache vs memo staleness](branding-cache-sync.md) — bridge a module-level cache to a React hook by writing the cache during render, not in useEffect, or memoized readers stay stale.
+- [Settings security & fonts](uniquepos-settings-security.md) — atomic lockout counter; restore fail-fast (ON_ERROR_STOP=on + pg_dump --clean); brand fonts via CSS vars; new endpoints via customFetch escape hatch.
+- [Cross-branch stock transfers](uniquepos-stock-transfers.md) — hold/approve/reject model; flip status with conditional `WHERE status='pending'` BEFORE moving stock; /branches/options for selectors.
+- [UniquePOS offline sales sync](uniquepos-offline-sales.md) — mobile queues sales in AsyncStorage when offline; NetInfo flushes to POST /api/pos/sale on reconnect; drop ApiError, keep network errors.
+- [Branch scoping (x-branch-id)](branch-scoping-header.md) — super-admin branch view via setExtraHeadersGetter; sync module mirrors during render + init from localStorage, else initial queries fire unscoped; rebuild lib dist with tsc --build.
+- [Branch-aware document branding](uniquepos-branch-branding.md) — docs show owning branch identity, per-field trim-then-fallback to company; every render surface must use the resolver; print HTML must esc() all strings.
+- [Orval hook queryKey requirement](uniquepos-orval-querykey.md) — generated useGet* hooks need an explicit queryKey in query options; import getGet*QueryKey. New api-server routes may need a workflow restart to load.
+- [Branch comparison report](uniquepos-branch-comparison.md) — super-admin GET /reports/branch-comparison; per-branch metrics via separate grouped queries merged in memory to avoid join row-multiplication.
+- [Standalone deployment build](uniquepos-standalone-deploy.md) — cPanel/Node deploy via esbuild compile-time overlay to .local.ts (local disk storage/backup) + signed local uploads; Replit app untouched.
+- [UI/API role parity](uniquepos-role-parity.md) — mirror each page's ProtectedRoute allowedTiers with requireRole on its write endpoints; hidden UI is not protection.
+- [Stock & balance integrity](uniquepos-stock-integrity.md) — applyStockDelta + single db.transaction per stock/document flow; atomic status claims for one-time actions; inArray() not ANY().
