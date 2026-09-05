@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict M8GHadX7TW3LqwIXOTH1a0TiuIcijtSPWoKU1196cva01Fe7cHAL9jEgsf4Mc1F
+\restrict NIkqQylCPF5r0fVskZ7kJES1dkqQcTLDN02ApKHcBm85NlI9z3W2fRLWkjfT89q
 
 -- Dumped from database version 16.10
 -- Dumped by pg_dump version 16.10
@@ -26,8 +26,10 @@ DROP INDEX IF EXISTS public.stock_transfers_dest_idx;
 DROP INDEX IF EXISTS public.stock_transfers_created_at_idx;
 DROP INDEX IF EXISTS public.stock_movements_branch_id_idx;
 DROP INDEX IF EXISTS public.sales_branch_id_idx;
+DROP INDEX IF EXISTS public.sale_returns_sale_idx;
 DROP INDEX IF EXISTS public.quotations_branch_id_idx;
 DROP INDEX IF EXISTS public.purchases_branch_id_idx;
+DROP INDEX IF EXISTS public.party_payments_party_idx;
 DROP INDEX IF EXISTS public.login_history_user_id_idx;
 DROP INDEX IF EXISTS public.login_history_created_at_idx;
 DROP INDEX IF EXISTS public.invoices_branch_id_idx;
@@ -46,6 +48,9 @@ ALTER TABLE IF EXISTS ONLY public.stock_transfers DROP CONSTRAINT IF EXISTS stoc
 ALTER TABLE IF EXISTS ONLY public.stock_movements DROP CONSTRAINT IF EXISTS stock_movements_pkey;
 ALTER TABLE IF EXISTS ONLY public.sales DROP CONSTRAINT IF EXISTS sales_receipt_number_unique;
 ALTER TABLE IF EXISTS ONLY public.sales DROP CONSTRAINT IF EXISTS sales_pkey;
+ALTER TABLE IF EXISTS ONLY public.sale_returns DROP CONSTRAINT IF EXISTS sale_returns_return_number_key;
+ALTER TABLE IF EXISTS ONLY public.sale_returns DROP CONSTRAINT IF EXISTS sale_returns_pkey;
+ALTER TABLE IF EXISTS ONLY public.sale_return_items DROP CONSTRAINT IF EXISTS sale_return_items_pkey;
 ALTER TABLE IF EXISTS ONLY public.sale_items DROP CONSTRAINT IF EXISTS sale_items_pkey;
 ALTER TABLE IF EXISTS ONLY public.quotations DROP CONSTRAINT IF EXISTS quotations_quotation_number_unique;
 ALTER TABLE IF EXISTS ONLY public.quotations DROP CONSTRAINT IF EXISTS quotations_pkey;
@@ -57,6 +62,7 @@ ALTER TABLE IF EXISTS ONLY public.products DROP CONSTRAINT IF EXISTS products_pr
 ALTER TABLE IF EXISTS ONLY public.products DROP CONSTRAINT IF EXISTS products_pkey;
 ALTER TABLE IF EXISTS ONLY public.product_stock DROP CONSTRAINT IF EXISTS product_stock_pkey;
 ALTER TABLE IF EXISTS ONLY public.product_stock DROP CONSTRAINT IF EXISTS product_stock_branch_product_unique;
+ALTER TABLE IF EXISTS ONLY public.party_payments DROP CONSTRAINT IF EXISTS party_payments_pkey;
 ALTER TABLE IF EXISTS ONLY public.login_history DROP CONSTRAINT IF EXISTS login_history_pkey;
 ALTER TABLE IF EXISTS ONLY public.invoices DROP CONSTRAINT IF EXISTS invoices_pkey;
 ALTER TABLE IF EXISTS ONLY public.invoices DROP CONSTRAINT IF EXISTS invoices_invoice_number_unique;
@@ -79,6 +85,8 @@ ALTER TABLE IF EXISTS public.suppliers ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.stock_transfers ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.stock_movements ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.sales ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE IF EXISTS public.sale_returns ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE IF EXISTS public.sale_return_items ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.sale_items ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.quotations ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.quotation_items ALTER COLUMN id DROP DEFAULT;
@@ -86,6 +94,7 @@ ALTER TABLE IF EXISTS public.purchases ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.purchase_items ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.products ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.product_stock ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE IF EXISTS public.party_payments ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.login_history ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.invoices ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.invoice_payments ALTER COLUMN id DROP DEFAULT;
@@ -109,6 +118,10 @@ DROP SEQUENCE IF EXISTS public.stock_movements_id_seq;
 DROP TABLE IF EXISTS public.stock_movements;
 DROP SEQUENCE IF EXISTS public.sales_id_seq;
 DROP TABLE IF EXISTS public.sales;
+DROP SEQUENCE IF EXISTS public.sale_returns_id_seq;
+DROP TABLE IF EXISTS public.sale_returns;
+DROP SEQUENCE IF EXISTS public.sale_return_items_id_seq;
+DROP TABLE IF EXISTS public.sale_return_items;
 DROP SEQUENCE IF EXISTS public.sale_items_id_seq;
 DROP TABLE IF EXISTS public.sale_items;
 DROP SEQUENCE IF EXISTS public.quotations_id_seq;
@@ -123,6 +136,8 @@ DROP SEQUENCE IF EXISTS public.products_id_seq;
 DROP TABLE IF EXISTS public.products;
 DROP SEQUENCE IF EXISTS public.product_stock_id_seq;
 DROP TABLE IF EXISTS public.product_stock;
+DROP SEQUENCE IF EXISTS public.party_payments_id_seq;
+DROP TABLE IF EXISTS public.party_payments;
 DROP SEQUENCE IF EXISTS public.login_history_id_seq;
 DROP TABLE IF EXISTS public.login_history;
 DROP SEQUENCE IF EXISTS public.invoices_id_seq;
@@ -194,7 +209,9 @@ CREATE TYPE public.movement_type AS ENUM (
     'transfer_in',
     'transfer_out',
     'sale',
-    'purchase_return'
+    'purchase_return',
+    'opening',
+    'return'
 );
 
 
@@ -818,6 +835,45 @@ ALTER SEQUENCE public.login_history_id_seq OWNED BY public.login_history.id;
 
 
 --
+-- Name: party_payments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.party_payments (
+    id integer NOT NULL,
+    party_type text NOT NULL,
+    party_id integer NOT NULL,
+    branch_id integer,
+    amount numeric(15,2) NOT NULL,
+    method text DEFAULT 'cash'::text NOT NULL,
+    reference text,
+    notes text,
+    created_by text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT party_payments_party_type_check CHECK ((party_type = ANY (ARRAY['customer'::text, 'supplier'::text])))
+);
+
+
+--
+-- Name: party_payments_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.party_payments_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: party_payments_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.party_payments_id_seq OWNED BY public.party_payments.id;
+
+
+--
 -- Name: product_stock; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1084,6 +1140,78 @@ CREATE SEQUENCE public.sale_items_id_seq
 --
 
 ALTER SEQUENCE public.sale_items_id_seq OWNED BY public.sale_items.id;
+
+
+--
+-- Name: sale_return_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sale_return_items (
+    id integer NOT NULL,
+    return_id integer NOT NULL,
+    sale_item_id integer NOT NULL,
+    product_id integer NOT NULL,
+    quantity integer NOT NULL,
+    unit_price numeric(15,2) NOT NULL,
+    total numeric(15,2) NOT NULL
+);
+
+
+--
+-- Name: sale_return_items_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.sale_return_items_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: sale_return_items_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.sale_return_items_id_seq OWNED BY public.sale_return_items.id;
+
+
+--
+-- Name: sale_returns; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sale_returns (
+    id integer NOT NULL,
+    return_number text NOT NULL,
+    sale_id integer NOT NULL,
+    branch_id integer NOT NULL,
+    total numeric(15,2) DEFAULT 0 NOT NULL,
+    refund_method text DEFAULT 'cash'::text NOT NULL,
+    reason text,
+    created_by text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: sale_returns_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.sale_returns_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: sale_returns_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.sale_returns_id_seq OWNED BY public.sale_returns.id;
 
 
 --
@@ -1385,6 +1513,13 @@ ALTER TABLE ONLY public.login_history ALTER COLUMN id SET DEFAULT nextval('publi
 
 
 --
+-- Name: party_payments id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.party_payments ALTER COLUMN id SET DEFAULT nextval('public.party_payments_id_seq'::regclass);
+
+
+--
 -- Name: product_stock id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1434,6 +1569,20 @@ ALTER TABLE ONLY public.sale_items ALTER COLUMN id SET DEFAULT nextval('public.s
 
 
 --
+-- Name: sale_return_items id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sale_return_items ALTER COLUMN id SET DEFAULT nextval('public.sale_return_items_id_seq'::regclass);
+
+
+--
+-- Name: sale_returns id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sale_returns ALTER COLUMN id SET DEFAULT nextval('public.sale_returns_id_seq'::regclass);
+
+
+--
 -- Name: sales id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1473,6 +1622,7 @@ ALTER TABLE ONLY public.users ALTER COLUMN id SET DEFAULT nextval('public.users_
 --
 
 COPY public.admin_notifications (id, created_at, title, body, severity, rule_id, audit_log_id, metadata, read_at) FROM stdin;
+1	2026-07-15 12:19:43.374735+00	[CRITICAL] Repeated failed logins	5 "auth.login_failed" events in the last 10 minutes. Last: Failed login attempt for "admin@uniquepos.com" — wrong password	critical	brute-force-login	57	{"actor": null, "action": "auth.login_failed"}	2026-07-15 12:39:25.308+00
 \.
 
 
@@ -1518,6 +1668,42 @@ COPY public.audit_log (id, created_at, actor_id, actor_name, actor_role, ip_addr
 46	2026-07-06 16:22:38.575012+00	\N	\N	\N	127.0.0.1	auth.login	user	1	"Super Admin" logged in (super_admin)	\N	\N
 47	2026-07-06 16:23:04.128803+00	\N	\N	\N	127.0.0.1	auth.login	user	1	"Super Admin" logged in (super_admin)	\N	\N
 48	2026-07-06 19:07:55.164743+00	\N	\N	\N	127.0.0.1	auth.login	user	1	"Super Admin" logged in (super_admin)	\N	\N
+49	2026-07-12 20:43:01.863153+00	\N	\N	\N	105.163.156.153	auth.login_failed	user	\N	Failed login attempt for "muchangi.tony@gmail.com" — user not found or inactive	\N	\N
+50	2026-07-12 20:48:00.708366+00	\N	\N	\N	105.163.156.153	auth.login_failed	user	\N	Failed login attempt for "muchangi.tony@gmail.com" — user not found or inactive	\N	\N
+51	2026-07-12 20:48:27.076382+00	\N	\N	\N	105.163.156.153	auth.login_failed	user	\N	Failed login attempt for "muchangi.tony@gmail.com" — user not found or inactive	\N	\N
+52	2026-07-15 12:05:22.067071+00	\N	\N	\N	197.156.146.81	auth.login_failed	user	\N	Failed login attempt for "muchangi.tony@gmail.com" — user not found or inactive	\N	\N
+53	2026-07-15 12:10:52.923931+00	\N	\N	\N	197.156.146.81	auth.login_failed	user	\N	Failed login attempt for "muchangi.tony@gmail.com" — user not found or inactive	\N	\N
+54	2026-07-15 12:14:23.378698+00	\N	\N	\N	197.156.146.81	auth.login_failed	user	\N	Failed login attempt for "muchangi.tony@gmail.com" — user not found or inactive	\N	\N
+55	2026-07-15 12:18:52.266135+00	\N	\N	\N	105.160.58.11	auth.login_failed	user	1	Failed login attempt for "admin@uniquepos.com" — wrong password	\N	\N
+56	2026-07-15 12:19:07.701149+00	\N	\N	\N	105.160.58.11	auth.login_failed	user	1	Failed login attempt for "admin@uniquepos.com" — wrong password	\N	\N
+57	2026-07-15 12:19:43.366501+00	\N	\N	\N	105.160.58.11	auth.login_failed	user	1	Failed login attempt for "admin@uniquepos.com" — wrong password	\N	\N
+58	2026-07-15 12:21:38.842637+00	\N	\N	\N	105.160.58.11	auth.login_failed	user	1	Failed login attempt for "admin@uniquepos.com" — wrong password	\N	\N
+59	2026-07-15 12:23:35.270482+00	\N	\N	\N	127.0.0.1	auth.login	user	1	"Super Admin" logged in (super_admin)	\N	\N
+60	2026-07-15 12:24:58.444549+00	\N	\N	\N	105.160.58.11	auth.login_failed	user	1	Failed login attempt for "admin@uniquepos.com" — wrong password	\N	\N
+61	2026-07-15 12:25:59.759831+00	\N	\N	\N	127.0.0.1	auth.login	user	1	"Super Admin" logged in (super_admin)	\N	\N
+62	2026-07-15 12:26:33.699859+00	\N	\N	\N	105.160.58.11	auth.login	user	1	"Super Admin" logged in (super_admin)	\N	\N
+63	2026-07-15 12:39:03.054658+00	\N	\N	\N	105.160.58.11	auth.login	user	1	"Super Admin" logged in (super_admin)	\N	\N
+64	2026-07-15 12:48:17.67071+00	1	Super Admin	super_admin	105.161.41.135	backup.run	backup	\N	Manual backup created: 2026-07-15_12-48.sql.gz	{"size": 25116, "filename": "2026-07-15_12-48.sql.gz"}	1
+65	2026-07-15 13:00:51.481207+00	1	Super Admin	super_admin	105.161.41.135	product.barcodes_generated	product	0	Bulk-generated barcodes for 200 selected product(s)	{"count": 200, "productIds": [125, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 69, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200]}	1
+66	2026-07-15 13:02:10.307589+00	1	Super Admin	super_admin	105.161.41.135	stock.received	product	33	Received 4 units of "Roof Mount L-Feet & Rail Kit (2-panel)" — stock 0 → 4	{}	1
+67	2026-07-17 07:59:30.356774+00	1	Super Admin	super_admin	105.163.156.153	settings.updated	settings	\N	Updated business settings — changed: businessName, businessAddress, businessPhone, businessEmail, taxNumber, currency, currencySymbol, vatRate, receiptFooter, country, timezone	{"after": {"id": 1, "country": "Kenya", "tagline": "Your Trusted Solar Energy Partner", "website": null, "currency": "KES", "logo_url": null, "timezone": "Africa/Nairobi", "vat_rate": 16, "bank_name": "Equity Bank", "body_font": null, "smtp_port": 587, "stamp_url": null, "created_at": "2026-07-04T17:07:58.310Z", "mpesa_till": null, "tax_number": "P052303835W", "vat_number": null, "alert_rules": null, "bank_branch": null, "heading_font": null, "business_name": "Unique Solar Kenya Ltd", "mpesa_paybill": "400200", "primary_color": null, "return_policy": null, "signature_url": null, "warranty_text": null, "business_email": "sales@uniquesolar.co.ke", "business_phone": "+254 733573089", "receipt_footer": "Thank you for choosing Unique Solar Kenya Ltd. Warranty claims require original receipt. All solar systems carry a 12-month installation warranty.", "bank_swift_code": null, "business_phone2": null, "currency_symbol": "KES", "document_footer": null, "lockout_minutes": 15, "mpesa_buy_goods": null, "secondary_color": null, "business_address": "Eastern bypass  Kamakis corner square shopping complex", "bank_account_name": null, "fiscal_year_start": "07-01", "max_failed_logins": 5, "bank_account_number": "0123456789", "password_min_length": 8, "backup_alert_enabled": true, "payment_instructions": null, "backup_success_notify": false, "invoice_payment_terms": null, "mpesa_paybill_account": null, "other_payment_methods": null, "security_alert_enabled": true, "password_require_number": true, "password_require_symbol": false, "quotation_validity_days": null, "session_timeout_minutes": 10080, "password_require_uppercase": true}, "before": {"id": 1, "country": "Kenya", "tagline": "Your Trusted Solar Energy Partner", "website": null, "currency": "KES", "logo_url": null, "timezone": "Africa/Nairobi", "vat_rate": 16, "bank_name": "Equity Bank", "body_font": null, "smtp_port": 587, "stamp_url": null, "created_at": "2026-07-04T17:07:58.310Z", "mpesa_till": null, "tax_number": "P051234567X", "vat_number": null, "alert_rules": null, "bank_branch": null, "heading_font": null, "business_name": "Unique Solar Kenya Ltd", "mpesa_paybill": "400200", "primary_color": null, "return_policy": null, "signature_url": null, "warranty_text": null, "business_email": "sales@uniquesolar.co.ke", "business_phone": "+254 722 000 000", "receipt_footer": "Thank you for choosing Unique Solar Kenya Ltd. Warranty claims require original receipt. All solar systems carry a 12-month installation warranty.", "bank_swift_code": null, "business_phone2": null, "currency_symbol": "KES", "document_footer": null, "lockout_minutes": 15, "mpesa_buy_goods": null, "secondary_color": null, "business_address": "Moi Avenue, Mombasa CBD, Mombasa County", "bank_account_name": null, "fiscal_year_start": "07-01", "max_failed_logins": 5, "bank_account_number": "0123456789", "password_min_length": 8, "backup_alert_enabled": true, "payment_instructions": null, "backup_success_notify": false, "invoice_payment_terms": null, "mpesa_paybill_account": null, "other_payment_methods": null, "security_alert_enabled": true, "password_require_number": true, "password_require_symbol": false, "quotation_validity_days": null, "session_timeout_minutes": 10080, "password_require_uppercase": true}}	1
+68	2026-07-17 08:27:25.078092+00	\N	\N	\N	127.0.0.1	auth.login	user	1	"Super Admin" logged in (super_admin)	\N	\N
+69	2026-07-17 08:27:33.231578+00	1	Super Admin	super_admin	127.0.0.1	stock.received	product	125	Received 5 units of "1-Gang 1-Way Light Switch (White, Flush)" — stock 0 → 5	{}	1
+70	2026-07-17 08:27:33.302606+00	1	Super Admin	super_admin	127.0.0.1	sale.created	sale	1	Sale RCP-1784276853283 — KES 520 (1 item) via cash	{"receipt": "RCP-1784276853283"}	1
+71	2026-07-17 08:27:44.915747+00	1	Super Admin	super_admin	127.0.0.1	sale.returned	sale	1	Return RTN-1784276864901 against RCP-1784276853283 — KES 260 refunded via cash	{"reason": "faulty", "return_number": "RTN-1784276864901"}	1
+72	2026-07-17 08:27:45.081864+00	1	Super Admin	super_admin	127.0.0.1	sale.created	sale	2	Sale RCP-1784276865066 — KES 260 (1 item) via credit	{"receipt": "RCP-1784276865066"}	1
+73	2026-07-17 08:27:45.154587+00	1	Super Admin	super_admin	127.0.0.1	customer.payment	customer	3	Payment of KES 100 received from "Test Credit Co" via mpesa	{"reference": null}	1
+74	2026-07-17 08:37:26.051615+00	1	Super Admin	super_admin	127.0.0.1	sale.created	sale	3	Sale RCP-1784277446038 — KES 260 (1 item) via cash	{"receipt": "RCP-1784277446038"}	1
+75	2026-07-17 08:37:26.132867+00	1	Super Admin	super_admin	127.0.0.1	sale.returned	sale	1	Return RTN-1784277446118 against RCP-1784276853283 — KES 260 refunded via cash	{"reason": null, "return_number": "RTN-1784277446118"}	1
+76	2026-07-17 08:37:26.19583+00	1	Super Admin	super_admin	127.0.0.1	purchase.created	purchase	1	Created purchase order PO-1784277446187 — KES 300 (1 item)	\N	1
+77	2026-07-17 08:37:31.744337+00	1	Super Admin	super_admin	127.0.0.1	purchase.created	purchase	2	Created purchase order PO-1784277451737 — KES 300 (1 item)	\N	1
+78	2026-07-17 08:37:52.944958+00	1	Super Admin	super_admin	127.0.0.1	purchase.created	purchase	3	Created purchase order PO-1784277472925 — KES 300 (1 item)	\N	1
+79	2026-07-17 08:37:53.281846+00	1	Super Admin	super_admin	127.0.0.1	supplier.payment	supplier	1	Paid KES 100 to "Test Supplier Ltd" via bank_transfer	{"reference": null}	1
+80	2026-07-17 08:38:39.43922+00	1	Super Admin	super_admin	127.0.0.1	purchase.created	purchase	4	Created purchase order PO-1784277519426 — KES 150 (1 item)	\N	1
+81	2026-07-17 08:38:39.48091+00	1	Super Admin	super_admin	127.0.0.1	purchase.received	purchase	4	Marked purchase order PO-1784277519426 as received — stock updated	\N	1
+82	2026-07-17 08:38:39.551939+00	1	Super Admin	super_admin	127.0.0.1	invoice.created	invoice	5	Created invoice INV-2026-000002 — KES 301.6	\N	1
+83	2026-07-17 08:38:39.600501+00	1	Super Admin	super_admin	127.0.0.1	quotation.created	quotation	8	Created quotation QTN-2026-000001 — KES 301.6	\N	1
+84	2026-07-17 08:38:39.662601+00	1	Super Admin	super_admin	127.0.0.1	quotation.converted	invoice	6	Converted QTN-2026-000001 to invoice INV-2026-000003	\N	1
 \.
 
 
@@ -1569,7 +1755,7 @@ COPY public.brands (id, name, description, created_at) FROM stdin;
 --
 
 COPY public.business_settings (id, business_name, business_address, business_phone, business_email, tax_number, currency, currency_symbol, vat_rate, logo_url, receipt_footer, fiscal_year_start, country, timezone, created_at, smtp_host, smtp_port, smtp_user, smtp_from, backup_alert_enabled, backup_success_notify, security_alert_enabled, alert_rules, mpesa_paybill, mpesa_paybill_account, mpesa_till, mpesa_buy_goods, bank_name, bank_branch, bank_account_name, bank_account_number, bank_swift_code, other_payment_methods, tagline, website, vat_number, business_phone2, primary_color, secondary_color, stamp_url, signature_url, document_footer, warranty_text, return_policy, quotation_validity_days, invoice_payment_terms, payment_instructions, body_font, heading_font, session_timeout_minutes, password_min_length, password_require_uppercase, password_require_number, password_require_symbol, max_failed_logins, lockout_minutes) FROM stdin;
-1	Unique Solar Kenya Ltd	Moi Avenue, Mombasa CBD, Mombasa County	+254 722 000 000	sales@uniquesolar.co.ke	P051234567X	KES	KES	16.00	\N	Thank you for choosing Unique Solar Kenya Ltd. Warranty claims require original receipt. All solar systems carry a 12-month installation warranty.	07-01	Kenya	Africa/Nairobi	2026-07-04 17:07:58.310364+00	\N	587	\N	\N	t	f	t	\N	400200	\N	\N	\N	Equity Bank	\N	\N	0123456789	\N	\N	Your Trusted Solar Energy Partner	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	10080	8	t	t	f	5	15
+1	Unique Solar Kenya Ltd	Eastern bypass  Kamakis corner square shopping complex	+254 733573089	sales@uniquesolar.co.ke	P052303835W	KES	KES	16.00	\N	Thank you for choosing Unique Solar Kenya Ltd. Warranty claims require original receipt. All solar systems carry a 12-month installation warranty.	07-01	Kenya	Africa/Nairobi	2026-07-04 17:07:58.310364+00	\N	587	\N	\N	t	f	t	\N	400200	\N	\N	\N	Equity Bank	\N	\N	0123456789	\N	\N	Your Trusted Solar Energy Partner	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	10080	8	t	t	f	5	15
 \.
 
 
@@ -1605,6 +1791,7 @@ COPY public.categories (id, name, description, created_at) FROM stdin;
 --
 
 COPY public.customers (id, name, email, phone, address, city, tax_number, credit_limit, balance, created_at, company, contact_person, branch_id) FROM stdin;
+3	Test Credit Co	\N	\N	\N	\N	\N	0.00	763.20	2026-07-17 08:27:45.01192+00	\N	\N	1
 \.
 
 
@@ -1623,6 +1810,8 @@ COPY public.data_migrations (id, name, applied_at) FROM stdin;
 --
 
 COPY public.document_sequences (doc_type, year, last_number) FROM stdin;
+quotation	2026	1
+invoice	2026	3
 \.
 
 
@@ -1639,6 +1828,8 @@ COPY public.expenses (id, description, amount, category, payment_method, referen
 --
 
 COPY public.invoice_items (id, invoice_id, product_id, quantity, unit_price, discount, vat_rate, total, description, unit) FROM stdin;
+5	5	125	1	260.00	0.00	16.00	301.60	\N	\N
+6	6	125	1	260.00	0.00	16.00	301.60	\N	\N
 \.
 
 
@@ -1655,6 +1846,8 @@ COPY public.invoice_payments (id, invoice_id, amount, method, reference, notes, 
 --
 
 COPY public.invoices (id, invoice_number, customer_id, subtotal, discount_amount, tax_amount, total, amount_paid, balance_due, status, due_date, notes, created_at, branch_id) FROM stdin;
+5	INV-2026-000002	3	260.00	0.00	41.60	301.60	0.00	301.60	sent	\N	\N	2026-07-17 08:38:39.536274+00	1
+6	INV-2026-000003	3	260.00	0.00	41.60	301.60	0.00	301.60	sent	\N	\N	2026-07-17 08:38:39.637059+00	1
 \.
 
 
@@ -1681,6 +1874,32 @@ COPY public.login_history (id, user_id, email, success, reason, ip_address, user
 16	1	admin@uniquepos.com	t	\N	127.0.0.1	curl/8.14.1	2026-07-06 16:22:38.570362+00
 17	1	admin@uniquepos.com	t	\N	127.0.0.1	curl/8.14.1	2026-07-06 16:23:04.12483+00
 18	1	admin@uniquepos.com	t	\N	127.0.0.1	node	2026-07-06 19:07:55.157921+00
+19	\N	muchangi.tony@gmail.com	f	unknown_user	105.163.156.153	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36	2026-07-12 20:43:01.736521+00
+20	\N	muchangi.tony@gmail.com	f	unknown_user	105.163.156.153	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36	2026-07-12 20:48:00.617116+00
+21	\N	muchangi.tony@gmail.com	f	unknown_user	105.163.156.153	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36	2026-07-12 20:48:27.068304+00
+22	\N	muchangi.tony@gmail.com	f	unknown_user	197.156.146.81	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36	2026-07-15 12:05:22.023317+00
+23	\N	muchangi.tony@gmail.com	f	unknown_user	197.156.146.81	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36	2026-07-15 12:10:52.761404+00
+24	\N	muchangi.tony@gmail.com	f	unknown_user	197.156.146.81	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36	2026-07-15 12:14:23.370821+00
+25	1	admin@uniquepos.com	f	wrong_password	105.160.58.11	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36	2026-07-15 12:18:52.14926+00
+26	1	admin@uniquepos.com	f	wrong_password	105.160.58.11	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36	2026-07-15 12:19:07.698463+00
+27	1	admin@uniquepos.com	f	wrong_password	105.160.58.11	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36	2026-07-15 12:19:43.363696+00
+28	1	admin@uniquepos.com	f	wrong_password	105.160.58.11	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36	2026-07-15 12:21:38.838025+00
+29	1	admin@uniquepos.com	t	\N	127.0.0.1	curl/8.14.1	2026-07-15 12:23:35.262415+00
+30	1	admin@uniquepos.com	f	wrong_password	105.160.58.11	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36	2026-07-15 12:24:58.440654+00
+31	1	admin@uniquepos.com	t	\N	127.0.0.1	curl/8.14.1	2026-07-15 12:25:59.757015+00
+32	1	admin@uniquepos.com	t	\N	105.160.58.11	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36	2026-07-15 12:26:33.696042+00
+33	1	admin@uniquepos.com	t	\N	105.160.58.11	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36	2026-07-15 12:39:03.048496+00
+34	1	admin@uniquepos.com	t	\N	127.0.0.1	curl/8.14.1	2026-07-17 08:27:25.067384+00
+\.
+
+
+--
+-- Data for Name: party_payments; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.party_payments (id, party_type, party_id, branch_id, amount, method, reference, notes, created_by, created_at) FROM stdin;
+1	customer	3	1	100.00	mpesa	\N	\N	Super Admin	2026-07-17 08:27:45.141349+00
+2	supplier	1	1	100.00	bank_transfer	\N	\N	Super Admin	2026-07-17 08:37:53.273434+00
 \.
 
 
@@ -1689,7 +1908,6 @@ COPY public.login_history (id, user_id, email, success, reason, ip_address, user
 --
 
 COPY public.product_stock (id, branch_id, product_id, current_stock, min_stock, created_at) FROM stdin;
-1	1	125	0	60	2026-07-05 13:11:44.799711+00
 3	1	2	0	8	2026-07-05 13:11:44.799711+00
 4	1	3	0	6	2026-07-05 13:11:44.799711+00
 5	1	4	0	10	2026-07-05 13:11:44.799711+00
@@ -1722,7 +1940,6 @@ COPY public.product_stock (id, branch_id, product_id, current_stock, min_stock, 
 32	1	30	0	5	2026-07-05 13:11:44.799711+00
 33	1	31	0	4	2026-07-05 13:11:44.799711+00
 34	1	32	0	3	2026-07-05 13:11:44.799711+00
-35	1	33	0	8	2026-07-05 13:11:44.799711+00
 36	1	34	0	5	2026-07-05 13:11:44.799711+00
 37	1	35	0	4	2026-07-05 13:11:44.799711+00
 38	1	36	0	6	2026-07-05 13:11:44.799711+00
@@ -1824,6 +2041,7 @@ COPY public.product_stock (id, branch_id, product_id, current_stock, min_stock, 
 134	1	134	0	6	2026-07-05 13:11:44.799711+00
 135	1	135	0	4	2026-07-05 13:11:44.799711+00
 136	1	136	0	5	2026-07-05 13:11:44.799711+00
+35	1	33	4	8	2026-07-05 13:11:44.799711+00
 137	1	137	0	8	2026-07-05 13:11:44.799711+00
 138	1	138	0	6	2026-07-05 13:11:44.799711+00
 139	1	139	0	5	2026-07-05 13:11:44.799711+00
@@ -1889,6 +2107,7 @@ COPY public.product_stock (id, branch_id, product_id, current_stock, min_stock, 
 199	1	199	0	10	2026-07-05 13:11:44.799711+00
 200	1	200	0	8	2026-07-05 13:11:44.799711+00
 2	1	1	50	10	2026-07-05 13:11:44.799711+00
+1	1	125	4	60	2026-07-05 13:11:44.799711+00
 \.
 
 
@@ -1897,206 +2116,206 @@ COPY public.product_stock (id, branch_id, product_id, current_stock, min_stock, 
 --
 
 COPY public.products (id, product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, current_stock, min_stock, image_url, unit, created_at) FROM stdin;
-125	USK-SS-005	\N	1-Gang 1-Way Light Switch (White, Flush)	1-gang 1-way switch, white flat plate, for standard lighting circuits	13	16	\N	150.00	260.00	16.00	0	60	\N	PCS	2026-07-04 18:26:24.823596+00
-1	USK-SP-001	\N	100W Monocrystalline Solar Panel	Grade A 100W mono panel, 18V Voc, IP68 junction box, 25-year power output warranty	1	1	\N	4800.00	6800.00	16.00	0	10	\N	PCS	2026-07-04 18:24:23.042112+00
-2	USK-SP-002	\N	200W Monocrystalline Solar Panel	Grade A 200W mono panel, 24V system compatible, aluminium frame, 5 busbars	1	2	\N	9500.00	13500.00	16.00	0	8	\N	PCS	2026-07-04 18:24:23.042112+00
-3	USK-SP-003	\N	250W Polycrystalline Solar Panel	250W poly panel, cost-effective for large installations, 60-cell	1	2	\N	10500.00	15000.00	16.00	0	6	\N	PCS	2026-07-04 18:24:23.042112+00
-4	USK-SP-004	\N	300W Monocrystalline Solar Panel	300W mono panel, 24V/48V system ready, high-efficiency 60-cell module	1	3	\N	12500.00	17500.00	16.00	0	10	\N	PCS	2026-07-04 18:24:23.042112+00
-5	USK-SP-005	\N	400W Mono Half-Cell Solar Panel	400W half-cell PERC panel, dual-glass option, excellent low-light performance	1	1	\N	15500.00	22000.00	16.00	0	15	\N	PCS	2026-07-04 18:24:23.042112+00
-6	USK-SP-006	\N	500W Mono Half-Cell Solar Panel	500W premium half-cell panel, 48V system optimised, 25-year linear warranty	1	3	\N	19000.00	27500.00	16.00	0	10	\N	PCS	2026-07-04 18:24:23.042112+00
-7	USK-SP-007	\N	550W Mono Half-Cell Solar Panel	550W large format half-cell panel, ideal for commercial rooftop systems	1	1	\N	21000.00	30000.00	16.00	0	8	\N	PCS	2026-07-04 18:24:23.042112+00
-8	USK-SP-008	\N	100W Flexible Solar Panel	Lightweight flexible mono panel, suitable for curved surfaces and marine use	1	4	\N	7500.00	12000.00	16.00	0	5	\N	PCS	2026-07-04 18:24:23.042112+00
-9	USK-INV-001	\N	1kVA 12V Pure Sine Wave Inverter	1000VA/800W pure sine wave off-grid inverter, built-in charger 20A, LCD display	2	4	\N	8500.00	14000.00	16.00	0	5	\N	PCS	2026-07-04 18:24:23.042112+00
-10	USK-INV-002	\N	2kVA 24V Pure Sine Wave Inverter	2000VA/1600W PSW inverter, 30A MPPT charger, USB output, over-load protection	2	4	\N	15000.00	24000.00	16.00	0	4	\N	PCS	2026-07-04 18:24:23.042112+00
-11	USK-INV-003	\N	3kVA 24V Off-Grid Inverter Charger	3kVA pure sine wave with built-in 60A MPPT charge controller	2	6	\N	22000.00	36000.00	16.00	0	3	\N	PCS	2026-07-04 18:24:23.042112+00
-12	USK-INV-004	\N	5kVA 48V Off-Grid Inverter Charger	5kVA/4000W off-grid, 60A MPPT, configurable AC/solar priority, RS485	2	6	\N	38000.00	62000.00	16.00	0	3	\N	PCS	2026-07-04 18:24:23.042112+00
-69	USK-ACP-008	\N	40A RCCB 2-pole 30mA	40A 2-pole RCCB 30mA, Hager type, for 1-phase solar inverter output DB	8	15	\N	3000.00	5200.00	16.00	0	10	\N	PCS	2026-07-04 18:25:19.236848+00
-13	USK-INV-005	\N	3kVA 24V Hybrid Inverter	3kVA hybrid inverter, 80A MPPT, grid-tie and off-grid, Wi-Fi monitoring	2	6	\N	32000.00	52000.00	16.00	0	3	\N	PCS	2026-07-04 18:24:23.042112+00
-14	USK-INV-006	\N	5kVA 48V Hybrid Inverter	5kVA hybrid, 100A MPPT, parallel-able up to 9 units, app monitoring	2	6	\N	52000.00	85000.00	16.00	0	3	\N	PCS	2026-07-04 18:24:23.042112+00
-15	USK-INV-007	\N	6kVA 48V Hybrid Inverter	6kVA hybrid, 120A MPPT, three-phase parallel capable, export-limited mode	2	7	\N	62000.00	98000.00	16.00	0	2	\N	PCS	2026-07-04 18:24:23.042112+00
-16	USK-INV-008	\N	8kVA 48V Hybrid Inverter	8kVA hybrid, 120A MPPT, split-phase, compatible with lithium and lead-acid	2	7	\N	82000.00	132000.00	16.00	0	2	\N	PCS	2026-07-04 18:24:23.042112+00
-17	USK-INV-009	\N	10kVA 48V Hybrid Inverter	10kVA three-phase hybrid, 180A MPPT, BMS communication, SCADA ready	2	6	\N	105000.00	168000.00	16.00	0	2	\N	PCS	2026-07-04 18:24:23.042112+00
-18	USK-INV-010	\N	3kVA All-in-One Solar System (Hybrid)	3kVA hybrid inverter with 100Ah lithium battery and 300W panel bundled package	2	4	\N	65000.00	105000.00	16.00	0	2	\N	SET	2026-07-04 18:24:23.042112+00
-19	USK-LB-001	\N	50Ah 12V LiFePO4 Battery	Slim 50Ah lithium iron phosphate, built-in BMS, 4000+ cycle life, rack-mountable	3	10	\N	13500.00	20000.00	16.00	0	5	\N	PCS	2026-07-04 18:24:23.042112+00
-20	USK-LB-002	\N	100Ah 12V LiFePO4 Battery	100Ah 12V LiFePO4, built-in 100A BMS, Bluetooth monitor app compatible	3	10	\N	24000.00	35000.00	16.00	0	5	\N	PCS	2026-07-04 18:24:23.042112+00
-21	USK-LB-003	\N	100Ah 24V LiFePO4 Battery	100Ah 24V lithium, suitable for 24V inverter systems, high discharge rate	3	9	\N	42000.00	62000.00	16.00	0	4	\N	PCS	2026-07-04 18:24:23.042112+00
-22	USK-LB-004	\N	200Ah 12V LiFePO4 Battery	200Ah 12V heavy-duty lithium, 200A continuous discharge, drop-in lead-acid replacement	3	10	\N	45000.00	68000.00	16.00	0	3	\N	PCS	2026-07-04 18:24:23.042112+00
-23	USK-LB-005	\N	100Ah 48V LiFePO4 Battery (5.12kWh)	5.12kWh 48V rack-mount lithium, BMS with RS485/CAN for Growatt/Victron/Voltronic	3	9	\N	78000.00	118000.00	16.00	0	3	\N	PCS	2026-07-04 18:24:23.042112+00
-24	USK-LB-006	\N	200Ah 48V LiFePO4 Battery (9.6kWh)	9.6kWh 48V rack-mount lithium module, stackable up to 15 units, active balancing	3	9	\N	148000.00	225000.00	16.00	0	2	\N	PCS	2026-07-04 18:24:23.042112+00
-25	USK-LB-007	\N	280Ah 12V LiFePO4 Grade A Cell Pack	Grade A CATL/EVE 280Ah cells assembled, 4S configuration, BMS included	3	25	\N	58000.00	88000.00	16.00	0	2	\N	PCS	2026-07-04 18:24:23.042112+00
-26	USK-CC-001	\N	10A PWM Charge Controller 12/24V Auto	Basic 10A PWM controller, LCD display, USB 5V output, overcharge protection	4	4	\N	1200.00	2000.00	16.00	0	10	\N	PCS	2026-07-04 18:24:23.042112+00
-27	USK-CC-002	\N	20A PWM Charge Controller 12/24V	20A PWM with dual USB, load timer function, temperature compensation	4	11	\N	1800.00	3000.00	16.00	0	10	\N	PCS	2026-07-04 18:24:23.042112+00
-28	USK-CC-003	\N	30A MPPT Charge Controller 12/24V	Tracer 3210AN, 30A MPPT, MT50 display compatible, max PV 100V	4	11	\N	5500.00	9000.00	16.00	0	8	\N	PCS	2026-07-04 18:24:23.042112+00
-29	USK-CC-004	\N	40A MPPT Charge Controller 12/24/48V	40A MPPT, Tracer 4215BN, 150V PV input, supports LiFePO4/AGM/Gel/Flooded	4	11	\N	7500.00	12500.00	16.00	0	6	\N	PCS	2026-07-04 18:24:23.042112+00
-30	USK-CC-005	\N	60A MPPT Charge Controller 12-48V	60A MPPT, 150V PV input, RS485, remote monitoring via eBox-WiFi dongle	4	11	\N	11000.00	18000.00	16.00	0	5	\N	PCS	2026-07-04 18:24:23.042112+00
-31	USK-CC-006	\N	80A MPPT Charge Controller 12-48V	80A MPPT, 150V, Epever Tracer AN series, data logging, load output 80A	4	11	\N	15000.00	24500.00	16.00	0	4	\N	PCS	2026-07-04 18:24:23.042112+00
-32	USK-CC-007	\N	100A MPPT Charge Controller 12-48V	Victron SmartSolar 100/30A – premium MPPT, Bluetooth built-in, VE.Direct	4	5	\N	19000.00	31000.00	16.00	0	3	\N	PCS	2026-07-04 18:24:23.042112+00
-33	USK-MS-001	\N	Roof Mount L-Feet & Rail Kit (2-panel)	Aluminium rail with L-feet, mid/end clamps, suitable for metal or tile roofs	5	25	\N	3500.00	5800.00	16.00	0	8	\N	SET	2026-07-04 18:25:19.236848+00
-34	USK-MS-002	\N	Roof Mount Frame 4-panel	Complete 4-panel roof racking system, anodised aluminium, wind rated 160km/h	5	25	\N	6800.00	11000.00	16.00	0	5	\N	SET	2026-07-04 18:25:19.236848+00
-35	USK-MS-003	\N	Ground Mount Frame 4-panel (Adjustable)	Steel galvanised ground mount, angle 15°-45° adjustable, 4-panel capacity	5	25	\N	8500.00	14000.00	16.00	0	4	\N	SET	2026-07-04 18:25:19.236848+00
-36	USK-MS-004	\N	Pole Mount Single Panel (50mm pole)	Single-panel pole mount bracket, top-of-pole design, 360° rotation	5	25	\N	2800.00	4500.00	16.00	0	6	\N	PCS	2026-07-04 18:25:19.236848+00
-37	USK-MS-005	\N	Flat Roof Ballast Frame 4-panel	Ballast-weighted frame, no roof penetration, suitable for concrete flat roofs	5	25	\N	7200.00	11500.00	16.00	0	3	\N	SET	2026-07-04 18:25:19.236848+00
-38	USK-MS-006	\N	Aluminium Mid Clamp (35mm module frame)	Standard mid clamp for 35mm thick solar panel frames, anodised aluminium	5	25	\N	120.00	200.00	16.00	0	80	\N	PCS	2026-07-04 18:25:19.236848+00
-39	USK-MS-007	\N	Aluminium End Clamp (35mm module frame)	End clamp for solar panel rail termination, anodised aluminium	5	25	\N	150.00	250.00	16.00	0	80	\N	PCS	2026-07-04 18:25:19.236848+00
-40	USK-MS-008	\N	T-Bolt & Square Nut Set (10 pairs)	M8 T-bolt and square nut set for solar rail channel mounting	5	25	\N	250.00	420.00	16.00	0	40	\N	SET	2026-07-04 18:25:19.236848+00
-41	USK-MS-009	\N	Tilt Adjustable Frame 2-panel (0-30°)	Adjustable-angle aluminium frame for flat surfaces, 0° to 30° tilt range	5	25	\N	5200.00	8500.00	16.00	0	4	\N	SET	2026-07-04 18:25:19.236848+00
-42	USK-SC-001	\N	4mm² Solar PV Cable Red (per metre)	TÜV certified 4mm² single-core DC solar cable, 1.5kV rated, UV stabilised	6	25	\N	65.00	110.00	16.00	0	120	\N	MTR	2026-07-04 18:25:19.236848+00
-43	USK-SC-002	\N	4mm² Solar PV Cable Black (per metre)	TÜV certified 4mm² DC solar cable black, temperature range -40°C to +90°C	6	25	\N	65.00	110.00	16.00	0	120	\N	MTR	2026-07-04 18:25:19.236848+00
-44	USK-SC-003	\N	6mm² Solar PV Cable Red (per metre)	6mm² heavy-duty solar cable, for high-current panel strings, UV resistant	6	25	\N	98.00	160.00	16.00	0	80	\N	MTR	2026-07-04 18:25:19.236848+00
-45	USK-SC-004	\N	6mm² Solar PV Cable Black (per metre)	6mm² solar cable black, XLPE insulated, suitable for outdoor direct burial	6	25	\N	98.00	160.00	16.00	0	80	\N	MTR	2026-07-04 18:25:19.236848+00
-46	USK-SC-005	\N	MC4 Connector Pair (Male + Female)	IP68 rated MC4 compatible connectors, 1000V DC, 30A, UV resistant housing	6	25	\N	180.00	320.00	16.00	0	80	\N	PAIR	2026-07-04 18:25:19.236848+00
-47	USK-SC-006	\N	MC4 Y-Branch T-Connector Pair (2-to-1)	MC4 parallel branch connector, connects 2 strings in parallel, IP67	6	25	\N	380.00	650.00	16.00	0	40	\N	PAIR	2026-07-04 18:25:19.236848+00
-48	USK-SC-007	\N	MC4 Disconnect Spanner Tool Set	Pair of MC4 disconnect tools for safe unlocking of MC4 connectors in the field	6	25	\N	450.00	800.00	16.00	0	10	\N	SET	2026-07-04 18:25:19.236848+00
-49	USK-SC-008	\N	4mm² Solar Cable Roll 50m (Red + Black)	50m each red and black 4mm² TÜV solar cable, factory-coiled for site use	6	25	\N	6500.00	11000.00	16.00	0	5	\N	ROLL	2026-07-04 18:25:19.236848+00
-50	USK-DCP-001	\N	32A DC Circuit Breaker 1-pole (PV)	32A DC MCB for solar PV string protection, 250VDC rated, DIN rail mount	7	13	\N	850.00	1500.00	16.00	0	15	\N	PCS	2026-07-04 18:25:19.236848+00
-51	USK-DCP-002	\N	63A DC Circuit Breaker 1-pole (PV)	63A DC circuit breaker, 250VDC, for battery-to-inverter protection	7	13	\N	1200.00	2000.00	16.00	0	12	\N	PCS	2026-07-04 18:25:19.236848+00
-52	USK-DCP-003	\N	125A DC Circuit Breaker 1-pole	125A DC MCB, 250V, high-interrupt capacity for large battery banks	7	13	\N	2200.00	3800.00	16.00	0	8	\N	PCS	2026-07-04 18:25:19.236848+00
-53	USK-DCP-004	\N	DC Surge Arrester SPD 600VDC Type 2	Class II DC SPD for solar array protection, 40kA Imax, DIN rail mount	7	12	\N	2800.00	4800.00	16.00	0	8	\N	PCS	2026-07-04 18:25:19.236848+00
-54	USK-DCP-005	\N	Waterproof Blade Fuse Holder 30A	Inline waterproof fuse holder for 30A blade fuse, suitable for DC circuits	7	25	\N	350.00	620.00	16.00	0	20	\N	PCS	2026-07-04 18:25:19.236848+00
-55	USK-DCP-006	\N	60A ANL Fuse + Holder Set	60A gold ANL fuse with clear cover holder, for battery cable protection	7	25	\N	650.00	1100.00	16.00	0	20	\N	SET	2026-07-04 18:25:19.236848+00
-56	USK-DCP-007	\N	100A ANL Fuse + Holder Set	100A ANL fuse with holder, suitable for inverter battery cable protection	7	25	\N	850.00	1450.00	16.00	0	20	\N	SET	2026-07-04 18:25:19.236848+00
-57	USK-DCP-008	\N	200A ANL Fuse + Holder Set	200A ANL fuse with heavy-duty holder for large inverter installations	7	25	\N	1200.00	2000.00	16.00	0	15	\N	SET	2026-07-04 18:25:19.236848+00
-58	USK-DCP-009	\N	300A ANL Fuse + Holder Set	300A ANL bolt-down fuse and holder for commercial-scale battery systems	7	25	\N	1600.00	2700.00	16.00	0	10	\N	SET	2026-07-04 18:25:19.236848+00
-59	USK-DCP-010	\N	100A Battery Disconnect Switch (DC)	100A rotary DC isolator switch for battery bank disconnection, IP65 rated	7	25	\N	1100.00	1900.00	16.00	0	10	\N	PCS	2026-07-04 18:25:19.236848+00
-60	USK-DCP-011	\N	200A Battery Disconnect Switch (DC)	200A heavy-duty rotary DC isolator for large inverter and battery systems	7	25	\N	1800.00	3200.00	16.00	0	8	\N	PCS	2026-07-04 18:25:19.236848+00
-61	USK-DCP-012	\N	4-in-1-out PV Combiner Box 10A Fused	4-string combiner box with 10A string fuses, DC SPD and monitoring terminals	7	25	\N	5500.00	9200.00	16.00	0	4	\N	PCS	2026-07-04 18:25:19.236848+00
-62	USK-ACP-001	\N	AC Surge Protector SPD 2-pole Type 2	Type 2 AC surge arrester, 275V, 40kA Imax, for inverter AC output protection	8	12	\N	2200.00	3800.00	16.00	0	10	\N	PCS	2026-07-04 18:25:19.236848+00
-63	USK-ACP-002	\N	AC Surge Protector SPD 4-pole Type 2	4-pole Type 2 SPD for 3-phase systems, 40kA Imax, DIN rail mount	8	12	\N	3500.00	6000.00	16.00	0	8	\N	PCS	2026-07-04 18:25:19.236848+00
-64	USK-ACP-003	\N	16A RCBO 1P+N 30mA (MCB + RCD)	16A single-pole+neutral RCBO, 30mA sensitivity, 6kA breaking capacity	8	12	\N	1800.00	3200.00	16.00	0	12	\N	PCS	2026-07-04 18:25:19.236848+00
-65	USK-ACP-004	\N	25A RCBO 1P+N 30mA	25A RCBO for ring circuit and cooker protection, type AC, 6kA	8	12	\N	2000.00	3500.00	16.00	0	12	\N	PCS	2026-07-04 18:25:19.236848+00
-66	USK-ACP-005	\N	32A RCBO 1P+N 30mA	32A RCBO, suitable for shower and large appliance circuits, 6kA	8	13	\N	2200.00	3800.00	16.00	0	10	\N	PCS	2026-07-04 18:25:19.236848+00
-67	USK-ACP-006	\N	40A RCBO 1P+N 30mA	40A RCBO, 30mA, type AC, for high-load circuits with earth fault protection	8	13	\N	2600.00	4500.00	16.00	0	8	\N	PCS	2026-07-04 18:25:19.236848+00
-68	USK-ACP-007	\N	25A RCCB 2-pole 30mA	25A double-pole RCCB, 30mA, 6kA, type AC, for consumer unit main protection	8	15	\N	2500.00	4200.00	16.00	0	10	\N	PCS	2026-07-04 18:25:19.236848+00
-70	USK-ACP-009	\N	63A RCCB 2-pole 30mA	63A 2-pole RCCB, 30mA, for main consumer unit incoming protection	8	15	\N	3800.00	6500.00	16.00	0	8	\N	PCS	2026-07-04 18:25:19.236848+00
-71	USK-ACP-010	\N	63A RCCB 4-pole 30mA	63A 4-pole RCCB, 30mA, for 3-phase 3kW+ inverter systems	8	12	\N	5500.00	9500.00	16.00	0	6	\N	PCS	2026-07-04 18:25:19.236848+00
-72	USK-ACP-011	\N	100A RCCB 4-pole 30mA	100A 4-pole RCCB for commercial 3-phase solar system AC protection	8	12	\N	7500.00	12800.00	16.00	0	4	\N	PCS	2026-07-04 18:25:19.236848+00
-73	USK-EC-001	\N	1.5mm² Single Core Cable Red (per m)	PVC insulated 1.5mm² stranded copper cable, 300/500V, red	9	17	\N	28.00	48.00	16.00	0	200	\N	MTR	2026-07-04 18:25:19.236848+00
-74	USK-EC-002	\N	1.5mm² Single Core Cable Black (per m)	PVC insulated 1.5mm² stranded copper, 300/500V, black sleeve	9	17	\N	28.00	48.00	16.00	0	200	\N	MTR	2026-07-04 18:25:19.236848+00
-75	USK-EC-003	\N	2.5mm² Single Core Cable Red (per m)	2.5mm² stranded copper, PVC, 450/750V, suitable for lighting and socket circuits	9	17	\N	42.00	72.00	16.00	0	150	\N	MTR	2026-07-04 18:25:19.236848+00
-76	USK-EC-004	\N	2.5mm² Single Core Cable Black (per m)	2.5mm² stranded copper black, PVC insulated, 450/750V rated	9	17	\N	42.00	72.00	16.00	0	150	\N	MTR	2026-07-04 18:25:19.236848+00
-77	USK-EC-005	\N	4mm² Single Core Cable Red (per m)	4mm² stranded copper, for cooker circuits and sub-mains, 450/750V	9	17	\N	68.00	115.00	16.00	0	100	\N	MTR	2026-07-04 18:25:19.236848+00
-78	USK-EC-006	\N	4mm² Single Core Cable Black (per m)	4mm² stranded copper black, 450/750V, PVC insulated	9	17	\N	68.00	115.00	16.00	0	100	\N	MTR	2026-07-04 18:25:19.236848+00
-79	USK-EC-007	\N	6mm² Single Core Cable (per m)	6mm² stranded copper, 450/750V, for sub-mains and high-current outlets	9	16	\N	102.00	175.00	16.00	0	80	\N	MTR	2026-07-04 18:25:19.236848+00
-80	USK-EC-008	\N	10mm² Single Core Cable (per m)	10mm² stranded copper for main distribution runs and large appliances	9	16	\N	170.00	290.00	16.00	0	60	\N	MTR	2026-07-04 18:25:19.236848+00
-81	USK-EC-009	\N	16mm² Single Core Cable (per m)	16mm² stranded copper, suitable for main incoming supply sub-mains	9	16	\N	265.00	450.00	16.00	0	50	\N	MTR	2026-07-04 18:25:19.236848+00
-82	USK-EC-010	\N	1.5mm² Twin & Earth Cable (per m)	1.5mm² T&E flat cable, PVC, for lighting circuits and standard wiring	9	17	\N	72.00	120.00	16.00	0	120	\N	MTR	2026-07-04 18:25:19.236848+00
-83	USK-EC-011	\N	2.5mm² Twin & Earth Cable (per m)	2.5mm² T&E for power circuits, sockets, and ring mains	9	17	\N	108.00	185.00	16.00	0	100	\N	MTR	2026-07-04 18:25:19.236848+00
-84	USK-EC-012	\N	4mm² Twin & Earth Cable (per m)	4mm² T&E for cooker and higher-load circuits	9	17	\N	165.00	280.00	16.00	0	60	\N	MTR	2026-07-04 18:25:19.236848+00
-85	USK-EC-013	\N	16mm² 3-core Armoured Cable SWA (per m)	16mm² 3-core steel wire armoured cable, XLPE, for underground runs	9	16	\N	520.00	890.00	16.00	0	50	\N	MTR	2026-07-04 18:25:19.236848+00
-86	USK-EC-014	\N	25mm² 3-core Armoured Cable SWA (per m)	25mm² 3-core SWA for mains incoming and large sub-main runs	9	16	\N	780.00	1350.00	16.00	0	40	\N	MTR	2026-07-04 18:25:19.236848+00
-87	USK-EC-015	\N	35mm² 4-core Armoured Cable SWA (per m)	35mm² 4-core SWA for 3-phase distribution, XLPE insulated, aluminium wire armour	9	16	\N	1100.00	1900.00	16.00	0	30	\N	MTR	2026-07-04 18:25:19.236848+00
-88	USK-SW-001	\N	63A Double Pole Isolator Switch	63A DP switch-disconnector, 240V AC, DIN rail or surface mount, IP20	10	12	\N	1800.00	3200.00	16.00	0	10	\N	PCS	2026-07-04 18:26:24.823596+00
-89	USK-SW-002	\N	100A Double Pole Isolator Switch	100A DP isolator for main incoming protection, 240V, lockable handle	10	12	\N	2800.00	4800.00	16.00	0	8	\N	PCS	2026-07-04 18:26:24.823596+00
-90	USK-SW-003	\N	200A Double Pole Isolator Switch	200A DP main switch, suitable for commercial and large residential systems	10	12	\N	5500.00	9200.00	16.00	0	4	\N	PCS	2026-07-04 18:26:24.823596+00
-91	USK-SW-004	\N	63A 4-pole Isolator Switch	63A 4-pole switch-disconnector for 3-phase systems, 415V AC	10	13	\N	3200.00	5500.00	16.00	0	6	\N	PCS	2026-07-04 18:26:24.823596+00
-92	USK-SW-005	\N	63A Manual Transfer Switch 2-pole	63A 2-pole changeover switch (mains/generator), surface mount, IP40	10	16	\N	4500.00	7800.00	16.00	0	6	\N	PCS	2026-07-04 18:26:24.823596+00
-93	USK-SW-006	\N	100A Manual Transfer Switch 2-pole	100A 2-pole manual transfer switch for generator/solar changeover	10	16	\N	7000.00	12000.00	16.00	0	4	\N	PCS	2026-07-04 18:26:24.823596+00
-94	USK-SW-007	\N	63A Automatic Transfer Switch (ATS)	63A single-phase ATS, 230V, selects mains/solar/generator automatically	10	16	\N	8500.00	14500.00	16.00	0	4	\N	PCS	2026-07-04 18:26:24.823596+00
-95	USK-SW-008	\N	100A Automatic Transfer Switch (ATS)	100A ATS with LCD, priority selection, 50ms transfer time, DIN mount	10	16	\N	13000.00	22000.00	16.00	0	3	\N	PCS	2026-07-04 18:26:24.823596+00
-96	USK-SW-009	\N	63A 3-phase Automatic Transfer Switch	63A 3-pole ATS for 3-phase commercial solar systems, programmable	10	12	\N	18500.00	32000.00	16.00	0	2	\N	PCS	2026-07-04 18:26:24.823596+00
-97	USK-LT-001	\N	9W E27 LED Bulb Warm White 3000K	9W LED bulb, 810 lumens, 25,000hr lifespan, matte finish, 220-240V AC	11	18	\N	180.00	320.00	16.00	0	60	\N	PCS	2026-07-04 18:26:24.823596+00
-98	USK-LT-002	\N	18W E27 LED Bulb Daylight 6500K	18W LED bulb, 1620 lumens, cool daylight, suitable for workshops	11	18	\N	280.00	480.00	16.00	0	50	\N	PCS	2026-07-04 18:26:24.823596+00
-99	USK-LT-003	\N	7W E27 DC LED Bulb 12/24V	7W LED bulb, 12V and 24V DC compatible, 630 lumens, for solar-powered homes	11	25	\N	320.00	580.00	16.00	0	40	\N	PCS	2026-07-04 18:26:24.823596+00
-100	USK-LT-004	\N	20W LED Floodlight (IP65, Cool White)	20W waterproof LED flood, 1800 lumens, 6500K, for outdoor security lighting	11	18	\N	950.00	1650.00	16.00	0	20	\N	PCS	2026-07-04 18:26:24.823596+00
-101	USK-LT-005	\N	30W LED Floodlight (IP65)	30W outdoor floodlight, die-cast aluminium housing, 2700 lumens	11	18	\N	1350.00	2350.00	16.00	0	15	\N	PCS	2026-07-04 18:26:24.823596+00
-102	USK-LT-006	\N	50W LED Floodlight (IP65)	50W LED flood, 4500 lumens, wide-angle beam, heavy-duty for large areas	11	18	\N	1900.00	3350.00	16.00	0	15	\N	PCS	2026-07-04 18:26:24.823596+00
-103	USK-LT-007	\N	100W LED Floodlight (IP65)	100W high-power LED floodlight, 9000 lumens, stadium and yard use	11	18	\N	3200.00	5500.00	16.00	0	10	\N	PCS	2026-07-04 18:26:24.823596+00
-104	USK-LT-008	\N	36W LED Batten 1.2m (IP65, Linkable)	36W LED batten fitting, 3240 lumens, IP65, surface mount, linkable	11	19	\N	1200.00	2100.00	16.00	0	15	\N	PCS	2026-07-04 18:26:24.823596+00
-105	USK-LT-009	\N	18W LED Batten 0.6m (IP40)	18W slimline LED batten, 1620 lumens, 4000K neutral white, ceiling mount	11	19	\N	750.00	1300.00	16.00	0	15	\N	PCS	2026-07-04 18:26:24.823596+00
-106	USK-LT-010	\N	30W All-in-One Solar Street Light	30W integrated solar street light, 3000lm, PIR sensor, 8hr backup	11	4	\N	6500.00	11000.00	16.00	0	8	\N	PCS	2026-07-04 18:26:24.823596+00
-107	USK-LT-011	\N	60W All-in-One Solar Street Light	60W integrated solar street light, 6000lm, remote control, 12hr backup	11	4	\N	12000.00	19500.00	16.00	0	5	\N	PCS	2026-07-04 18:26:24.823596+00
-108	USK-LT-012	\N	100W Split-Type Solar Street Light	100W solar street light with separate panel and lithium battery, pole mount	11	4	\N	22000.00	36000.00	16.00	0	3	\N	PCS	2026-07-04 18:26:24.823596+00
-109	USK-LT-013	\N	5m DC 12V LED Strip Warm White (IP20)	5m flexible LED strip, 12V DC, warm white 3000K, 60 LEDs/m, self-adhesive	11	25	\N	850.00	1500.00	16.00	0	15	\N	ROLL	2026-07-04 18:26:24.823596+00
-110	USK-CT-001	\N	20mm PVC Conduit 3m Length (White)	20mm circular PVC conduit, 3-metre length, impact resistant, flame retardant	12	25	\N	85.00	150.00	16.00	0	80	\N	LEN	2026-07-04 18:26:24.823596+00
-111	USK-CT-002	\N	25mm PVC Conduit 3m Length (White)	25mm PVC conduit 3m, for larger cable bundles, British Standard compliant	12	25	\N	120.00	200.00	16.00	0	60	\N	LEN	2026-07-04 18:26:24.823596+00
-112	USK-CT-003	\N	32mm PVC Conduit 3m Length (White)	32mm heavy-gauge PVC conduit, 3m length, for main cable runs	12	25	\N	165.00	280.00	16.00	0	50	\N	LEN	2026-07-04 18:26:24.823596+00
-113	USK-CT-004	\N	20mm PVC Conduit Elbow 90°	20mm PVC conduit elbow, push-fit, for direction changes in conduit runs	12	25	\N	18.00	35.00	16.00	0	120	\N	PCS	2026-07-04 18:26:24.823596+00
-114	USK-CT-005	\N	25mm PVC Conduit Elbow 90°	25mm PVC elbow for conduit direction changes, push-fit connection	12	25	\N	25.00	48.00	16.00	0	80	\N	PCS	2026-07-04 18:26:24.823596+00
-115	USK-CT-006	\N	20mm PVC Conduit Coupler	20mm conduit coupler/joiner for extending conduit runs, twist-lock	12	25	\N	15.00	30.00	16.00	0	80	\N	PCS	2026-07-04 18:26:24.823596+00
-116	USK-CT-007	\N	20mm Conduit Saddle Clips (25pcs bag)	Heavy-duty PVC conduit saddle clips, includes screws, 25 pieces per bag	12	25	\N	80.00	150.00	16.00	0	30	\N	BAG	2026-07-04 18:26:24.823596+00
-117	USK-CT-008	\N	20×16mm PVC Trunking 2m Length	Mini PVC cable trunking with lid, 20×16mm, for surface cable management	12	14	\N	120.00	210.00	16.00	0	60	\N	LEN	2026-07-04 18:26:24.823596+00
-118	USK-CT-009	\N	40×25mm PVC Trunking 2m Length	40×25mm PVC trunking, suitable for multi-cable socket and switch runs	12	14	\N	185.00	320.00	16.00	0	50	\N	LEN	2026-07-04 18:26:24.823596+00
-119	USK-CT-010	\N	60×40mm PVC Trunking 2m Length	60×40mm heavy-duty PVC trunking with clip-on lid for large cable runs	12	14	\N	280.00	480.00	16.00	0	40	\N	LEN	2026-07-04 18:26:24.823596+00
-120	USK-CT-011	\N	PVC 20mm 4-way Junction Box (Round)	20mm entry 4-way junction box, IP40, for conduit installations	12	25	\N	45.00	85.00	16.00	0	80	\N	PCS	2026-07-04 18:26:24.823596+00
-121	USK-SS-001	\N	13A Single Switched Socket (White, Surface)	13A single switched socket, surface mount, white, BS1363 standard	13	16	\N	280.00	480.00	16.00	0	50	\N	PCS	2026-07-04 18:26:24.823596+00
-122	USK-SS-002	\N	13A Double Switched Socket (White, Surface)	13A double switched socket, surface box, white, twin-gang	13	16	\N	380.00	650.00	16.00	0	50	\N	PCS	2026-07-04 18:26:24.823596+00
-123	USK-SS-003	\N	13A Double Switched Socket (White, Flush)	13A twin gang flush socket with white flat plate, architrave finish	13	16	\N	420.00	720.00	16.00	0	40	\N	PCS	2026-07-04 18:26:24.823596+00
-124	USK-SS-004	\N	13A Double Socket with USB 5V/2.1A (Flush)	13A twin socket with dual USB charging ports, white, flush fit	13	14	\N	520.00	900.00	16.00	0	30	\N	PCS	2026-07-04 18:26:24.823596+00
-126	USK-SS-006	\N	2-Gang 1-Way Light Switch (White, Flush)	2-gang 1-way light switch, white, flush mount for dual lighting control	13	16	\N	220.00	380.00	16.00	0	50	\N	PCS	2026-07-04 18:26:24.823596+00
-127	USK-SS-007	\N	2-Gang 2-Way Light Switch (White, Flush)	2-gang 2-way switch for staircase and corridor light switching	13	16	\N	280.00	480.00	16.00	0	40	\N	PCS	2026-07-04 18:26:24.823596+00
-128	USK-SS-008	\N	13A Fused Connection Unit FCU (Switched)	13A FCU with neon indicator and 3A/13A fused outlet, white flush plate	13	14	\N	450.00	780.00	16.00	0	20	\N	PCS	2026-07-04 18:26:24.823596+00
-129	USK-SS-009	\N	13A Weatherproof Socket (IP44, Surface)	13A IP44 weatherproof socket, grey, for outdoor and garage installations	13	16	\N	650.00	1100.00	16.00	0	20	\N	PCS	2026-07-04 18:26:24.823596+00
-130	USK-SS-010	\N	16A Industrial Socket 3-pin 240V (IP44)	16A industrial blue plug socket, 3-pin 240V, IP44, for site equipment	13	14	\N	1200.00	2100.00	16.00	0	10	\N	PCS	2026-07-04 18:26:24.823596+00
-131	USK-DB-001	\N	4-Way Surface Consumer Unit (Blanks incl.)	4-way surface-mount DB box, with blanks, suitable for 4 MCBs, steel	14	15	\N	1200.00	2100.00	16.00	0	10	\N	PCS	2026-07-04 18:26:24.823596+00
-132	USK-DB-002	\N	8-Way Surface Consumer Unit	8-way surface-mount consumer unit, DIN rail, 100A busbar, with cover	14	15	\N	1800.00	3100.00	16.00	0	8	\N	PCS	2026-07-04 18:26:24.823596+00
-133	USK-DB-003	\N	8-Way Flush Consumer Unit	8-way flush-fit DB box, recessed installation, white door with lock	14	15	\N	2000.00	3500.00	16.00	0	8	\N	PCS	2026-07-04 18:26:24.823596+00
-134	USK-DB-004	\N	12-Way Flush Consumer Unit	12-way flush consumer unit, 100A rated busbar, transparent inner cover	14	12	\N	2800.00	4800.00	16.00	0	6	\N	PCS	2026-07-04 18:26:24.823596+00
-135	USK-DB-005	\N	16-Way Flush Consumer Unit	16-way flush-fit DB, dual RCD section support, suitable for large homes	14	12	\N	3500.00	6000.00	16.00	0	4	\N	PCS	2026-07-04 18:26:24.823596+00
-136	USK-DB-006	\N	6+6 Split Board Dual RCD Consumer Unit	6+6 way split load consumer unit with 2× 80A RCDs pre-fitted	14	12	\N	4200.00	7200.00	16.00	0	5	\N	PCS	2026-07-04 18:26:24.823596+00
-137	USK-DB-007	\N	4-Way IP65 Steel Enclosure (Outdoor)	4-way IP65 powder-coated steel enclosure for outdoor solar DB applications	14	25	\N	1800.00	3200.00	16.00	0	8	\N	PCS	2026-07-04 18:26:24.823596+00
-138	USK-DB-008	\N	8-Way IP65 Steel Enclosure (Outdoor)	8-way IP65 steel DB enclosure, lockable, for external metering/solar DBs	14	25	\N	2600.00	4500.00	16.00	0	6	\N	PCS	2026-07-04 18:26:24.823596+00
-139	USK-DB-009	\N	12-Way IP65 Enclosure with DIN Rail	12-way IP65 enclosure with pre-fitted DIN rail for MPPT and controller mounting	14	25	\N	3500.00	6000.00	16.00	0	5	\N	PCS	2026-07-04 18:26:24.823596+00
-140	USK-CB-001	\N	6A MCB Single Pole B-Curve (DIN Rail)	6A 1-pole B-curve MCB, 6kA breaking capacity, 230/400V, DIN rail	15	12	\N	220.00	380.00	16.00	0	40	\N	PCS	2026-07-04 18:27:32.569077+00
-141	USK-CB-002	\N	10A MCB Single Pole B-Curve	10A 1-pole B-curve MCB, for lighting and small socket circuits, 6kA	15	12	\N	220.00	380.00	16.00	0	50	\N	PCS	2026-07-04 18:27:32.569077+00
-142	USK-CB-003	\N	16A MCB Single Pole B-Curve	16A 1-pole B-curve MCB, for ring main circuits, 6kA, DIN rail	15	12	\N	220.00	380.00	16.00	0	60	\N	PCS	2026-07-04 18:27:32.569077+00
-143	USK-CB-004	\N	20A MCB Single Pole B-Curve	20A 1-pole MCB for cooker and high-load socket circuits	15	12	\N	220.00	380.00	16.00	0	40	\N	PCS	2026-07-04 18:27:32.569077+00
-144	USK-CB-005	\N	25A MCB Single Pole B-Curve	25A 1-pole MCB, suitable for shower and water-heater circuits	15	13	\N	240.00	420.00	16.00	0	30	\N	PCS	2026-07-04 18:27:32.569077+00
-145	USK-CB-006	\N	32A MCB Single Pole B-Curve	32A 1-pole MCB, for electric shower and high-demand appliances	15	13	\N	250.00	440.00	16.00	0	30	\N	PCS	2026-07-04 18:27:32.569077+00
-146	USK-CB-007	\N	40A MCB Single Pole C-Curve	40A 1-pole C-curve MCB for inductive loads and motor starting	15	13	\N	280.00	480.00	16.00	0	20	\N	PCS	2026-07-04 18:27:32.569077+00
-147	USK-CB-008	\N	63A MCB Single Pole C-Curve	63A 1-pole C-curve MCB for sub-mains and motor protection	15	13	\N	380.00	650.00	16.00	0	15	\N	PCS	2026-07-04 18:27:32.569077+00
-148	USK-CB-009	\N	10A MCB Double Pole B-Curve	10A 2-pole MCB for small inverter AC outputs and lighting panels	15	12	\N	480.00	820.00	16.00	0	20	\N	PCS	2026-07-04 18:27:32.569077+00
-149	USK-CB-010	\N	16A MCB Double Pole B-Curve	16A 2-pole MCB, for inverter AC breaker and circuit isolation	15	12	\N	500.00	860.00	16.00	0	25	\N	PCS	2026-07-04 18:27:32.569077+00
-150	USK-CB-011	\N	20A MCB Double Pole B-Curve	20A 2-pole MCB for water heaters and double-pole isolation circuits	15	12	\N	540.00	920.00	16.00	0	20	\N	PCS	2026-07-04 18:27:32.569077+00
-151	USK-CB-012	\N	32A MCB Double Pole B-Curve	32A 2-pole MCB, for main-switch duties in small consumer units	15	12	\N	580.00	980.00	16.00	0	20	\N	PCS	2026-07-04 18:27:32.569077+00
-152	USK-CB-013	\N	63A MCB Double Pole C-Curve	63A 2-pole C-curve MCB, for main incoming protection in large DBs	15	12	\N	850.00	1450.00	16.00	0	15	\N	PCS	2026-07-04 18:27:32.569077+00
-153	USK-CB-014	\N	100A MCB Double Pole C-Curve	100A 2-pole C-curve MCB for commercial main incoming supply protection	15	12	\N	1400.00	2400.00	16.00	0	8	\N	PCS	2026-07-04 18:27:32.569077+00
-154	USK-TL-001	\N	Digital Multimeter Auto-Ranging (600V CAT III)	Auto-ranging DMM, AC/DC voltage 0-600V, resistance, continuity, diode test	16	21	\N	1800.00	3200.00	16.00	0	6	\N	PCS	2026-07-04 18:27:32.569077+00
-155	USK-TL-002	\N	Clamp Meter 400A AC/DC True RMS	True RMS clamp meter, AC/DC 400A, voltage, resistance, frequency, data hold	16	21	\N	4500.00	7800.00	16.00	0	4	\N	PCS	2026-07-04 18:27:32.569077+00
-156	USK-TL-003	\N	Wire Stripper & Cutter (0.5–6mm²)	Automatic wire stripper, adjustable jaw, handles 0.5–6mm² cable	16	21	\N	950.00	1650.00	16.00	0	8	\N	PCS	2026-07-04 18:27:32.569077+00
-157	USK-TL-004	\N	MC4 Solar Connector Crimping Tool Set	MC4 crimping pliers with 2.5mm² and 4mm² dies, connector assembly tool	16	25	\N	2800.00	4800.00	16.00	0	5	\N	SET	2026-07-04 18:27:32.569077+00
-158	USK-TL-005	\N	Hydraulic Cable Lug Crimper 10-300mm²	Hydraulic hand crimper for copper/aluminium cable lugs, 10 dies included	16	21	\N	8500.00	14500.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
-159	USK-TL-006	\N	Insulation Resistance Tester 500V (Megger)	500V digital insulation tester, 200MΩ range, continuity test, data hold	16	25	\N	12000.00	20000.00	16.00	0	2	\N	PCS	2026-07-04 18:27:32.569077+00
-160	USK-TL-007	\N	Non-Contact Voltage Tester 12-1000V AC	Pen-type non-contact voltage detector, LED + beep alert, 12-1000V AC	16	21	\N	650.00	1150.00	16.00	0	8	\N	PCS	2026-07-04 18:27:32.569077+00
-161	USK-TL-008	\N	Electrical Insulating Tape 19mm×20m	PVC electrical insulation tape, self-adhesive, flame retardant, black	16	25	\N	80.00	150.00	16.00	0	60	\N	ROLL	2026-07-04 18:27:32.569077+00
-162	USK-TL-009	\N	Cable Ties 200mm Nylon (100pcs bag)	Natural nylon 200mm cable ties, 2.5mm width, reusable ratchet locking	16	25	\N	180.00	320.00	16.00	0	30	\N	BAG	2026-07-04 18:27:32.569077+00
-163	USK-TL-010	\N	Masonry Drill Bit Set 5–13mm (8pcs)	Tungsten carbide-tipped masonry drill bits, SDS-compatible shank, 8 sizes	16	21	\N	850.00	1500.00	16.00	0	8	\N	SET	2026-07-04 18:27:32.569077+00
-164	USK-TL-011	\N	Safety Helmet (Electrician, White, EN397)	White ABS hard hat, EN397, adjustable ratchet harness, with brim	16	25	\N	1200.00	2100.00	16.00	0	4	\N	PCS	2026-07-04 18:27:32.569077+00
-165	USK-TL-012	\N	Insulating Safety Gloves 1000V Class 0	Latex insulating gloves, Class 0 (1000V AC), EN60903, size 10 (XL)	16	25	\N	1800.00	3200.00	16.00	0	5	\N	PAIR	2026-07-04 18:27:32.569077+00
-166	USK-WP-001	\N	12/24V DC Solar Surface Pump 40W	12V/24V DC surface pump, 2400 L/hr, max head 15m, for tank filling	17	25	\N	5500.00	9200.00	16.00	0	4	\N	PCS	2026-07-04 18:27:32.569077+00
-167	USK-WP-002	\N	24V DC Solar Submersible Pump 200W	200W DC submersible, 1200 L/hr, max head 60m, 2-inch outlet, MPPT compatible	17	24	\N	18000.00	30000.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
-168	USK-WP-003	\N	48V DC Solar Submersible Pump 500W	500W 48V solar-direct submersible, 3000 L/hr, 80m head, 4-inch borehole	17	24	\N	32000.00	52000.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
-169	USK-WP-004	\N	AC Submersible Pump 0.5HP 240V 2"	0.5HP 240V AC submersible, stainless body, 1500 L/hr, thermal overload	17	20	\N	14000.00	23500.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
-170	USK-WP-005	\N	AC Submersible Pump 1HP 240V 4"	1HP 240V submersible, 4-inch borehole, 2800 L/hr, 60m max head	17	20	\N	22000.00	36000.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
-171	USK-WP-006	\N	AC Surface Centrifugal Pump 0.5HP 240V	0.5HP surface centrifugal pump, self-priming, 2400 L/hr, stainless impeller	17	20	\N	9500.00	16000.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
-172	USK-WP-007	\N	Solar Pump Controller MPPT 1.5kW 220V	MPPT solar pump VFD controller, 1.5kW, compatible with AC submersibles	17	24	\N	12000.00	20000.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
-173	USK-WP-008	\N	Pressure Vessel Tank 24L (for pump systems)	24-litre diaphragm pressure tank, 10 bar rated, for AC pump systems	17	25	\N	5500.00	9500.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
-174	USK-WP-009	\N	Float Switch for Water Tank (Normally Open)	Universal float switch, 240V/10A, for automatic tank level control	17	25	\N	450.00	800.00	16.00	0	10	\N	PCS	2026-07-04 18:27:32.569077+00
-175	USK-SA-001	\N	DC Chest Freezer 12/24V 45L (Solar-Powered)	45-litre 12/24V DC chest freezer, A++ energy class, foam insulated	18	22	\N	28000.00	45000.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
-176	USK-SA-002	\N	DC Chest Freezer 12/24V 90L (Solar-Powered)	90L 12/24V DC compressor freezer, ideal for solar off-grid homes	18	22	\N	42000.00	68000.00	16.00	0	2	\N	PCS	2026-07-04 18:27:32.569077+00
-177	USK-SA-003	\N	DC Chest Freezer 12/24V 130L	130L 12/24V chest freezer, digital thermostat, energy-efficient compressor	18	22	\N	58000.00	92000.00	16.00	0	2	\N	PCS	2026-07-04 18:27:32.569077+00
-178	USK-SA-004	\N	DC Ceiling Fan 12V 56-inch (Solar)	56-inch 12V DC ceiling fan, 3 blades, 5 speeds, remote control, for solar homes	18	22	\N	5500.00	9200.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
-179	USK-SA-005	\N	DC Table Fan 12/24V 16-inch (Solar)	16-inch 12/24V oscillating table fan, 3-speed, low-energy for solar homes	18	22	\N	3200.00	5500.00	16.00	0	4	\N	PCS	2026-07-04 18:27:32.569077+00
-180	USK-SA-006	\N	LED Smart TV 32" 12/24V DC (Solar Compatible)	32-inch HD LED TV, 12/24V DC direct, Android OS, HDMI×2, USB×2	18	22	\N	22000.00	36000.00	16.00	0	2	\N	PCS	2026-07-04 18:27:32.569077+00
-181	USK-SA-007	\N	LED Smart TV 43" Full HD (AC, Low Wattage 70W)	43-inch FHD LED smart TV, 70W consumption, Android 11, Wi-Fi, for solar homes	18	23	\N	38000.00	62000.00	16.00	0	2	\N	PCS	2026-07-04 18:27:32.569077+00
-182	USK-SA-008	\N	Blender 1.5L 300W Energy Efficient	1.5L glass jar blender, 300W, stainless blades, 3-speed + pulse, 240V AC	18	22	\N	2800.00	4800.00	16.00	0	4	\N	PCS	2026-07-04 18:27:32.569077+00
-183	USK-SA-009	\N	Electric Kettle 1.7L 1500W (Stainless)	1.7L stainless steel kettle, 1500W, auto shut-off, boil-dry protection	18	22	\N	2200.00	3800.00	16.00	0	4	\N	PCS	2026-07-04 18:27:32.569077+00
-184	USK-SA-010	\N	Rice Cooker 1L 350W (Non-stick Bowl)	1-litre rice cooker, 350W, non-stick pot, warm function, glass lid	18	22	\N	1800.00	3200.00	16.00	0	4	\N	PCS	2026-07-04 18:27:32.569077+00
-185	USK-SA-011	\N	Semi-Automatic Washing Machine 6kg 240V	6kg twin-tub washing machine, 480W, low water consumption, for solar homes	18	22	\N	24000.00	40000.00	16.00	0	2	\N	PCS	2026-07-04 18:27:32.569077+00
-186	USK-ACC-001	\N	70mm² Battery Cable Set Red+Black 1m Pair	1m each red and black 70mm² tinned copper welding cable with lugs	19	25	\N	1200.00	2100.00	16.00	0	10	\N	SET	2026-07-04 18:27:32.569077+00
-187	USK-ACC-002	\N	16mm² Battery Cable Set Red+Black 1m Pair	1m each red and black 16mm² cable with ring lugs, for small inverters	19	25	\N	380.00	680.00	16.00	0	15	\N	SET	2026-07-04 18:27:32.569077+00
-188	USK-ACC-003	\N	4-way Positive Copper Bus Bar (10mm hole)	4-way copper bus bar, positive, for parallel battery connections, 200A	19	25	\N	650.00	1150.00	16.00	0	15	\N	PCS	2026-07-04 18:27:32.569077+00
-189	USK-ACC-004	\N	4-way Negative Copper Bus Bar (10mm hole)	4-way copper bus bar, negative terminal block for DC distribution	19	25	\N	650.00	1150.00	16.00	0	15	\N	PCS	2026-07-04 18:27:32.569077+00
-190	USK-ACC-005	\N	Battery Monitor 500A Shunt + LCD Display	500A shunt-based battery monitor, LCD, measures voltage/current/AH/time	19	25	\N	3200.00	5500.00	16.00	0	6	\N	PCS	2026-07-04 18:27:32.569077+00
-191	USK-ACC-006	\N	35mm DIN Rail Aluminium 1m	1-metre aluminium DIN 35mm rail for MCB, RCCB, and DIN-mount components	19	25	\N	280.00	500.00	16.00	0	20	\N	LEN	2026-07-04 18:27:32.569077+00
-192	USK-ACC-007	\N	Copper Cable Lugs Assorted Set (50pcs)	50-piece copper cable lug assortment: 6, 10, 16, 25, 35, 50mm² sizes	19	25	\N	380.00	680.00	16.00	0	15	\N	SET	2026-07-04 18:27:32.569077+00
-193	USK-ACC-008	\N	Heat Shrink Tubing Set (5 colours, 5m each)	Adhesive-lined heat shrink tube set, 5 sizes/colours, 2:1 ratio, 5m each	19	25	\N	450.00	800.00	16.00	0	12	\N	SET	2026-07-04 18:27:32.569077+00
-194	USK-ACC-009	\N	IP66 Waterproof Junction Box (Small, 100×68mm)	IP66 polycarbonate junction box, 100×68×50mm, cable gland holes, lockable	19	25	\N	350.00	620.00	16.00	0	20	\N	PCS	2026-07-04 18:27:32.569077+00
-195	USK-ACC-010	\N	Copper-Clad Earthing Rod 1.5m (14mm diameter)	1.5m copper-bonded steel earthing rod, 14mm diameter, with drive-cap	19	25	\N	1200.00	2100.00	16.00	0	8	\N	PCS	2026-07-04 18:27:32.569077+00
-196	USK-ACC-011	\N	Earthing Rod Clamp (Acorn Type)	Acorn-type earthing clamp for connecting earth wire to earthing rod	19	25	\N	180.00	320.00	16.00	0	15	\N	PCS	2026-07-04 18:27:32.569077+00
-197	USK-ACC-012	\N	Nylon Cable Gland M20 (10pcs bag)	M20 nylon cable glands, IP68, suitable for 6–12mm cables, grey, 10pcs	19	25	\N	180.00	320.00	16.00	0	25	\N	BAG	2026-07-04 18:27:32.569077+00
-198	USK-ACC-013	\N	Electrical Safety Warning Labels Set (30pcs)	Self-adhesive electrical hazard, earthing, lockout and solar DC warning labels	19	25	\N	350.00	620.00	16.00	0	12	\N	SET	2026-07-04 18:27:32.569077+00
-199	USK-ACC-014	\N	Silicone Sealant Clear 280ml (Weatherproof)	Clear neutral-cure silicone sealant, UV resistant, for outdoor enclosures	19	25	\N	650.00	1150.00	16.00	0	10	\N	TUB	2026-07-04 18:27:32.569077+00
-200	USK-ACC-015	\N	Thermal Compound Paste 5g (Heatsink Grade)	High-conductivity thermal paste for inverter/charge controller heatsinks	19	25	\N	280.00	500.00	16.00	0	8	\N	TUB	2026-07-04 18:27:32.569077+00
+53	USK-DCP-004	USKD00000053	DC Surge Arrester SPD 600VDC Type 2	Class II DC SPD for solar array protection, 40kA Imax, DIN rail mount	7	12	\N	2800.00	4800.00	16.00	0	8	\N	PCS	2026-07-04 18:25:19.236848+00
+67	USK-ACP-006	USKA00000067	40A RCBO 1P+N 30mA	40A RCBO, 30mA, type AC, for high-load circuits with earth fault protection	8	13	\N	2600.00	4500.00	16.00	0	8	\N	PCS	2026-07-04 18:25:19.236848+00
+78	USK-EC-006	USKE00000078	4mm² Single Core Cable Black (per m)	4mm² stranded copper black, 450/750V, PVC insulated	9	17	\N	68.00	115.00	16.00	0	100	\N	MTR	2026-07-04 18:25:19.236848+00
+85	USK-EC-013	USKE00000085	16mm² 3-core Armoured Cable SWA (per m)	16mm² 3-core steel wire armoured cable, XLPE, for underground runs	9	16	\N	520.00	890.00	16.00	0	50	\N	MTR	2026-07-04 18:25:19.236848+00
+99	USK-LT-003	USKL00000099	7W E27 DC LED Bulb 12/24V	7W LED bulb, 12V and 24V DC compatible, 630 lumens, for solar-powered homes	11	25	\N	320.00	580.00	16.00	0	40	\N	PCS	2026-07-04 18:26:24.823596+00
+111	USK-CT-002	USKC00000111	25mm PVC Conduit 3m Length (White)	25mm PVC conduit 3m, for larger cable bundles, British Standard compliant	12	25	\N	120.00	200.00	16.00	0	60	\N	LEN	2026-07-04 18:26:24.823596+00
+125	USK-SS-005	USKS00000125	1-Gang 1-Way Light Switch (White, Flush)	1-gang 1-way switch, white flat plate, for standard lighting circuits	13	16	\N	150.00	260.00	16.00	0	60	\N	PCS	2026-07-04 18:26:24.823596+00
+1	USK-SP-001	USKS00000001	100W Monocrystalline Solar Panel	Grade A 100W mono panel, 18V Voc, IP68 junction box, 25-year power output warranty	1	1	\N	4800.00	6800.00	16.00	0	10	\N	PCS	2026-07-04 18:24:23.042112+00
+2	USK-SP-002	USKS00000002	200W Monocrystalline Solar Panel	Grade A 200W mono panel, 24V system compatible, aluminium frame, 5 busbars	1	2	\N	9500.00	13500.00	16.00	0	8	\N	PCS	2026-07-04 18:24:23.042112+00
+3	USK-SP-003	USKS00000003	250W Polycrystalline Solar Panel	250W poly panel, cost-effective for large installations, 60-cell	1	2	\N	10500.00	15000.00	16.00	0	6	\N	PCS	2026-07-04 18:24:23.042112+00
+4	USK-SP-004	USKS00000004	300W Monocrystalline Solar Panel	300W mono panel, 24V/48V system ready, high-efficiency 60-cell module	1	3	\N	12500.00	17500.00	16.00	0	10	\N	PCS	2026-07-04 18:24:23.042112+00
+5	USK-SP-005	USKS00000005	400W Mono Half-Cell Solar Panel	400W half-cell PERC panel, dual-glass option, excellent low-light performance	1	1	\N	15500.00	22000.00	16.00	0	15	\N	PCS	2026-07-04 18:24:23.042112+00
+6	USK-SP-006	USKS00000006	500W Mono Half-Cell Solar Panel	500W premium half-cell panel, 48V system optimised, 25-year linear warranty	1	3	\N	19000.00	27500.00	16.00	0	10	\N	PCS	2026-07-04 18:24:23.042112+00
+7	USK-SP-007	USKS00000007	550W Mono Half-Cell Solar Panel	550W large format half-cell panel, ideal for commercial rooftop systems	1	1	\N	21000.00	30000.00	16.00	0	8	\N	PCS	2026-07-04 18:24:23.042112+00
+8	USK-SP-008	USKS00000008	100W Flexible Solar Panel	Lightweight flexible mono panel, suitable for curved surfaces and marine use	1	4	\N	7500.00	12000.00	16.00	0	5	\N	PCS	2026-07-04 18:24:23.042112+00
+9	USK-INV-001	USKI00000009	1kVA 12V Pure Sine Wave Inverter	1000VA/800W pure sine wave off-grid inverter, built-in charger 20A, LCD display	2	4	\N	8500.00	14000.00	16.00	0	5	\N	PCS	2026-07-04 18:24:23.042112+00
+10	USK-INV-002	USKI00000010	2kVA 24V Pure Sine Wave Inverter	2000VA/1600W PSW inverter, 30A MPPT charger, USB output, over-load protection	2	4	\N	15000.00	24000.00	16.00	0	4	\N	PCS	2026-07-04 18:24:23.042112+00
+11	USK-INV-003	USKI00000011	3kVA 24V Off-Grid Inverter Charger	3kVA pure sine wave with built-in 60A MPPT charge controller	2	6	\N	22000.00	36000.00	16.00	0	3	\N	PCS	2026-07-04 18:24:23.042112+00
+12	USK-INV-004	USKI00000012	5kVA 48V Off-Grid Inverter Charger	5kVA/4000W off-grid, 60A MPPT, configurable AC/solar priority, RS485	2	6	\N	38000.00	62000.00	16.00	0	3	\N	PCS	2026-07-04 18:24:23.042112+00
+37	USK-MS-005	USKM00000037	Flat Roof Ballast Frame 4-panel	Ballast-weighted frame, no roof penetration, suitable for concrete flat roofs	5	25	\N	7200.00	11500.00	16.00	0	3	\N	SET	2026-07-04 18:25:19.236848+00
+41	USK-MS-009	USKM00000041	Tilt Adjustable Frame 2-panel (0-30°)	Adjustable-angle aluminium frame for flat surfaces, 0° to 30° tilt range	5	25	\N	5200.00	8500.00	16.00	0	4	\N	SET	2026-07-04 18:25:19.236848+00
+128	USK-SS-008	USKS00000128	13A Fused Connection Unit FCU (Switched)	13A FCU with neon indicator and 3A/13A fused outlet, white flush plate	13	14	\N	450.00	780.00	16.00	0	20	\N	PCS	2026-07-04 18:26:24.823596+00
+143	USK-CB-004	USKC00000143	20A MCB Single Pole B-Curve	20A 1-pole MCB for cooker and high-load socket circuits	15	12	\N	220.00	380.00	16.00	0	40	\N	PCS	2026-07-04 18:27:32.569077+00
+153	USK-CB-014	USKC00000153	100A MCB Double Pole C-Curve	100A 2-pole C-curve MCB for commercial main incoming supply protection	15	12	\N	1400.00	2400.00	16.00	0	8	\N	PCS	2026-07-04 18:27:32.569077+00
+158	USK-TL-005	USKT00000158	Hydraulic Cable Lug Crimper 10-300mm²	Hydraulic hand crimper for copper/aluminium cable lugs, 10 dies included	16	21	\N	8500.00	14500.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
+169	USK-WP-004	USKW00000169	AC Submersible Pump 0.5HP 240V 2"	0.5HP 240V AC submersible, stainless body, 1500 L/hr, thermal overload	17	20	\N	14000.00	23500.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
+181	USK-SA-007	USKS00000181	LED Smart TV 43" Full HD (AC, Low Wattage 70W)	43-inch FHD LED smart TV, 70W consumption, Android 11, Wi-Fi, for solar homes	18	23	\N	38000.00	62000.00	16.00	0	2	\N	PCS	2026-07-04 18:27:32.569077+00
+69	USK-ACP-008	USKA00000069	40A RCCB 2-pole 30mA	40A 2-pole RCCB 30mA, Hager type, for 1-phase solar inverter output DB	8	15	\N	3000.00	5200.00	16.00	0	10	\N	PCS	2026-07-04 18:25:19.236848+00
+13	USK-INV-005	USKI00000013	3kVA 24V Hybrid Inverter	3kVA hybrid inverter, 80A MPPT, grid-tie and off-grid, Wi-Fi monitoring	2	6	\N	32000.00	52000.00	16.00	0	3	\N	PCS	2026-07-04 18:24:23.042112+00
+14	USK-INV-006	USKI00000014	5kVA 48V Hybrid Inverter	5kVA hybrid, 100A MPPT, parallel-able up to 9 units, app monitoring	2	6	\N	52000.00	85000.00	16.00	0	3	\N	PCS	2026-07-04 18:24:23.042112+00
+15	USK-INV-007	USKI00000015	6kVA 48V Hybrid Inverter	6kVA hybrid, 120A MPPT, three-phase parallel capable, export-limited mode	2	7	\N	62000.00	98000.00	16.00	0	2	\N	PCS	2026-07-04 18:24:23.042112+00
+16	USK-INV-008	USKI00000016	8kVA 48V Hybrid Inverter	8kVA hybrid, 120A MPPT, split-phase, compatible with lithium and lead-acid	2	7	\N	82000.00	132000.00	16.00	0	2	\N	PCS	2026-07-04 18:24:23.042112+00
+17	USK-INV-009	USKI00000017	10kVA 48V Hybrid Inverter	10kVA three-phase hybrid, 180A MPPT, BMS communication, SCADA ready	2	6	\N	105000.00	168000.00	16.00	0	2	\N	PCS	2026-07-04 18:24:23.042112+00
+18	USK-INV-010	USKI00000018	3kVA All-in-One Solar System (Hybrid)	3kVA hybrid inverter with 100Ah lithium battery and 300W panel bundled package	2	4	\N	65000.00	105000.00	16.00	0	2	\N	SET	2026-07-04 18:24:23.042112+00
+19	USK-LB-001	USKL00000019	50Ah 12V LiFePO4 Battery	Slim 50Ah lithium iron phosphate, built-in BMS, 4000+ cycle life, rack-mountable	3	10	\N	13500.00	20000.00	16.00	0	5	\N	PCS	2026-07-04 18:24:23.042112+00
+20	USK-LB-002	USKL00000020	100Ah 12V LiFePO4 Battery	100Ah 12V LiFePO4, built-in 100A BMS, Bluetooth monitor app compatible	3	10	\N	24000.00	35000.00	16.00	0	5	\N	PCS	2026-07-04 18:24:23.042112+00
+21	USK-LB-003	USKL00000021	100Ah 24V LiFePO4 Battery	100Ah 24V lithium, suitable for 24V inverter systems, high discharge rate	3	9	\N	42000.00	62000.00	16.00	0	4	\N	PCS	2026-07-04 18:24:23.042112+00
+22	USK-LB-004	USKL00000022	200Ah 12V LiFePO4 Battery	200Ah 12V heavy-duty lithium, 200A continuous discharge, drop-in lead-acid replacement	3	10	\N	45000.00	68000.00	16.00	0	3	\N	PCS	2026-07-04 18:24:23.042112+00
+23	USK-LB-005	USKL00000023	100Ah 48V LiFePO4 Battery (5.12kWh)	5.12kWh 48V rack-mount lithium, BMS with RS485/CAN for Growatt/Victron/Voltronic	3	9	\N	78000.00	118000.00	16.00	0	3	\N	PCS	2026-07-04 18:24:23.042112+00
+24	USK-LB-006	USKL00000024	200Ah 48V LiFePO4 Battery (9.6kWh)	9.6kWh 48V rack-mount lithium module, stackable up to 15 units, active balancing	3	9	\N	148000.00	225000.00	16.00	0	2	\N	PCS	2026-07-04 18:24:23.042112+00
+25	USK-LB-007	USKL00000025	280Ah 12V LiFePO4 Grade A Cell Pack	Grade A CATL/EVE 280Ah cells assembled, 4S configuration, BMS included	3	25	\N	58000.00	88000.00	16.00	0	2	\N	PCS	2026-07-04 18:24:23.042112+00
+26	USK-CC-001	USKC00000026	10A PWM Charge Controller 12/24V Auto	Basic 10A PWM controller, LCD display, USB 5V output, overcharge protection	4	4	\N	1200.00	2000.00	16.00	0	10	\N	PCS	2026-07-04 18:24:23.042112+00
+27	USK-CC-002	USKC00000027	20A PWM Charge Controller 12/24V	20A PWM with dual USB, load timer function, temperature compensation	4	11	\N	1800.00	3000.00	16.00	0	10	\N	PCS	2026-07-04 18:24:23.042112+00
+28	USK-CC-003	USKC00000028	30A MPPT Charge Controller 12/24V	Tracer 3210AN, 30A MPPT, MT50 display compatible, max PV 100V	4	11	\N	5500.00	9000.00	16.00	0	8	\N	PCS	2026-07-04 18:24:23.042112+00
+29	USK-CC-004	USKC00000029	40A MPPT Charge Controller 12/24/48V	40A MPPT, Tracer 4215BN, 150V PV input, supports LiFePO4/AGM/Gel/Flooded	4	11	\N	7500.00	12500.00	16.00	0	6	\N	PCS	2026-07-04 18:24:23.042112+00
+30	USK-CC-005	USKC00000030	60A MPPT Charge Controller 12-48V	60A MPPT, 150V PV input, RS485, remote monitoring via eBox-WiFi dongle	4	11	\N	11000.00	18000.00	16.00	0	5	\N	PCS	2026-07-04 18:24:23.042112+00
+31	USK-CC-006	USKC00000031	80A MPPT Charge Controller 12-48V	80A MPPT, 150V, Epever Tracer AN series, data logging, load output 80A	4	11	\N	15000.00	24500.00	16.00	0	4	\N	PCS	2026-07-04 18:24:23.042112+00
+32	USK-CC-007	USKC00000032	100A MPPT Charge Controller 12-48V	Victron SmartSolar 100/30A – premium MPPT, Bluetooth built-in, VE.Direct	4	5	\N	19000.00	31000.00	16.00	0	3	\N	PCS	2026-07-04 18:24:23.042112+00
+33	USK-MS-001	USKM00000033	Roof Mount L-Feet & Rail Kit (2-panel)	Aluminium rail with L-feet, mid/end clamps, suitable for metal or tile roofs	5	25	\N	3500.00	5800.00	16.00	0	8	\N	SET	2026-07-04 18:25:19.236848+00
+34	USK-MS-002	USKM00000034	Roof Mount Frame 4-panel	Complete 4-panel roof racking system, anodised aluminium, wind rated 160km/h	5	25	\N	6800.00	11000.00	16.00	0	5	\N	SET	2026-07-04 18:25:19.236848+00
+35	USK-MS-003	USKM00000035	Ground Mount Frame 4-panel (Adjustable)	Steel galvanised ground mount, angle 15°-45° adjustable, 4-panel capacity	5	25	\N	8500.00	14000.00	16.00	0	4	\N	SET	2026-07-04 18:25:19.236848+00
+36	USK-MS-004	USKM00000036	Pole Mount Single Panel (50mm pole)	Single-panel pole mount bracket, top-of-pole design, 360° rotation	5	25	\N	2800.00	4500.00	16.00	0	6	\N	PCS	2026-07-04 18:25:19.236848+00
+38	USK-MS-006	USKM00000038	Aluminium Mid Clamp (35mm module frame)	Standard mid clamp for 35mm thick solar panel frames, anodised aluminium	5	25	\N	120.00	200.00	16.00	0	80	\N	PCS	2026-07-04 18:25:19.236848+00
+39	USK-MS-007	USKM00000039	Aluminium End Clamp (35mm module frame)	End clamp for solar panel rail termination, anodised aluminium	5	25	\N	150.00	250.00	16.00	0	80	\N	PCS	2026-07-04 18:25:19.236848+00
+40	USK-MS-008	USKM00000040	T-Bolt & Square Nut Set (10 pairs)	M8 T-bolt and square nut set for solar rail channel mounting	5	25	\N	250.00	420.00	16.00	0	40	\N	SET	2026-07-04 18:25:19.236848+00
+42	USK-SC-001	USKS00000042	4mm² Solar PV Cable Red (per metre)	TÜV certified 4mm² single-core DC solar cable, 1.5kV rated, UV stabilised	6	25	\N	65.00	110.00	16.00	0	120	\N	MTR	2026-07-04 18:25:19.236848+00
+43	USK-SC-002	USKS00000043	4mm² Solar PV Cable Black (per metre)	TÜV certified 4mm² DC solar cable black, temperature range -40°C to +90°C	6	25	\N	65.00	110.00	16.00	0	120	\N	MTR	2026-07-04 18:25:19.236848+00
+44	USK-SC-003	USKS00000044	6mm² Solar PV Cable Red (per metre)	6mm² heavy-duty solar cable, for high-current panel strings, UV resistant	6	25	\N	98.00	160.00	16.00	0	80	\N	MTR	2026-07-04 18:25:19.236848+00
+45	USK-SC-004	USKS00000045	6mm² Solar PV Cable Black (per metre)	6mm² solar cable black, XLPE insulated, suitable for outdoor direct burial	6	25	\N	98.00	160.00	16.00	0	80	\N	MTR	2026-07-04 18:25:19.236848+00
+46	USK-SC-005	USKS00000046	MC4 Connector Pair (Male + Female)	IP68 rated MC4 compatible connectors, 1000V DC, 30A, UV resistant housing	6	25	\N	180.00	320.00	16.00	0	80	\N	PAIR	2026-07-04 18:25:19.236848+00
+47	USK-SC-006	USKS00000047	MC4 Y-Branch T-Connector Pair (2-to-1)	MC4 parallel branch connector, connects 2 strings in parallel, IP67	6	25	\N	380.00	650.00	16.00	0	40	\N	PAIR	2026-07-04 18:25:19.236848+00
+48	USK-SC-007	USKS00000048	MC4 Disconnect Spanner Tool Set	Pair of MC4 disconnect tools for safe unlocking of MC4 connectors in the field	6	25	\N	450.00	800.00	16.00	0	10	\N	SET	2026-07-04 18:25:19.236848+00
+49	USK-SC-008	USKS00000049	4mm² Solar Cable Roll 50m (Red + Black)	50m each red and black 4mm² TÜV solar cable, factory-coiled for site use	6	25	\N	6500.00	11000.00	16.00	0	5	\N	ROLL	2026-07-04 18:25:19.236848+00
+50	USK-DCP-001	USKD00000050	32A DC Circuit Breaker 1-pole (PV)	32A DC MCB for solar PV string protection, 250VDC rated, DIN rail mount	7	13	\N	850.00	1500.00	16.00	0	15	\N	PCS	2026-07-04 18:25:19.236848+00
+51	USK-DCP-002	USKD00000051	63A DC Circuit Breaker 1-pole (PV)	63A DC circuit breaker, 250VDC, for battery-to-inverter protection	7	13	\N	1200.00	2000.00	16.00	0	12	\N	PCS	2026-07-04 18:25:19.236848+00
+52	USK-DCP-003	USKD00000052	125A DC Circuit Breaker 1-pole	125A DC MCB, 250V, high-interrupt capacity for large battery banks	7	13	\N	2200.00	3800.00	16.00	0	8	\N	PCS	2026-07-04 18:25:19.236848+00
+54	USK-DCP-005	USKD00000054	Waterproof Blade Fuse Holder 30A	Inline waterproof fuse holder for 30A blade fuse, suitable for DC circuits	7	25	\N	350.00	620.00	16.00	0	20	\N	PCS	2026-07-04 18:25:19.236848+00
+55	USK-DCP-006	USKD00000055	60A ANL Fuse + Holder Set	60A gold ANL fuse with clear cover holder, for battery cable protection	7	25	\N	650.00	1100.00	16.00	0	20	\N	SET	2026-07-04 18:25:19.236848+00
+56	USK-DCP-007	USKD00000056	100A ANL Fuse + Holder Set	100A ANL fuse with holder, suitable for inverter battery cable protection	7	25	\N	850.00	1450.00	16.00	0	20	\N	SET	2026-07-04 18:25:19.236848+00
+57	USK-DCP-008	USKD00000057	200A ANL Fuse + Holder Set	200A ANL fuse with heavy-duty holder for large inverter installations	7	25	\N	1200.00	2000.00	16.00	0	15	\N	SET	2026-07-04 18:25:19.236848+00
+58	USK-DCP-009	USKD00000058	300A ANL Fuse + Holder Set	300A ANL bolt-down fuse and holder for commercial-scale battery systems	7	25	\N	1600.00	2700.00	16.00	0	10	\N	SET	2026-07-04 18:25:19.236848+00
+59	USK-DCP-010	USKD00000059	100A Battery Disconnect Switch (DC)	100A rotary DC isolator switch for battery bank disconnection, IP65 rated	7	25	\N	1100.00	1900.00	16.00	0	10	\N	PCS	2026-07-04 18:25:19.236848+00
+60	USK-DCP-011	USKD00000060	200A Battery Disconnect Switch (DC)	200A heavy-duty rotary DC isolator for large inverter and battery systems	7	25	\N	1800.00	3200.00	16.00	0	8	\N	PCS	2026-07-04 18:25:19.236848+00
+61	USK-DCP-012	USKD00000061	4-in-1-out PV Combiner Box 10A Fused	4-string combiner box with 10A string fuses, DC SPD and monitoring terminals	7	25	\N	5500.00	9200.00	16.00	0	4	\N	PCS	2026-07-04 18:25:19.236848+00
+62	USK-ACP-001	USKA00000062	AC Surge Protector SPD 2-pole Type 2	Type 2 AC surge arrester, 275V, 40kA Imax, for inverter AC output protection	8	12	\N	2200.00	3800.00	16.00	0	10	\N	PCS	2026-07-04 18:25:19.236848+00
+63	USK-ACP-002	USKA00000063	AC Surge Protector SPD 4-pole Type 2	4-pole Type 2 SPD for 3-phase systems, 40kA Imax, DIN rail mount	8	12	\N	3500.00	6000.00	16.00	0	8	\N	PCS	2026-07-04 18:25:19.236848+00
+64	USK-ACP-003	USKA00000064	16A RCBO 1P+N 30mA (MCB + RCD)	16A single-pole+neutral RCBO, 30mA sensitivity, 6kA breaking capacity	8	12	\N	1800.00	3200.00	16.00	0	12	\N	PCS	2026-07-04 18:25:19.236848+00
+65	USK-ACP-004	USKA00000065	25A RCBO 1P+N 30mA	25A RCBO for ring circuit and cooker protection, type AC, 6kA	8	12	\N	2000.00	3500.00	16.00	0	12	\N	PCS	2026-07-04 18:25:19.236848+00
+66	USK-ACP-005	USKA00000066	32A RCBO 1P+N 30mA	32A RCBO, suitable for shower and large appliance circuits, 6kA	8	13	\N	2200.00	3800.00	16.00	0	10	\N	PCS	2026-07-04 18:25:19.236848+00
+68	USK-ACP-007	USKA00000068	25A RCCB 2-pole 30mA	25A double-pole RCCB, 30mA, 6kA, type AC, for consumer unit main protection	8	15	\N	2500.00	4200.00	16.00	0	10	\N	PCS	2026-07-04 18:25:19.236848+00
+70	USK-ACP-009	USKA00000070	63A RCCB 2-pole 30mA	63A 2-pole RCCB, 30mA, for main consumer unit incoming protection	8	15	\N	3800.00	6500.00	16.00	0	8	\N	PCS	2026-07-04 18:25:19.236848+00
+71	USK-ACP-010	USKA00000071	63A RCCB 4-pole 30mA	63A 4-pole RCCB, 30mA, for 3-phase 3kW+ inverter systems	8	12	\N	5500.00	9500.00	16.00	0	6	\N	PCS	2026-07-04 18:25:19.236848+00
+72	USK-ACP-011	USKA00000072	100A RCCB 4-pole 30mA	100A 4-pole RCCB for commercial 3-phase solar system AC protection	8	12	\N	7500.00	12800.00	16.00	0	4	\N	PCS	2026-07-04 18:25:19.236848+00
+73	USK-EC-001	USKE00000073	1.5mm² Single Core Cable Red (per m)	PVC insulated 1.5mm² stranded copper cable, 300/500V, red	9	17	\N	28.00	48.00	16.00	0	200	\N	MTR	2026-07-04 18:25:19.236848+00
+74	USK-EC-002	USKE00000074	1.5mm² Single Core Cable Black (per m)	PVC insulated 1.5mm² stranded copper, 300/500V, black sleeve	9	17	\N	28.00	48.00	16.00	0	200	\N	MTR	2026-07-04 18:25:19.236848+00
+75	USK-EC-003	USKE00000075	2.5mm² Single Core Cable Red (per m)	2.5mm² stranded copper, PVC, 450/750V, suitable for lighting and socket circuits	9	17	\N	42.00	72.00	16.00	0	150	\N	MTR	2026-07-04 18:25:19.236848+00
+76	USK-EC-004	USKE00000076	2.5mm² Single Core Cable Black (per m)	2.5mm² stranded copper black, PVC insulated, 450/750V rated	9	17	\N	42.00	72.00	16.00	0	150	\N	MTR	2026-07-04 18:25:19.236848+00
+77	USK-EC-005	USKE00000077	4mm² Single Core Cable Red (per m)	4mm² stranded copper, for cooker circuits and sub-mains, 450/750V	9	17	\N	68.00	115.00	16.00	0	100	\N	MTR	2026-07-04 18:25:19.236848+00
+79	USK-EC-007	USKE00000079	6mm² Single Core Cable (per m)	6mm² stranded copper, 450/750V, for sub-mains and high-current outlets	9	16	\N	102.00	175.00	16.00	0	80	\N	MTR	2026-07-04 18:25:19.236848+00
+80	USK-EC-008	USKE00000080	10mm² Single Core Cable (per m)	10mm² stranded copper for main distribution runs and large appliances	9	16	\N	170.00	290.00	16.00	0	60	\N	MTR	2026-07-04 18:25:19.236848+00
+81	USK-EC-009	USKE00000081	16mm² Single Core Cable (per m)	16mm² stranded copper, suitable for main incoming supply sub-mains	9	16	\N	265.00	450.00	16.00	0	50	\N	MTR	2026-07-04 18:25:19.236848+00
+82	USK-EC-010	USKE00000082	1.5mm² Twin & Earth Cable (per m)	1.5mm² T&E flat cable, PVC, for lighting circuits and standard wiring	9	17	\N	72.00	120.00	16.00	0	120	\N	MTR	2026-07-04 18:25:19.236848+00
+83	USK-EC-011	USKE00000083	2.5mm² Twin & Earth Cable (per m)	2.5mm² T&E for power circuits, sockets, and ring mains	9	17	\N	108.00	185.00	16.00	0	100	\N	MTR	2026-07-04 18:25:19.236848+00
+84	USK-EC-012	USKE00000084	4mm² Twin & Earth Cable (per m)	4mm² T&E for cooker and higher-load circuits	9	17	\N	165.00	280.00	16.00	0	60	\N	MTR	2026-07-04 18:25:19.236848+00
+86	USK-EC-014	USKE00000086	25mm² 3-core Armoured Cable SWA (per m)	25mm² 3-core SWA for mains incoming and large sub-main runs	9	16	\N	780.00	1350.00	16.00	0	40	\N	MTR	2026-07-04 18:25:19.236848+00
+87	USK-EC-015	USKE00000087	35mm² 4-core Armoured Cable SWA (per m)	35mm² 4-core SWA for 3-phase distribution, XLPE insulated, aluminium wire armour	9	16	\N	1100.00	1900.00	16.00	0	30	\N	MTR	2026-07-04 18:25:19.236848+00
+88	USK-SW-001	USKS00000088	63A Double Pole Isolator Switch	63A DP switch-disconnector, 240V AC, DIN rail or surface mount, IP20	10	12	\N	1800.00	3200.00	16.00	0	10	\N	PCS	2026-07-04 18:26:24.823596+00
+89	USK-SW-002	USKS00000089	100A Double Pole Isolator Switch	100A DP isolator for main incoming protection, 240V, lockable handle	10	12	\N	2800.00	4800.00	16.00	0	8	\N	PCS	2026-07-04 18:26:24.823596+00
+90	USK-SW-003	USKS00000090	200A Double Pole Isolator Switch	200A DP main switch, suitable for commercial and large residential systems	10	12	\N	5500.00	9200.00	16.00	0	4	\N	PCS	2026-07-04 18:26:24.823596+00
+91	USK-SW-004	USKS00000091	63A 4-pole Isolator Switch	63A 4-pole switch-disconnector for 3-phase systems, 415V AC	10	13	\N	3200.00	5500.00	16.00	0	6	\N	PCS	2026-07-04 18:26:24.823596+00
+92	USK-SW-005	USKS00000092	63A Manual Transfer Switch 2-pole	63A 2-pole changeover switch (mains/generator), surface mount, IP40	10	16	\N	4500.00	7800.00	16.00	0	6	\N	PCS	2026-07-04 18:26:24.823596+00
+93	USK-SW-006	USKS00000093	100A Manual Transfer Switch 2-pole	100A 2-pole manual transfer switch for generator/solar changeover	10	16	\N	7000.00	12000.00	16.00	0	4	\N	PCS	2026-07-04 18:26:24.823596+00
+94	USK-SW-007	USKS00000094	63A Automatic Transfer Switch (ATS)	63A single-phase ATS, 230V, selects mains/solar/generator automatically	10	16	\N	8500.00	14500.00	16.00	0	4	\N	PCS	2026-07-04 18:26:24.823596+00
+95	USK-SW-008	USKS00000095	100A Automatic Transfer Switch (ATS)	100A ATS with LCD, priority selection, 50ms transfer time, DIN mount	10	16	\N	13000.00	22000.00	16.00	0	3	\N	PCS	2026-07-04 18:26:24.823596+00
+96	USK-SW-009	USKS00000096	63A 3-phase Automatic Transfer Switch	63A 3-pole ATS for 3-phase commercial solar systems, programmable	10	12	\N	18500.00	32000.00	16.00	0	2	\N	PCS	2026-07-04 18:26:24.823596+00
+97	USK-LT-001	USKL00000097	9W E27 LED Bulb Warm White 3000K	9W LED bulb, 810 lumens, 25,000hr lifespan, matte finish, 220-240V AC	11	18	\N	180.00	320.00	16.00	0	60	\N	PCS	2026-07-04 18:26:24.823596+00
+98	USK-LT-002	USKL00000098	18W E27 LED Bulb Daylight 6500K	18W LED bulb, 1620 lumens, cool daylight, suitable for workshops	11	18	\N	280.00	480.00	16.00	0	50	\N	PCS	2026-07-04 18:26:24.823596+00
+100	USK-LT-004	USKL00000100	20W LED Floodlight (IP65, Cool White)	20W waterproof LED flood, 1800 lumens, 6500K, for outdoor security lighting	11	18	\N	950.00	1650.00	16.00	0	20	\N	PCS	2026-07-04 18:26:24.823596+00
+101	USK-LT-005	USKL00000101	30W LED Floodlight (IP65)	30W outdoor floodlight, die-cast aluminium housing, 2700 lumens	11	18	\N	1350.00	2350.00	16.00	0	15	\N	PCS	2026-07-04 18:26:24.823596+00
+102	USK-LT-006	USKL00000102	50W LED Floodlight (IP65)	50W LED flood, 4500 lumens, wide-angle beam, heavy-duty for large areas	11	18	\N	1900.00	3350.00	16.00	0	15	\N	PCS	2026-07-04 18:26:24.823596+00
+103	USK-LT-007	USKL00000103	100W LED Floodlight (IP65)	100W high-power LED floodlight, 9000 lumens, stadium and yard use	11	18	\N	3200.00	5500.00	16.00	0	10	\N	PCS	2026-07-04 18:26:24.823596+00
+104	USK-LT-008	USKL00000104	36W LED Batten 1.2m (IP65, Linkable)	36W LED batten fitting, 3240 lumens, IP65, surface mount, linkable	11	19	\N	1200.00	2100.00	16.00	0	15	\N	PCS	2026-07-04 18:26:24.823596+00
+105	USK-LT-009	USKL00000105	18W LED Batten 0.6m (IP40)	18W slimline LED batten, 1620 lumens, 4000K neutral white, ceiling mount	11	19	\N	750.00	1300.00	16.00	0	15	\N	PCS	2026-07-04 18:26:24.823596+00
+106	USK-LT-010	USKL00000106	30W All-in-One Solar Street Light	30W integrated solar street light, 3000lm, PIR sensor, 8hr backup	11	4	\N	6500.00	11000.00	16.00	0	8	\N	PCS	2026-07-04 18:26:24.823596+00
+107	USK-LT-011	USKL00000107	60W All-in-One Solar Street Light	60W integrated solar street light, 6000lm, remote control, 12hr backup	11	4	\N	12000.00	19500.00	16.00	0	5	\N	PCS	2026-07-04 18:26:24.823596+00
+108	USK-LT-012	USKL00000108	100W Split-Type Solar Street Light	100W solar street light with separate panel and lithium battery, pole mount	11	4	\N	22000.00	36000.00	16.00	0	3	\N	PCS	2026-07-04 18:26:24.823596+00
+109	USK-LT-013	USKL00000109	5m DC 12V LED Strip Warm White (IP20)	5m flexible LED strip, 12V DC, warm white 3000K, 60 LEDs/m, self-adhesive	11	25	\N	850.00	1500.00	16.00	0	15	\N	ROLL	2026-07-04 18:26:24.823596+00
+110	USK-CT-001	USKC00000110	20mm PVC Conduit 3m Length (White)	20mm circular PVC conduit, 3-metre length, impact resistant, flame retardant	12	25	\N	85.00	150.00	16.00	0	80	\N	LEN	2026-07-04 18:26:24.823596+00
+112	USK-CT-003	USKC00000112	32mm PVC Conduit 3m Length (White)	32mm heavy-gauge PVC conduit, 3m length, for main cable runs	12	25	\N	165.00	280.00	16.00	0	50	\N	LEN	2026-07-04 18:26:24.823596+00
+113	USK-CT-004	USKC00000113	20mm PVC Conduit Elbow 90°	20mm PVC conduit elbow, push-fit, for direction changes in conduit runs	12	25	\N	18.00	35.00	16.00	0	120	\N	PCS	2026-07-04 18:26:24.823596+00
+114	USK-CT-005	USKC00000114	25mm PVC Conduit Elbow 90°	25mm PVC elbow for conduit direction changes, push-fit connection	12	25	\N	25.00	48.00	16.00	0	80	\N	PCS	2026-07-04 18:26:24.823596+00
+115	USK-CT-006	USKC00000115	20mm PVC Conduit Coupler	20mm conduit coupler/joiner for extending conduit runs, twist-lock	12	25	\N	15.00	30.00	16.00	0	80	\N	PCS	2026-07-04 18:26:24.823596+00
+116	USK-CT-007	USKC00000116	20mm Conduit Saddle Clips (25pcs bag)	Heavy-duty PVC conduit saddle clips, includes screws, 25 pieces per bag	12	25	\N	80.00	150.00	16.00	0	30	\N	BAG	2026-07-04 18:26:24.823596+00
+117	USK-CT-008	USKC00000117	20×16mm PVC Trunking 2m Length	Mini PVC cable trunking with lid, 20×16mm, for surface cable management	12	14	\N	120.00	210.00	16.00	0	60	\N	LEN	2026-07-04 18:26:24.823596+00
+118	USK-CT-009	USKC00000118	40×25mm PVC Trunking 2m Length	40×25mm PVC trunking, suitable for multi-cable socket and switch runs	12	14	\N	185.00	320.00	16.00	0	50	\N	LEN	2026-07-04 18:26:24.823596+00
+119	USK-CT-010	USKC00000119	60×40mm PVC Trunking 2m Length	60×40mm heavy-duty PVC trunking with clip-on lid for large cable runs	12	14	\N	280.00	480.00	16.00	0	40	\N	LEN	2026-07-04 18:26:24.823596+00
+120	USK-CT-011	USKC00000120	PVC 20mm 4-way Junction Box (Round)	20mm entry 4-way junction box, IP40, for conduit installations	12	25	\N	45.00	85.00	16.00	0	80	\N	PCS	2026-07-04 18:26:24.823596+00
+121	USK-SS-001	USKS00000121	13A Single Switched Socket (White, Surface)	13A single switched socket, surface mount, white, BS1363 standard	13	16	\N	280.00	480.00	16.00	0	50	\N	PCS	2026-07-04 18:26:24.823596+00
+122	USK-SS-002	USKS00000122	13A Double Switched Socket (White, Surface)	13A double switched socket, surface box, white, twin-gang	13	16	\N	380.00	650.00	16.00	0	50	\N	PCS	2026-07-04 18:26:24.823596+00
+123	USK-SS-003	USKS00000123	13A Double Switched Socket (White, Flush)	13A twin gang flush socket with white flat plate, architrave finish	13	16	\N	420.00	720.00	16.00	0	40	\N	PCS	2026-07-04 18:26:24.823596+00
+124	USK-SS-004	USKS00000124	13A Double Socket with USB 5V/2.1A (Flush)	13A twin socket with dual USB charging ports, white, flush fit	13	14	\N	520.00	900.00	16.00	0	30	\N	PCS	2026-07-04 18:26:24.823596+00
+126	USK-SS-006	USKS00000126	2-Gang 1-Way Light Switch (White, Flush)	2-gang 1-way light switch, white, flush mount for dual lighting control	13	16	\N	220.00	380.00	16.00	0	50	\N	PCS	2026-07-04 18:26:24.823596+00
+127	USK-SS-007	USKS00000127	2-Gang 2-Way Light Switch (White, Flush)	2-gang 2-way switch for staircase and corridor light switching	13	16	\N	280.00	480.00	16.00	0	40	\N	PCS	2026-07-04 18:26:24.823596+00
+129	USK-SS-009	USKS00000129	13A Weatherproof Socket (IP44, Surface)	13A IP44 weatherproof socket, grey, for outdoor and garage installations	13	16	\N	650.00	1100.00	16.00	0	20	\N	PCS	2026-07-04 18:26:24.823596+00
+130	USK-SS-010	USKS00000130	16A Industrial Socket 3-pin 240V (IP44)	16A industrial blue plug socket, 3-pin 240V, IP44, for site equipment	13	14	\N	1200.00	2100.00	16.00	0	10	\N	PCS	2026-07-04 18:26:24.823596+00
+131	USK-DB-001	USKD00000131	4-Way Surface Consumer Unit (Blanks incl.)	4-way surface-mount DB box, with blanks, suitable for 4 MCBs, steel	14	15	\N	1200.00	2100.00	16.00	0	10	\N	PCS	2026-07-04 18:26:24.823596+00
+132	USK-DB-002	USKD00000132	8-Way Surface Consumer Unit	8-way surface-mount consumer unit, DIN rail, 100A busbar, with cover	14	15	\N	1800.00	3100.00	16.00	0	8	\N	PCS	2026-07-04 18:26:24.823596+00
+133	USK-DB-003	USKD00000133	8-Way Flush Consumer Unit	8-way flush-fit DB box, recessed installation, white door with lock	14	15	\N	2000.00	3500.00	16.00	0	8	\N	PCS	2026-07-04 18:26:24.823596+00
+134	USK-DB-004	USKD00000134	12-Way Flush Consumer Unit	12-way flush consumer unit, 100A rated busbar, transparent inner cover	14	12	\N	2800.00	4800.00	16.00	0	6	\N	PCS	2026-07-04 18:26:24.823596+00
+135	USK-DB-005	USKD00000135	16-Way Flush Consumer Unit	16-way flush-fit DB, dual RCD section support, suitable for large homes	14	12	\N	3500.00	6000.00	16.00	0	4	\N	PCS	2026-07-04 18:26:24.823596+00
+136	USK-DB-006	USKD00000136	6+6 Split Board Dual RCD Consumer Unit	6+6 way split load consumer unit with 2× 80A RCDs pre-fitted	14	12	\N	4200.00	7200.00	16.00	0	5	\N	PCS	2026-07-04 18:26:24.823596+00
+137	USK-DB-007	USKD00000137	4-Way IP65 Steel Enclosure (Outdoor)	4-way IP65 powder-coated steel enclosure for outdoor solar DB applications	14	25	\N	1800.00	3200.00	16.00	0	8	\N	PCS	2026-07-04 18:26:24.823596+00
+138	USK-DB-008	USKD00000138	8-Way IP65 Steel Enclosure (Outdoor)	8-way IP65 steel DB enclosure, lockable, for external metering/solar DBs	14	25	\N	2600.00	4500.00	16.00	0	6	\N	PCS	2026-07-04 18:26:24.823596+00
+139	USK-DB-009	USKD00000139	12-Way IP65 Enclosure with DIN Rail	12-way IP65 enclosure with pre-fitted DIN rail for MPPT and controller mounting	14	25	\N	3500.00	6000.00	16.00	0	5	\N	PCS	2026-07-04 18:26:24.823596+00
+140	USK-CB-001	USKC00000140	6A MCB Single Pole B-Curve (DIN Rail)	6A 1-pole B-curve MCB, 6kA breaking capacity, 230/400V, DIN rail	15	12	\N	220.00	380.00	16.00	0	40	\N	PCS	2026-07-04 18:27:32.569077+00
+141	USK-CB-002	USKC00000141	10A MCB Single Pole B-Curve	10A 1-pole B-curve MCB, for lighting and small socket circuits, 6kA	15	12	\N	220.00	380.00	16.00	0	50	\N	PCS	2026-07-04 18:27:32.569077+00
+142	USK-CB-003	USKC00000142	16A MCB Single Pole B-Curve	16A 1-pole B-curve MCB, for ring main circuits, 6kA, DIN rail	15	12	\N	220.00	380.00	16.00	0	60	\N	PCS	2026-07-04 18:27:32.569077+00
+144	USK-CB-005	USKC00000144	25A MCB Single Pole B-Curve	25A 1-pole MCB, suitable for shower and water-heater circuits	15	13	\N	240.00	420.00	16.00	0	30	\N	PCS	2026-07-04 18:27:32.569077+00
+145	USK-CB-006	USKC00000145	32A MCB Single Pole B-Curve	32A 1-pole MCB, for electric shower and high-demand appliances	15	13	\N	250.00	440.00	16.00	0	30	\N	PCS	2026-07-04 18:27:32.569077+00
+146	USK-CB-007	USKC00000146	40A MCB Single Pole C-Curve	40A 1-pole C-curve MCB for inductive loads and motor starting	15	13	\N	280.00	480.00	16.00	0	20	\N	PCS	2026-07-04 18:27:32.569077+00
+147	USK-CB-008	USKC00000147	63A MCB Single Pole C-Curve	63A 1-pole C-curve MCB for sub-mains and motor protection	15	13	\N	380.00	650.00	16.00	0	15	\N	PCS	2026-07-04 18:27:32.569077+00
+148	USK-CB-009	USKC00000148	10A MCB Double Pole B-Curve	10A 2-pole MCB for small inverter AC outputs and lighting panels	15	12	\N	480.00	820.00	16.00	0	20	\N	PCS	2026-07-04 18:27:32.569077+00
+149	USK-CB-010	USKC00000149	16A MCB Double Pole B-Curve	16A 2-pole MCB, for inverter AC breaker and circuit isolation	15	12	\N	500.00	860.00	16.00	0	25	\N	PCS	2026-07-04 18:27:32.569077+00
+150	USK-CB-011	USKC00000150	20A MCB Double Pole B-Curve	20A 2-pole MCB for water heaters and double-pole isolation circuits	15	12	\N	540.00	920.00	16.00	0	20	\N	PCS	2026-07-04 18:27:32.569077+00
+151	USK-CB-012	USKC00000151	32A MCB Double Pole B-Curve	32A 2-pole MCB, for main-switch duties in small consumer units	15	12	\N	580.00	980.00	16.00	0	20	\N	PCS	2026-07-04 18:27:32.569077+00
+152	USK-CB-013	USKC00000152	63A MCB Double Pole C-Curve	63A 2-pole C-curve MCB, for main incoming protection in large DBs	15	12	\N	850.00	1450.00	16.00	0	15	\N	PCS	2026-07-04 18:27:32.569077+00
+154	USK-TL-001	USKT00000154	Digital Multimeter Auto-Ranging (600V CAT III)	Auto-ranging DMM, AC/DC voltage 0-600V, resistance, continuity, diode test	16	21	\N	1800.00	3200.00	16.00	0	6	\N	PCS	2026-07-04 18:27:32.569077+00
+155	USK-TL-002	USKT00000155	Clamp Meter 400A AC/DC True RMS	True RMS clamp meter, AC/DC 400A, voltage, resistance, frequency, data hold	16	21	\N	4500.00	7800.00	16.00	0	4	\N	PCS	2026-07-04 18:27:32.569077+00
+156	USK-TL-003	USKT00000156	Wire Stripper & Cutter (0.5–6mm²)	Automatic wire stripper, adjustable jaw, handles 0.5–6mm² cable	16	21	\N	950.00	1650.00	16.00	0	8	\N	PCS	2026-07-04 18:27:32.569077+00
+157	USK-TL-004	USKT00000157	MC4 Solar Connector Crimping Tool Set	MC4 crimping pliers with 2.5mm² and 4mm² dies, connector assembly tool	16	25	\N	2800.00	4800.00	16.00	0	5	\N	SET	2026-07-04 18:27:32.569077+00
+159	USK-TL-006	USKT00000159	Insulation Resistance Tester 500V (Megger)	500V digital insulation tester, 200MΩ range, continuity test, data hold	16	25	\N	12000.00	20000.00	16.00	0	2	\N	PCS	2026-07-04 18:27:32.569077+00
+160	USK-TL-007	USKT00000160	Non-Contact Voltage Tester 12-1000V AC	Pen-type non-contact voltage detector, LED + beep alert, 12-1000V AC	16	21	\N	650.00	1150.00	16.00	0	8	\N	PCS	2026-07-04 18:27:32.569077+00
+161	USK-TL-008	USKT00000161	Electrical Insulating Tape 19mm×20m	PVC electrical insulation tape, self-adhesive, flame retardant, black	16	25	\N	80.00	150.00	16.00	0	60	\N	ROLL	2026-07-04 18:27:32.569077+00
+162	USK-TL-009	USKT00000162	Cable Ties 200mm Nylon (100pcs bag)	Natural nylon 200mm cable ties, 2.5mm width, reusable ratchet locking	16	25	\N	180.00	320.00	16.00	0	30	\N	BAG	2026-07-04 18:27:32.569077+00
+163	USK-TL-010	USKT00000163	Masonry Drill Bit Set 5–13mm (8pcs)	Tungsten carbide-tipped masonry drill bits, SDS-compatible shank, 8 sizes	16	21	\N	850.00	1500.00	16.00	0	8	\N	SET	2026-07-04 18:27:32.569077+00
+164	USK-TL-011	USKT00000164	Safety Helmet (Electrician, White, EN397)	White ABS hard hat, EN397, adjustable ratchet harness, with brim	16	25	\N	1200.00	2100.00	16.00	0	4	\N	PCS	2026-07-04 18:27:32.569077+00
+165	USK-TL-012	USKT00000165	Insulating Safety Gloves 1000V Class 0	Latex insulating gloves, Class 0 (1000V AC), EN60903, size 10 (XL)	16	25	\N	1800.00	3200.00	16.00	0	5	\N	PAIR	2026-07-04 18:27:32.569077+00
+166	USK-WP-001	USKW00000166	12/24V DC Solar Surface Pump 40W	12V/24V DC surface pump, 2400 L/hr, max head 15m, for tank filling	17	25	\N	5500.00	9200.00	16.00	0	4	\N	PCS	2026-07-04 18:27:32.569077+00
+167	USK-WP-002	USKW00000167	24V DC Solar Submersible Pump 200W	200W DC submersible, 1200 L/hr, max head 60m, 2-inch outlet, MPPT compatible	17	24	\N	18000.00	30000.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
+168	USK-WP-003	USKW00000168	48V DC Solar Submersible Pump 500W	500W 48V solar-direct submersible, 3000 L/hr, 80m head, 4-inch borehole	17	24	\N	32000.00	52000.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
+170	USK-WP-005	USKW00000170	AC Submersible Pump 1HP 240V 4"	1HP 240V submersible, 4-inch borehole, 2800 L/hr, 60m max head	17	20	\N	22000.00	36000.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
+171	USK-WP-006	USKW00000171	AC Surface Centrifugal Pump 0.5HP 240V	0.5HP surface centrifugal pump, self-priming, 2400 L/hr, stainless impeller	17	20	\N	9500.00	16000.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
+172	USK-WP-007	USKW00000172	Solar Pump Controller MPPT 1.5kW 220V	MPPT solar pump VFD controller, 1.5kW, compatible with AC submersibles	17	24	\N	12000.00	20000.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
+173	USK-WP-008	USKW00000173	Pressure Vessel Tank 24L (for pump systems)	24-litre diaphragm pressure tank, 10 bar rated, for AC pump systems	17	25	\N	5500.00	9500.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
+174	USK-WP-009	USKW00000174	Float Switch for Water Tank (Normally Open)	Universal float switch, 240V/10A, for automatic tank level control	17	25	\N	450.00	800.00	16.00	0	10	\N	PCS	2026-07-04 18:27:32.569077+00
+175	USK-SA-001	USKS00000175	DC Chest Freezer 12/24V 45L (Solar-Powered)	45-litre 12/24V DC chest freezer, A++ energy class, foam insulated	18	22	\N	28000.00	45000.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
+176	USK-SA-002	USKS00000176	DC Chest Freezer 12/24V 90L (Solar-Powered)	90L 12/24V DC compressor freezer, ideal for solar off-grid homes	18	22	\N	42000.00	68000.00	16.00	0	2	\N	PCS	2026-07-04 18:27:32.569077+00
+177	USK-SA-003	USKS00000177	DC Chest Freezer 12/24V 130L	130L 12/24V chest freezer, digital thermostat, energy-efficient compressor	18	22	\N	58000.00	92000.00	16.00	0	2	\N	PCS	2026-07-04 18:27:32.569077+00
+178	USK-SA-004	USKS00000178	DC Ceiling Fan 12V 56-inch (Solar)	56-inch 12V DC ceiling fan, 3 blades, 5 speeds, remote control, for solar homes	18	22	\N	5500.00	9200.00	16.00	0	3	\N	PCS	2026-07-04 18:27:32.569077+00
+179	USK-SA-005	USKS00000179	DC Table Fan 12/24V 16-inch (Solar)	16-inch 12/24V oscillating table fan, 3-speed, low-energy for solar homes	18	22	\N	3200.00	5500.00	16.00	0	4	\N	PCS	2026-07-04 18:27:32.569077+00
+180	USK-SA-006	USKS00000180	LED Smart TV 32" 12/24V DC (Solar Compatible)	32-inch HD LED TV, 12/24V DC direct, Android OS, HDMI×2, USB×2	18	22	\N	22000.00	36000.00	16.00	0	2	\N	PCS	2026-07-04 18:27:32.569077+00
+182	USK-SA-008	USKS00000182	Blender 1.5L 300W Energy Efficient	1.5L glass jar blender, 300W, stainless blades, 3-speed + pulse, 240V AC	18	22	\N	2800.00	4800.00	16.00	0	4	\N	PCS	2026-07-04 18:27:32.569077+00
+183	USK-SA-009	USKS00000183	Electric Kettle 1.7L 1500W (Stainless)	1.7L stainless steel kettle, 1500W, auto shut-off, boil-dry protection	18	22	\N	2200.00	3800.00	16.00	0	4	\N	PCS	2026-07-04 18:27:32.569077+00
+184	USK-SA-010	USKS00000184	Rice Cooker 1L 350W (Non-stick Bowl)	1-litre rice cooker, 350W, non-stick pot, warm function, glass lid	18	22	\N	1800.00	3200.00	16.00	0	4	\N	PCS	2026-07-04 18:27:32.569077+00
+185	USK-SA-011	USKS00000185	Semi-Automatic Washing Machine 6kg 240V	6kg twin-tub washing machine, 480W, low water consumption, for solar homes	18	22	\N	24000.00	40000.00	16.00	0	2	\N	PCS	2026-07-04 18:27:32.569077+00
+186	USK-ACC-001	USKA00000186	70mm² Battery Cable Set Red+Black 1m Pair	1m each red and black 70mm² tinned copper welding cable with lugs	19	25	\N	1200.00	2100.00	16.00	0	10	\N	SET	2026-07-04 18:27:32.569077+00
+187	USK-ACC-002	USKA00000187	16mm² Battery Cable Set Red+Black 1m Pair	1m each red and black 16mm² cable with ring lugs, for small inverters	19	25	\N	380.00	680.00	16.00	0	15	\N	SET	2026-07-04 18:27:32.569077+00
+188	USK-ACC-003	USKA00000188	4-way Positive Copper Bus Bar (10mm hole)	4-way copper bus bar, positive, for parallel battery connections, 200A	19	25	\N	650.00	1150.00	16.00	0	15	\N	PCS	2026-07-04 18:27:32.569077+00
+189	USK-ACC-004	USKA00000189	4-way Negative Copper Bus Bar (10mm hole)	4-way copper bus bar, negative terminal block for DC distribution	19	25	\N	650.00	1150.00	16.00	0	15	\N	PCS	2026-07-04 18:27:32.569077+00
+190	USK-ACC-005	USKA00000190	Battery Monitor 500A Shunt + LCD Display	500A shunt-based battery monitor, LCD, measures voltage/current/AH/time	19	25	\N	3200.00	5500.00	16.00	0	6	\N	PCS	2026-07-04 18:27:32.569077+00
+191	USK-ACC-006	USKA00000191	35mm DIN Rail Aluminium 1m	1-metre aluminium DIN 35mm rail for MCB, RCCB, and DIN-mount components	19	25	\N	280.00	500.00	16.00	0	20	\N	LEN	2026-07-04 18:27:32.569077+00
+192	USK-ACC-007	USKA00000192	Copper Cable Lugs Assorted Set (50pcs)	50-piece copper cable lug assortment: 6, 10, 16, 25, 35, 50mm² sizes	19	25	\N	380.00	680.00	16.00	0	15	\N	SET	2026-07-04 18:27:32.569077+00
+193	USK-ACC-008	USKA00000193	Heat Shrink Tubing Set (5 colours, 5m each)	Adhesive-lined heat shrink tube set, 5 sizes/colours, 2:1 ratio, 5m each	19	25	\N	450.00	800.00	16.00	0	12	\N	SET	2026-07-04 18:27:32.569077+00
+194	USK-ACC-009	USKA00000194	IP66 Waterproof Junction Box (Small, 100×68mm)	IP66 polycarbonate junction box, 100×68×50mm, cable gland holes, lockable	19	25	\N	350.00	620.00	16.00	0	20	\N	PCS	2026-07-04 18:27:32.569077+00
+195	USK-ACC-010	USKA00000195	Copper-Clad Earthing Rod 1.5m (14mm diameter)	1.5m copper-bonded steel earthing rod, 14mm diameter, with drive-cap	19	25	\N	1200.00	2100.00	16.00	0	8	\N	PCS	2026-07-04 18:27:32.569077+00
+196	USK-ACC-011	USKA00000196	Earthing Rod Clamp (Acorn Type)	Acorn-type earthing clamp for connecting earth wire to earthing rod	19	25	\N	180.00	320.00	16.00	0	15	\N	PCS	2026-07-04 18:27:32.569077+00
+197	USK-ACC-012	USKA00000197	Nylon Cable Gland M20 (10pcs bag)	M20 nylon cable glands, IP68, suitable for 6–12mm cables, grey, 10pcs	19	25	\N	180.00	320.00	16.00	0	25	\N	BAG	2026-07-04 18:27:32.569077+00
+198	USK-ACC-013	USKA00000198	Electrical Safety Warning Labels Set (30pcs)	Self-adhesive electrical hazard, earthing, lockout and solar DC warning labels	19	25	\N	350.00	620.00	16.00	0	12	\N	SET	2026-07-04 18:27:32.569077+00
+199	USK-ACC-014	USKA00000199	Silicone Sealant Clear 280ml (Weatherproof)	Clear neutral-cure silicone sealant, UV resistant, for outdoor enclosures	19	25	\N	650.00	1150.00	16.00	0	10	\N	TUB	2026-07-04 18:27:32.569077+00
+200	USK-ACC-015	USKA00000200	Thermal Compound Paste 5g (Heatsink Grade)	High-conductivity thermal paste for inverter/charge controller heatsinks	19	25	\N	280.00	500.00	16.00	0	8	\N	TUB	2026-07-04 18:27:32.569077+00
 \.
 
 
@@ -2105,6 +2324,10 @@ COPY public.products (id, product_code, barcode, product_name, description, cate
 --
 
 COPY public.purchase_items (id, purchase_id, product_id, quantity, unit_cost, total) FROM stdin;
+1	1	125	2	150.00	300.00
+2	2	125	2	150.00	300.00
+3	3	125	2	150.00	300.00
+4	4	125	1	150.00	150.00
 \.
 
 
@@ -2113,6 +2336,10 @@ COPY public.purchase_items (id, purchase_id, product_id, quantity, unit_cost, to
 --
 
 COPY public.purchases (id, purchase_number, supplier_id, subtotal, tax_amount, total, status, notes, expected_date, received_date, created_at, branch_id) FROM stdin;
+1	PO-1784277446187	1	300.00	0.00	300.00	draft	\N	\N	\N	2026-07-17 08:37:26.187471+00	1
+2	PO-1784277451737	1	300.00	0.00	300.00	draft	\N	\N	\N	2026-07-17 08:37:31.738075+00	1
+3	PO-1784277472925	1	300.00	0.00	300.00	received	\N	\N	2026-07-17	2026-07-17 08:37:52.929686+00	1
+4	PO-1784277519426	1	150.00	0.00	150.00	received	\N	\N	2026-07-17	2026-07-17 08:38:39.428281+00	1
 \.
 
 
@@ -2121,6 +2348,7 @@ COPY public.purchases (id, purchase_number, supplier_id, subtotal, tax_amount, t
 --
 
 COPY public.quotation_items (id, quotation_id, product_id, quantity, unit_price, discount, vat_rate, total, description, unit) FROM stdin;
+8	8	125	1	260.00	0.00	16.00	301.60	\N	\N
 \.
 
 
@@ -2129,6 +2357,7 @@ COPY public.quotation_items (id, quotation_id, product_id, quantity, unit_price,
 --
 
 COPY public.quotations (id, quotation_number, customer_id, subtotal, discount_amount, tax_amount, total, status, notes, valid_until, created_at, delivery_time, warranty, payment_terms, branch_id) FROM stdin;
+8	QTN-2026-000001	3	260.00	0.00	41.60	301.60	converted	\N	\N	2026-07-17 08:38:39.588968+00	\N	\N	\N	1
 \.
 
 
@@ -2137,6 +2366,29 @@ COPY public.quotations (id, quotation_number, customer_id, subtotal, discount_am
 --
 
 COPY public.sale_items (id, sale_id, product_id, quantity, unit_price, discount, vat_rate, total) FROM stdin;
+1	1	125	2	260.00	0.00	16.00	520.00
+2	2	125	1	260.00	0.00	16.00	260.00
+3	3	125	1	260.00	0.00	16.00	260.00
+\.
+
+
+--
+-- Data for Name: sale_return_items; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.sale_return_items (id, return_id, sale_item_id, product_id, quantity, unit_price, total) FROM stdin;
+1	1	1	125	1	260.00	260.00
+2	2	1	125	1	260.00	260.00
+\.
+
+
+--
+-- Data for Name: sale_returns; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.sale_returns (id, return_number, sale_id, branch_id, total, refund_method, reason, created_by, created_at) FROM stdin;
+1	RTN-1784276864901	1	1	260.00	cash	faulty	Super Admin	2026-07-17 08:27:44.902198+00
+2	RTN-1784277446118	1	1	260.00	cash	\N	Super Admin	2026-07-17 08:37:26.118892+00
 \.
 
 
@@ -2145,6 +2397,9 @@ COPY public.sale_items (id, sale_id, product_id, quantity, unit_price, discount,
 --
 
 COPY public.sales (id, receipt_number, customer_id, subtotal, discount_amount, tax_amount, total, amount_paid, change, payment_method, cashier_name, status, created_at, branch_id) FROM stdin;
+2	RCP-1784276865066	3	260.00	0.00	0.00	260.00	0.00	0.00	credit	Super Admin	completed	2026-07-17 08:27:45.070648+00	1
+3	RCP-1784277446038	\N	260.00	0.00	0.00	260.00	260.00	0.00	cash	Super Admin	completed	2026-07-17 08:37:26.038939+00	1
+1	RCP-1784276853283	\N	520.00	0.00	0.00	520.00	520.00	0.00	cash	Super Admin	refunded	2026-07-17 08:27:33.289254+00	1
 \.
 
 
@@ -2153,6 +2408,17 @@ COPY public.sales (id, receipt_number, customer_id, subtotal, discount_amount, t
 --
 
 COPY public.stock_movements (id, product_id, type, quantity, quantity_before, quantity_after, reference, notes, created_by, created_at, branch_id) FROM stdin;
+11	33	receive	4	0	4	REC-1784120530302	\N	\N	2026-07-15 13:02:10.302663+00	1
+12	125	receive	5	0	5	REC-1784276853225	\N	\N	2026-07-17 08:27:33.226+00	1
+13	125	sale	-2	5	3	RCP-1784276853283	\N	\N	2026-07-17 08:27:33.296087+00	1
+14	125	return	1	3	4	RTN-1784276864901	Return against RCP-1784276853283	\N	2026-07-17 08:27:44.912521+00	1
+15	125	sale	-1	4	3	RCP-1784276865066	\N	\N	2026-07-17 08:27:45.075497+00	1
+16	125	sale	-1	3	2	RCP-1784277446038	\N	\N	2026-07-17 08:37:26.038939+00	1
+17	125	return	1	2	3	RTN-1784277446118	Return against RCP-1784276853283	\N	2026-07-17 08:37:26.118892+00	1
+18	125	receive	2	3	5	PO-1784277472925	\N	\N	2026-07-17 08:37:52.984402+00	1
+19	125	receive	1	5	6	PO-1784277519426	\N	\N	2026-07-17 08:38:39.470217+00	1
+20	125	sale	-1	6	5	INV-2026-000002	Direct invoice	\N	2026-07-17 08:38:39.536274+00	1
+21	125	sale	-1	5	4	INV-2026-000003	Invoice from QTN-2026-000001	\N	2026-07-17 08:38:39.637059+00	1
 \.
 
 
@@ -2169,6 +2435,7 @@ COPY public.stock_transfers (id, transfer_number, source_branch_id, destination_
 --
 
 COPY public.suppliers (id, name, contact_person, email, phone, address, city, tax_number, balance, created_at, branch_id) FROM stdin;
+1	Test Supplier Ltd	\N	\N	\N	\N	\N	\N	350.00	2026-07-17 08:37:52.891585+00	1
 \.
 
 
@@ -2177,8 +2444,8 @@ COPY public.suppliers (id, name, contact_person, email, phone, address, city, ta
 --
 
 COPY public.users (id, name, email, password_hash, role, branch, phone, is_active, created_at, branch_id, totp_secret, totp_enabled, failed_login_attempts, locked_until, password_changed_at) FROM stdin;
-4	Super Administrator	admin@uniquepos.africa	$2b$10$jAtcnL/fHGUD0nvns2tNOu/ko6P7J93kEHV.k6u47kOJq4l/GZE2O	super_admin	\N	\N	t	2026-07-04 17:17:47.174196+00	1	\N	f	0	\N	\N
-1	Super Admin	admin@uniquepos.com	$2b$10$I2ovrSrAfStrqEtkxAjPL.MwIu.WKz/eM2KymLL7reXPtR1Wlci5O	super_admin	\N	\N	t	2026-07-04 17:06:57.224656+00	1	\N	f	0	\N	\N
+1	Super Admin	admin@uniquepos.com	REPLACE_WITH_BCRYPT_HASH	super_admin	\N	\N	t	2026-07-04 17:06:57.224656+00	1	\N	f	0	\N	\N
+4	Super Administrator	admin@uniquepos.africa	REPLACE_WITH_BCRYPT_HASH	super_admin	\N	\N	t	2026-07-04 17:17:47.174196+00	1	\N	f	0	\N	\N
 \.
 
 
@@ -2186,14 +2453,14 @@ COPY public.users (id, name, email, password_hash, role, branch, phone, is_activ
 -- Name: admin_notifications_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.admin_notifications_id_seq', 1, false);
+SELECT pg_catalog.setval('public.admin_notifications_id_seq', 1, true);
 
 
 --
 -- Name: audit_log_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.audit_log_id_seq', 48, true);
+SELECT pg_catalog.setval('public.audit_log_id_seq', 84, true);
 
 
 --
@@ -2228,7 +2495,7 @@ SELECT pg_catalog.setval('public.categories_id_seq', 1, false);
 -- Name: customers_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.customers_id_seq', 2, true);
+SELECT pg_catalog.setval('public.customers_id_seq', 3, true);
 
 
 --
@@ -2249,7 +2516,7 @@ SELECT pg_catalog.setval('public.expenses_id_seq', 1, false);
 -- Name: invoice_items_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.invoice_items_id_seq', 4, true);
+SELECT pg_catalog.setval('public.invoice_items_id_seq', 6, true);
 
 
 --
@@ -2263,77 +2530,98 @@ SELECT pg_catalog.setval('public.invoice_payments_id_seq', 1, false);
 -- Name: invoices_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.invoices_id_seq', 4, true);
+SELECT pg_catalog.setval('public.invoices_id_seq', 6, true);
 
 
 --
 -- Name: login_history_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.login_history_id_seq', 18, true);
+SELECT pg_catalog.setval('public.login_history_id_seq', 34, true);
+
+
+--
+-- Name: party_payments_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.party_payments_id_seq', 2, true);
 
 
 --
 -- Name: product_stock_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.product_stock_id_seq', 204, true);
+SELECT pg_catalog.setval('public.product_stock_id_seq', 217, true);
 
 
 --
 -- Name: products_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.products_id_seq', 1, false);
+SELECT pg_catalog.setval('public.products_id_seq', 6, true);
 
 
 --
 -- Name: purchase_items_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.purchase_items_id_seq', 1, false);
+SELECT pg_catalog.setval('public.purchase_items_id_seq', 4, true);
 
 
 --
 -- Name: purchases_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.purchases_id_seq', 1, false);
+SELECT pg_catalog.setval('public.purchases_id_seq', 4, true);
 
 
 --
 -- Name: quotation_items_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.quotation_items_id_seq', 7, true);
+SELECT pg_catalog.setval('public.quotation_items_id_seq', 8, true);
 
 
 --
 -- Name: quotations_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.quotations_id_seq', 7, true);
+SELECT pg_catalog.setval('public.quotations_id_seq', 8, true);
 
 
 --
 -- Name: sale_items_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.sale_items_id_seq', 1, false);
+SELECT pg_catalog.setval('public.sale_items_id_seq', 3, true);
+
+
+--
+-- Name: sale_return_items_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.sale_return_items_id_seq', 2, true);
+
+
+--
+-- Name: sale_returns_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.sale_returns_id_seq', 2, true);
 
 
 --
 -- Name: sales_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.sales_id_seq', 1, false);
+SELECT pg_catalog.setval('public.sales_id_seq', 3, true);
 
 
 --
 -- Name: stock_movements_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.stock_movements_id_seq', 10, true);
+SELECT pg_catalog.setval('public.stock_movements_id_seq', 21, true);
 
 
 --
@@ -2347,7 +2635,7 @@ SELECT pg_catalog.setval('public.stock_transfers_id_seq', 4, true);
 -- Name: suppliers_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.suppliers_id_seq', 1, false);
+SELECT pg_catalog.setval('public.suppliers_id_seq', 1, true);
 
 
 --
@@ -2494,6 +2782,14 @@ ALTER TABLE ONLY public.login_history
 
 
 --
+-- Name: party_payments party_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.party_payments
+    ADD CONSTRAINT party_payments_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: product_stock product_stock_branch_product_unique; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2579,6 +2875,30 @@ ALTER TABLE ONLY public.quotations
 
 ALTER TABLE ONLY public.sale_items
     ADD CONSTRAINT sale_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sale_return_items sale_return_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sale_return_items
+    ADD CONSTRAINT sale_return_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sale_returns sale_returns_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sale_returns
+    ADD CONSTRAINT sale_returns_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sale_returns sale_returns_return_number_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sale_returns
+    ADD CONSTRAINT sale_returns_return_number_key UNIQUE (return_number);
 
 
 --
@@ -2715,6 +3035,13 @@ CREATE INDEX login_history_user_id_idx ON public.login_history USING btree (user
 
 
 --
+-- Name: party_payments_party_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX party_payments_party_idx ON public.party_payments USING btree (party_type, party_id);
+
+
+--
 -- Name: purchases_branch_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2726,6 +3053,13 @@ CREATE INDEX purchases_branch_id_idx ON public.purchases USING btree (branch_id)
 --
 
 CREATE INDEX quotations_branch_id_idx ON public.quotations USING btree (branch_id);
+
+
+--
+-- Name: sale_returns_sale_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sale_returns_sale_idx ON public.sale_returns USING btree (sale_id);
 
 
 --
@@ -2788,4 +3122,5 @@ CREATE INDEX users_branch_id_idx ON public.users USING btree (branch_id);
 -- PostgreSQL database dump complete
 --
 
-\unrestrict M8GHadX7TW3LqwIXOTH1a0TiuIcijtSPWoKU1196cva01Fe7cHAL9jEgsf4Mc1F
+\unrestrict NIkqQylCPF5r0fVskZ7kJES1dkqQcTLDN02ApKHcBm85NlI9z3W2fRLWkjfT89q
+

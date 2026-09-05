@@ -28244,7 +28244,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path5 = require("path");
-        const outputDir = __dirname;
+        const outputDir = "/home/runner/workspace/deploy/server";
         return path5.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -42204,7 +42204,7 @@ var require_jsonwebtoken = __commonJS({
 
 // artifacts/api-server/src/app.ts
 var import_path = __toESM(require("path"), 1);
-var import_express_backups = __toESM(require_express2(), 1);
+var import_express26 = __toESM(require_express2(), 1);
 var import_cors = __toESM(require_lib3(), 1);
 var import_pino_http = __toESM(require_logger(), 1);
 
@@ -48153,17 +48153,9 @@ var GetBranchComparisonReportResponse = objectType({
 
 // artifacts/api-server/src/routes/health.ts
 var router = (0, import_express.Router)();
-router.get("/healthz", async (_req, res) => {
-  let db_ok = false;
-  let db_message;
-  try {
-    await db.execute(sql`SELECT 1`);
-    db_ok = true;
-  } catch (err) {
-    db_message = err instanceof Error ? err.message : String(err);
-  }
+router.get("/healthz", (_req, res) => {
   const data = HealthCheckResponse.parse({ status: "ok" });
-  res.json({ ...data, db_ok, ...(db_message ? { db_message } : {}) });
+  res.json(data);
 });
 var health_default = router;
 
@@ -55211,6 +55203,7 @@ __export(schema_exports, {
   invoicesTable: () => invoicesTable,
   loginHistoryTable: () => loginHistoryTable,
   movementTypeEnum: () => movementTypeEnum,
+  partyPaymentsTable: () => partyPaymentsTable,
   paymentMethodEnum: () => paymentMethodEnum,
   productStockTable: () => productStockTable,
   productsTable: () => productsTable,
@@ -55221,6 +55214,8 @@ __export(schema_exports, {
   quotationStatusEnum: () => quotationStatusEnum,
   quotationsTable: () => quotationsTable,
   saleItemsTable: () => saleItemsTable,
+  saleReturnItemsTable: () => saleReturnItemsTable,
+  saleReturnsTable: () => saleReturnsTable,
   saleStatusEnum: () => saleStatusEnum,
   salesTable: () => salesTable,
   stockMovementsTable: () => stockMovementsTable,
@@ -66739,17 +66734,10 @@ var productsTable = pgTable("products", {
   costPrice: numeric("cost_price", { precision: 15, scale: 2 }).notNull().default("0"),
   sellingPrice: numeric("selling_price", { precision: 15, scale: 2 }).notNull().default("0"),
   vatRate: numeric("vat_rate", { precision: 5, scale: 2 }).notNull().default("16"),
-  taxInclusive: boolean("tax_inclusive").notNull().default(false),
   currentStock: integer("current_stock").notNull().default(0),
   minStock: integer("min_stock").notNull().default(0),
   imageUrl: text("image_url"),
-  productPhotos: jsonb("product_photos"),
   unit: text("unit"),
-  status: text("status").notNull().default("active"),
-  primaryBranchId: integer("primary_branch_id"),
-  isArchived: boolean("is_archived").notNull().default(false),
-  archivedAt: timestamp("archived_at", { withTimezone: true }),
-  archivedBy: integer("archived_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
 });
 var insertProductSchema = createInsertSchema(productsTable).omit({ id: true, createdAt: true });
@@ -66761,7 +66749,9 @@ var movementTypeEnum = pgEnum("movement_type", [
   "transfer_in",
   "transfer_out",
   "sale",
-  "purchase_return"
+  "purchase_return",
+  "opening",
+  "return"
 ]);
 var stockMovementsTable = pgTable("stock_movements", {
   id: serial("id").primaryKey(),
@@ -66962,7 +66952,7 @@ var expensesTable = pgTable("expenses", {
 var insertExpenseSchema = createInsertSchema(expensesTable).omit({ id: true, createdAt: true });
 
 // lib/db/src/schema/sales.ts
-var saleStatusEnum = pgEnum("sale_status", ["completed", "refunded", "void", "draft", "returned"]);
+var saleStatusEnum = pgEnum("sale_status", ["completed", "refunded", "void"]);
 var salesTable = pgTable("sales", {
   id: serial("id").primaryKey(),
   receiptNumber: text("receipt_number").notNull().unique(),
@@ -66977,10 +66967,6 @@ var salesTable = pgTable("sales", {
   paymentMethod: text("payment_method").notNull().default("cash"),
   cashierName: text("cashier_name"),
   status: saleStatusEnum("status").notNull().default("completed"),
-  notes: text("notes"),
-  originalSaleId: integer("original_sale_id"),
-  voidedAt: timestamp("voided_at", { withTimezone: true }),
-  voidedBy: integer("voided_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
 });
 var saleItemsTable = pgTable("sale_items", {
@@ -66995,6 +66981,41 @@ var saleItemsTable = pgTable("sale_items", {
 });
 var insertSaleSchema = createInsertSchema(salesTable).omit({ id: true, createdAt: true });
 var insertSaleItemSchema = createInsertSchema(saleItemsTable).omit({ id: true });
+
+// lib/db/src/schema/payments.ts
+var partyPaymentsTable = pgTable("party_payments", {
+  id: serial("id").primaryKey(),
+  partyType: text("party_type").notNull(),
+  // 'customer' | 'supplier'
+  partyId: integer("party_id").notNull(),
+  branchId: integer("branch_id"),
+  amount: numeric("amount", { precision: 15, scale: 2 }).notNull(),
+  method: text("method").notNull().default("cash"),
+  reference: text("reference"),
+  notes: text("notes"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+});
+var saleReturnsTable = pgTable("sale_returns", {
+  id: serial("id").primaryKey(),
+  returnNumber: text("return_number").notNull().unique(),
+  saleId: integer("sale_id").notNull(),
+  branchId: integer("branch_id").notNull(),
+  total: numeric("total", { precision: 15, scale: 2 }).notNull().default("0"),
+  refundMethod: text("refund_method").notNull().default("cash"),
+  reason: text("reason"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+});
+var saleReturnItemsTable = pgTable("sale_return_items", {
+  id: serial("id").primaryKey(),
+  returnId: integer("return_id").notNull(),
+  saleItemId: integer("sale_item_id").notNull(),
+  productId: integer("product_id").notNull(),
+  quantity: integer("quantity").notNull(),
+  unitPrice: numeric("unit_price", { precision: 15, scale: 2 }).notNull(),
+  total: numeric("total", { precision: 15, scale: 2 }).notNull()
+});
 
 // lib/db/src/schema/settings.ts
 var businessSettingsTable = pgTable("business_settings", {
@@ -67081,7 +67102,6 @@ var auditLogTable = pgTable("audit_log", {
   actorName: text("actor_name"),
   actorRole: text("actor_role"),
   ipAddress: text("ip_address"),
-  deviceInfo: text("device_info"),
   action: text("action").notNull(),
   // e.g. "sale.created", "product.updated"
   entityType: text("entity_type"),
@@ -67124,12 +67144,7 @@ if (!process.env.DATABASE_URL) {
     "DATABASE_URL must be set. Did you forget to provision a database?"
   );
 }
-var _dbUrl = process.env.DATABASE_URL;
-var _isLocalDb = /localhost|127\.0\.0\.1|::1/.test(_dbUrl);
-var pool = new Pool3({
-  connectionString: _dbUrl,
-  ssl: _isLocalDb ? false : { rejectUnauthorized: false }
-});
+var pool = new Pool3({ connectionString: process.env.DATABASE_URL });
 var db = drizzle(pool, { schema: schema_exports });
 
 // artifacts/api-server/src/lib/auth.ts
@@ -69235,7 +69250,7 @@ async function maybeSendEmail(rule, title, body, settings) {
       subject: title,
       body,
       severity: rule.severity,
-      appUrl: process.env.APP_URL ? process.env.APP_URL.replace(/\/$/, "") : process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : "http://localhost",
+      appUrl: process.env.APP_URL ? process.env.APP_URL.replace(/\/$/, "") : "http://localhost",
       companyName: settings.businessName ?? void 0
     });
   } catch (err) {
@@ -69301,14 +69316,12 @@ async function logAudit(req, event) {
   try {
     const user = req.user;
     const ipAddress = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ?? req.socket?.remoteAddress ?? null;
-    const deviceInfo = req.headers["user-agent"] ?? null;
     const [row] = await db.insert(auditLogTable).values({
       branchId: user?.branchId ?? null,
       actorId: user?.userId ?? null,
       actorName: user?.name ?? null,
       actorRole: user?.role ?? null,
       ipAddress,
-      deviceInfo,
       action: event.action,
       entityType: event.entityType ?? null,
       entityId: event.entityId != null ? String(event.entityId) : null,
@@ -69480,88 +69493,31 @@ function publicUser(user) {
     created_at: user.createdAt
   };
 }
-async function findLoginUser(loginId) {
-  const normalized = String(loginId).trim();
-  try {
-    const lookup = await db.execute(sql`
-      SELECT
-        id,
-        name,
-        email,
-        password_hash AS "passwordHash",
-        role,
-        branch,
-        branch_id AS "branchId",
-        phone,
-        is_active AS "isActive",
-        created_at AS "createdAt",
-        totp_secret AS "totpSecret",
-        totp_enabled AS "totpEnabled",
-        failed_login_attempts AS "failedLoginAttempts",
-        locked_until AS "lockedUntil",
-        password_changed_at AS "passwordChangedAt"
-      FROM users
-      WHERE lower(email) = lower(${normalized}) OR lower(name) = lower(${normalized})
-      ORDER BY CASE WHEN lower(email) = lower(${normalized}) THEN 0 ELSE 1 END, id ASC
-      LIMIT 1
-    `);
-    const rows = lookup.rows ?? lookup;
-    return rows[0];
-  } catch (err) {
-    if (err?.code !== "42703") throw err;
-    logger.warn({ err }, "Legacy users schema detected during login lookup; using compatibility query");
-    const fallback = await db.execute(sql`
-      SELECT
-        id,
-        name,
-        email,
-        password_hash AS "passwordHash",
-        role,
-        branch,
-        NULL::integer AS "branchId",
-        phone,
-        is_active AS "isActive",
-        created_at AS "createdAt",
-        NULL::text AS "totpSecret",
-        FALSE AS "totpEnabled",
-        0 AS "failedLoginAttempts",
-        NULL::timestamptz AS "lockedUntil",
-        NULL::timestamptz AS "passwordChangedAt"
-      FROM users
-      WHERE lower(email) = lower(${normalized}) OR lower(name) = lower(${normalized})
-      ORDER BY CASE WHEN lower(email) = lower(${normalized}) THEN 0 ELSE 1 END, id ASC
-      LIMIT 1
-    `);
-    const rows = fallback.rows ?? fallback;
-    return rows[0];
-  }
-}
 router2.post("/auth/login", async (req, res) => {
   const { email: email3, password, totp_code } = req.body ?? {};
   if (!email3 || !password) {
     res.status(400).json({ error: "Email and password required" });
     return;
   }
-  const loginId = String(email3).trim();
-  const user = await findLoginUser(loginId);
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email3));
   if (!user || !user.isActive) {
-    await recordLogin(req, { userId: user?.id ?? null, email: loginId, success: false, reason: user ? "inactive" : "unknown_user" });
-    await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user?.id, description: `Failed login attempt for "${loginId}" \u2014 user not found or inactive` });
+    await recordLogin(req, { userId: user?.id ?? null, email: email3, success: false, reason: user ? "inactive" : "unknown_user" });
+    await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user?.id, description: `Failed login attempt for "${email3}" \u2014 user not found or inactive` });
     res.status(401).json({ error: "Invalid credentials" });
     return;
   }
   const policy = await getSecurityPolicy();
   if (user.lockedUntil && new Date(user.lockedUntil).getTime() > Date.now()) {
     const mins = Math.ceil((new Date(user.lockedUntil).getTime() - Date.now()) / 6e4);
-    await recordLogin(req, { userId: user.id, email: loginId, success: false, reason: "account_locked" });
+    await recordLogin(req, { userId: user.id, email: email3, success: false, reason: "account_locked" });
     res.status(423).json({ error: `Account locked due to failed login attempts. Try again in ${mins} minute${mins === 1 ? "" : "s"}.` });
     return;
   }
   const valid = await comparePassword(password, user.passwordHash);
   if (!valid) {
     await registerFailedAttempt(user.id, policy);
-    await recordLogin(req, { userId: user.id, email: loginId, success: false, reason: "wrong_password" });
-    await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user.id, description: `Failed login attempt for "${loginId}" \u2014 wrong password` });
+    await recordLogin(req, { userId: user.id, email: email3, success: false, reason: "wrong_password" });
+    await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user.id, description: `Failed login attempt for "${email3}" \u2014 wrong password` });
     res.status(401).json({ error: "Invalid credentials" });
     return;
   }
@@ -69572,20 +69528,20 @@ router2.post("/auth/login", async (req, res) => {
     }
     if (!verifyTotp(user.totpSecret, String(totp_code))) {
       await registerFailedAttempt(user.id, policy);
-      await recordLogin(req, { userId: user.id, email: loginId, success: false, reason: "invalid_2fa" });
-      await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user.id, description: `Failed 2FA for "${loginId}"` });
+      await recordLogin(req, { userId: user.id, email: email3, success: false, reason: "invalid_2fa" });
+      await logAudit(req, { action: "auth.login_failed", entityType: "user", entityId: user.id, description: `Failed 2FA for "${email3}"` });
       res.status(401).json({ error: "Invalid authentication code" });
       return;
     }
   }
   await db.update(usersTable).set({ failedLoginAttempts: 0, lockedUntil: null }).where(eq(usersTable.id, user.id));
-  await recordLogin(req, { userId: user.id, email: loginId, success: true });
+  await recordLogin(req, { userId: user.id, email: email3, success: true });
   await logAudit(req, { action: "auth.login", entityType: "user", entityId: user.id, description: `"${user.name}" logged in (${user.role})` });
   const token = signToken(
     { userId: user.id, email: user.email, role: user.role, name: user.name, branchId: user.branchId ?? null },
     policy.sessionTimeoutMinutes * 60
   );
-  res.json({ token, user: publicUser(user), force_password_change: !user.passwordChangedAt });
+  res.json({ token, user: publicUser(user) });
 });
 async function registerFailedAttempt(userId, policy) {
   const lockoutMs = policy.lockoutMinutes * 6e4;
@@ -69814,6 +69770,27 @@ async function resolveWriteBranchId(req, explicit) {
 }
 
 // artifacts/api-server/src/lib/stock.ts
+var InsufficientStockError = class extends Error {
+  constructor(productId, available) {
+    super(`Insufficient stock for product #${productId} \u2014 only ${available} available`);
+    this.productId = productId;
+    this.available = available;
+    this.name = "InsufficientStockError";
+  }
+};
+async function applyStockDelta(branchId, productId, delta, opts = {}, dbc = db) {
+  const allowNegative = opts.allowNegative ?? false;
+  await dbc.insert(productStockTable).values({ branchId, productId, currentStock: 0, minStock: 0 }).onConflictDoNothing();
+  const guard = allowNegative ? sql`TRUE` : sql`${productStockTable.currentStock} + ${delta} >= 0`;
+  const rows = await dbc.update(productStockTable).set({ currentStock: sql`${productStockTable.currentStock} + ${delta}` }).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId), guard)).returning({ after: productStockTable.currentStock });
+  if (!rows.length) {
+    const [row] = await dbc.select({ cur: productStockTable.currentStock }).from(productStockTable).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
+    const cur = row?.cur ?? 0;
+    return { ok: false, before: cur, after: cur };
+  }
+  const after = rows[0].after;
+  return { ok: true, before: after - delta, after };
+}
 async function loadStockMap(opts) {
   const rows = opts.all ? await db.select().from(productStockTable) : opts.branchId == null ? [] : await db.select().from(productStockTable).where(eq(productStockTable.branchId, opts.branchId));
   const map2 = /* @__PURE__ */ new Map();
@@ -69825,43 +69802,32 @@ async function loadStockMap(opts) {
   }
   return map2;
 }
-async function getBranchStockRow(branchId, productId, executor = db) {
-  const [row] = await executor.select().from(productStockTable).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
+async function getBranchStockRow(branchId, productId) {
+  const [row] = await db.select().from(productStockTable).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
   return row ?? null;
 }
 async function getBranchCurrentStock(branchId, productId) {
   const row = await getBranchStockRow(branchId, productId);
   return row?.currentStock ?? 0;
 }
-async function adjustBranchStock(branchId, productId, computeAfter, executor = db) {
-  const row = await getBranchStockRow(branchId, productId, executor);
+async function adjustBranchStock(branchId, productId, computeAfter) {
+  const row = await getBranchStockRow(branchId, productId);
   const before = row?.currentStock ?? 0;
   const after = computeAfter(before);
   if (row) {
-    await executor.update(productStockTable).set({ currentStock: after }).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
+    await db.update(productStockTable).set({ currentStock: after }).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
   } else {
-    await executor.insert(productStockTable).values({ branchId, productId, currentStock: after, minStock: 0 });
+    await db.insert(productStockTable).values({ branchId, productId, currentStock: after, minStock: 0 });
   }
-  await syncProductAggregateStock(productId, executor);
   return { before, after };
 }
-async function syncProductAggregateStock(productId, executor = db) {
-  const rows = await executor.select().from(productStockTable).where(eq(productStockTable.productId, productId));
-  const totals = rows.reduce((acc, row) => {
-    acc.current += Number(row.currentStock ?? 0);
-    acc.min += Number(row.minStock ?? 0);
-    return acc;
-  }, { current: 0, min: 0 });
-  await executor.update(productsTable).set({ currentStock: totals.current, minStock: totals.min }).where(eq(productsTable.id, productId));
-}
-async function setBranchStock(branchId, productId, currentStock, minStock, executor = db) {
-  const row = await getBranchStockRow(branchId, productId, executor);
+async function setBranchStock(branchId, productId, currentStock, minStock) {
+  const row = await getBranchStockRow(branchId, productId);
   if (row) {
-    await executor.update(productStockTable).set(minStock === void 0 ? { currentStock } : { currentStock, minStock }).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
+    await db.update(productStockTable).set(minStock === void 0 ? { currentStock } : { currentStock, minStock }).where(and(eq(productStockTable.branchId, branchId), eq(productStockTable.productId, productId)));
   } else {
-    await executor.insert(productStockTable).values({ branchId, productId, currentStock, minStock: minStock ?? 0 });
+    await db.insert(productStockTable).values({ branchId, productId, currentStock, minStock: minStock ?? 0 });
   }
-  await syncProductAggregateStock(productId, executor);
 }
 
 // artifacts/api-server/src/routes/dashboard.ts
@@ -69981,130 +69947,42 @@ var dashboard_default = router3;
 // artifacts/api-server/src/routes/categories.ts
 var import_express4 = __toESM(require_express2(), 1);
 var router4 = (0, import_express4.Router)();
-function formatCategory(cat, productCount = 0) {
-  return { id: cat.id, name: cat.name, description: cat.description, created_at: cat.createdAt, product_count: Number(productCount || 0) };
-}
-async function loadCategoryProductCounts(executor = db) {
-  const rows = await executor.select({ categoryId: productsTable.categoryId, total: sql`count(*)` }).from(productsTable).where(sql`${productsTable.categoryId} IS NOT NULL`).groupBy(productsTable.categoryId);
-  return new Map(rows.map((row) => [row.categoryId, Number(row.total || 0)]));
-}
-async function findCategoryByName(name, executor = db) {
-  const normalized = String(name || '').trim();
-  if (!normalized) return null;
-  const rows = await executor.select().from(categoriesTable).where(sql`lower(${categoriesTable.name}) = lower(${normalized})`).limit(1);
-  return rows[0] ?? null;
-}
-router4.get('/categories', async (_req, res) => {
-  const [cats, countMap] = await Promise.all([
-    db.select().from(categoriesTable).orderBy(categoriesTable.name),
-    loadCategoryProductCounts()
-  ]);
-  res.json(cats.map((c) => formatCategory(c, countMap.get(c.id) ?? 0)));
+router4.get("/categories", async (_req, res) => {
+  const cats = await db.select().from(categoriesTable).orderBy(categoriesTable.name);
+  res.json(cats.map((c) => ({ id: c.id, name: c.name, description: c.description, created_at: c.createdAt })));
 });
-router4.post('/categories', async (req, res) => {
-  const name = String(req.body?.name || '').trim();
-  const description = req.body?.description ? String(req.body.description).trim() : null;
+router4.post("/categories", async (req, res) => {
+  const { name, description } = req.body;
   if (!name) {
-    res.status(400).json({ error: 'Name required' });
-    return;
-  }
-  const existing = await findCategoryByName(name);
-  if (existing) {
-    res.json(formatCategory(existing));
+    res.status(400).json({ error: "Name required" });
     return;
   }
   const [cat] = await db.insert(categoriesTable).values({ name, description }).returning();
-  await logAudit(req, { action: 'category.created', entityType: 'category', entityId: cat.id, description: `Created category "${cat.name}"` });
-  res.status(201).json(formatCategory(cat));
+  res.status(201).json({ id: cat.id, name: cat.name, description: cat.description, created_at: cat.createdAt });
 });
-router4.get('/categories/:id', async (req, res) => {
+router4.get("/categories/:id", async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
   const [cat] = await db.select().from(categoriesTable).where(eq(categoriesTable.id, id));
   if (!cat) {
-    res.status(404).json({ error: 'Category not found' });
+    res.status(404).json({ error: "Category not found" });
     return;
   }
-  const countMap = await loadCategoryProductCounts();
-  res.json(formatCategory(cat, countMap.get(cat.id) ?? 0));
+  res.json({ id: cat.id, name: cat.name, description: cat.description, created_at: cat.createdAt });
 });
-router4.patch('/categories/:id', async (req, res) => {
+router4.patch("/categories/:id", async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [existing] = await db.select().from(categoriesTable).where(eq(categoriesTable.id, id));
-  if (!existing) {
-    res.status(404).json({ error: 'Category not found' });
-    return;
-  }
-  const name = req.body?.name != null ? String(req.body.name).trim() : existing.name;
-  const description = req.body?.description != null ? String(req.body.description).trim() : existing.description;
-  if (!name) {
-    res.status(400).json({ error: 'Name required' });
-    return;
-  }
-  const duplicate = await findCategoryByName(name);
-  if (duplicate && duplicate.id !== existing.id) {
-    res.status(409).json({ error: 'Another category with that name already exists' });
-    return;
-  }
+  const { name, description } = req.body;
   const [cat] = await db.update(categoriesTable).set({ name, description }).where(eq(categoriesTable.id, id)).returning();
-  await logAudit(req, { action: 'category.updated', entityType: 'category', entityId: cat.id, description: `Updated category "${existing.name}"`, metadata: { before: formatCategory(existing), after: formatCategory(cat) } });
-  const countMap = await loadCategoryProductCounts();
-  res.json(formatCategory(cat, countMap.get(cat.id) ?? 0));
+  if (!cat) {
+    res.status(404).json({ error: "Category not found" });
+    return;
+  }
+  res.json({ id: cat.id, name: cat.name, description: cat.description, created_at: cat.createdAt });
 });
-router4.post('/categories/:id/merge', async (req, res) => {
-  const sourceId = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const targetCategoryId = req.body?.target_category_id != null ? parseInt(req.body.target_category_id, 10) : NaN;
-  const targetName = String(req.body?.target_name || '').trim();
-  const [source] = await db.select().from(categoriesTable).where(eq(categoriesTable.id, sourceId));
-  if (!source) {
-    res.status(404).json({ error: 'Source category not found' });
-    return;
-  }
-  if (!Number.isInteger(targetCategoryId) && !targetName) {
-    res.status(400).json({ error: 'target_category_id or target_name is required' });
-    return;
-  }
-  const result = await db.transaction(async (tx) => {
-    let target = null;
-    if (Number.isInteger(targetCategoryId)) {
-      const [existingTarget] = await tx.select().from(categoriesTable).where(eq(categoriesTable.id, targetCategoryId));
-      target = existingTarget ?? null;
-    } else {
-      target = await findCategoryByName(targetName, tx);
-      if (!target) {
-        const [createdTarget] = await tx.insert(categoriesTable).values({ name: targetName, description: null }).returning();
-        target = createdTarget;
-      }
-    }
-    if (!target) throw new Error('Target category not found');
-    if (target.id === source.id) throw new Error('Choose a different category to merge into');
-    const moved = await tx.select({ count: sql`count(*)` }).from(productsTable).where(eq(productsTable.categoryId, source.id));
-    await tx.update(productsTable).set({ categoryId: target.id }).where(eq(productsTable.categoryId, source.id));
-    await tx.delete(categoriesTable).where(eq(categoriesTable.id, source.id));
-    return { target, moved: Number(moved[0]?.count || 0) };
-  }).catch((error) => ({ error }));
-  if (result.error) {
-    res.status(400).json({ error: result.error.message || 'Unable to merge category' });
-    return;
-  }
-  await logAudit(req, { action: 'category.merged', entityType: 'category', entityId: result.target.id, description: `Merged category "${source.name}" into "${result.target.name}"`, metadata: { source_category_id: source.id, moved_products: result.moved } });
-  const countMap = await loadCategoryProductCounts();
-  res.json({ merged: true, moved_products: result.moved, category: formatCategory(result.target, countMap.get(result.target.id) ?? 0) });
-});
-router4.delete('/categories/:id', async (req, res) => {
+router4.delete("/categories/:id", async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [existing] = await db.select().from(categoriesTable).where(eq(categoriesTable.id, id));
-  if (!existing) {
-    res.status(404).json({ error: 'Category not found' });
-    return;
-  }
-  const result = await db.transaction(async (tx) => {
-    const affected = await tx.select({ count: sql`count(*)` }).from(productsTable).where(eq(productsTable.categoryId, id));
-    await tx.update(productsTable).set({ categoryId: null }).where(eq(productsTable.categoryId, id));
-    await tx.delete(categoriesTable).where(eq(categoriesTable.id, id));
-    return Number(affected[0]?.count || 0);
-  });
-  await logAudit(req, { action: 'category.deleted', entityType: 'category', entityId: id, description: `Deleted category "${existing.name}"`, metadata: { uncategorized_products: result } });
-  res.status(204).end();
+  await db.delete(categoriesTable).where(eq(categoriesTable.id, id));
+  res.sendStatus(204);
 });
 var categories_default = router4;
 
@@ -70144,192 +70022,9 @@ var brands_default = router5;
 // artifacts/api-server/src/routes/products.ts
 var import_express6 = __toESM(require_express2(), 1);
 var router6 = (0, import_express6.Router)();
-function parseOptionalInteger(value) {
-  const n = parseInt(value, 10);
-  return Number.isInteger(n) && n > 0 ? n : null;
-}
-function parseOptionalNumber(value, fallback = null) {
-  if (value === void 0 || value === null || value === '') return fallback;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
-}
-function parseOptionalBoolean(value) {
-  if (value === void 0 || value === null || value === '') return null;
-  if (typeof value === 'boolean') return value;
-  const normalized = String(value).trim().toLowerCase();
-  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
-  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
-  return null;
-}
-function cleanText(value) {
-  if (value === void 0 || value === null) return null;
-  const text2 = String(value).trim();
-  return text2 ? text2 : null;
-}
-function normalizeProductStatus(value) {
-  return String(value || 'active').trim().toLowerCase() === 'inactive' ? 'inactive' : 'active';
-}
-function normalizePhotoList(value) {
-  let list = [];
-  if (Array.isArray(value)) {
-    list = value;
-  } else if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) list = [];
-    else if (trimmed.startsWith('[')) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        list = Array.isArray(parsed) ? parsed : [];
-      } catch {
-        list = trimmed.split(',');
-      }
-    } else {
-      list = trimmed.split(',');
-    }
-  }
-  return [...new Set(list.map((item) => String(item || '').trim()).filter(Boolean))];
-}
-var productCategorizationRulesCache = { loadedAt: 0, rules: [] };
-var PRODUCT_CATEGORIZATION_CACHE_TTL_MS = 3e4;
-function normalizeCategorizationText(value) {
-  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
-}
-function singularizeCategorizationToken(token) {
-  if (token.length <= 3) return token;
-  if (token.endsWith('ies') && token.length > 4) return `${token.slice(0, -3)}y`;
-  if (token.endsWith('sses') || token.endsWith('xes') || token.endsWith('zes') || token.endsWith('ches') || token.endsWith('shes')) return token.slice(0, -2);
-  if (token.endsWith('s') && !token.endsWith('ss')) return token.slice(0, -1);
-  return token;
-}
-function stemCategorizationText(value) {
-  return normalizeCategorizationText(value).split(' ').filter(Boolean).map(singularizeCategorizationToken).join(' ');
-}
-function compactCategorizationText(value) {
-  return normalizeCategorizationText(value).replace(/\s+/g, '');
-}
-function parseRuleKeywords(value) {
-  if (Array.isArray(value)) return value.map((item) => cleanText(item)).filter(Boolean);
-  if (typeof value === 'string') {
-    try {
-      const parsed = JSON.parse(value);
-      if (Array.isArray(parsed)) return parsed.map((item) => cleanText(item)).filter(Boolean);
-    } catch {
-    }
-    return value.split(',').map((item) => cleanText(item)).filter(Boolean);
-  }
-  return [];
-}
-async function ensureProductCategorizationRuleSchema() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS product_categorization_rules (
-      id SERIAL PRIMARY KEY,
-      rule_name TEXT NOT NULL UNIQUE,
-      keywords JSONB NOT NULL DEFAULT '[]'::jsonb,
-      category_name TEXT NOT NULL,
-      priority INTEGER NOT NULL DEFAULT 100,
-      is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-      created_by_id INTEGER,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  await pool.query(`CREATE INDEX IF NOT EXISTS product_categorization_rules_enabled_idx ON product_categorization_rules (is_enabled, priority, id)`);
-}
-function invalidateProductCategorizationRulesCache() {
-  productCategorizationRulesCache.loadedAt = 0;
-  productCategorizationRulesCache.rules = [];
-}
-async function getProductCategorizationRules(force = false) {
-  const now = Date.now();
-  if (!force && now - productCategorizationRulesCache.loadedAt < PRODUCT_CATEGORIZATION_CACHE_TTL_MS && productCategorizationRulesCache.rules.length) {
-    return productCategorizationRulesCache.rules;
-  }
-  await ensureProductCategorizationRuleSchema();
-  const { rows } = await pool.query(`
-    SELECT id, rule_name, keywords, category_name, priority, is_enabled
-    FROM product_categorization_rules
-    WHERE is_enabled = TRUE
-    ORDER BY priority ASC, id ASC
-  `);
-  const rules = rows.map((row) => ({
-    id: Number(row.id),
-    rule_name: row.rule_name,
-    category_name: row.category_name,
-    priority: Number(row.priority || 100),
-    keywords: parseRuleKeywords(row.keywords)
-  })).filter((row) => row.keywords.length);
-  productCategorizationRulesCache.loadedAt = now;
-  productCategorizationRulesCache.rules = rules;
-  return rules;
-}
-function detectProductCategorizationRule(productName, rules) {
-  const normalizedName = normalizeCategorizationText(productName);
-  if (!normalizedName) return null;
-  const stemmedName = stemCategorizationText(productName);
-  const compactName = compactCategorizationText(productName);
-  for (const rule of rules) {
-    for (const keyword of rule.keywords) {
-      const normalizedKeyword = normalizeCategorizationText(keyword);
-      if (!normalizedKeyword) continue;
-      const stemmedKeyword = stemCategorizationText(keyword);
-      const compactKeyword = compactCategorizationText(keyword);
-      if (normalizedName.includes(normalizedKeyword) || (stemmedKeyword && stemmedName.includes(stemmedKeyword)) || (compactKeyword && compactName.includes(compactKeyword))) {
-        return { rule, keyword: normalizedKeyword };
-      }
-    }
-  }
-  return null;
-}
-async function detectProductCategorySuggestion(productName, executor = db) {
-  const rules = await getProductCategorizationRules();
-  const matched = detectProductCategorizationRule(productName, rules);
-  if (!matched) return null;
-  const existing = await findCategoryByName(matched.rule.category_name, executor);
-  return {
-    categoryId: existing?.id ?? null,
-    categoryName: matched.rule.category_name,
-    ruleId: matched.rule.id,
-    ruleName: matched.rule.rule_name,
-    matchedKeyword: matched.keyword
-  };
-}
-async function ensureCategoryId(input, executor = db) {
-  const existingId = parseOptionalInteger(input?.category_id);
-  if (existingId != null) return existingId;
-  const requestedName = cleanText(input?.create_category_name) ?? cleanText(input?.category_name);
-  if (!requestedName) return null;
-  const existing = await findCategoryByName(requestedName, executor);
-  if (existing) return existing.id;
-  const [created] = await executor.insert(categoriesTable).values({ name: requestedName, description: cleanText(input?.category_description) }).returning();
-  return created.id;
-}
-async function ensureProductCode(executor, requestedCode, existingId = null) {
-  const normalized = cleanText(requestedCode);
-  if (!normalized) return generateUniqueProductCode(executor);
-  const rows = await executor.select({ id: productsTable.id }).from(productsTable).where(eq(productsTable.productCode, normalized)).limit(1);
-  if (rows[0] && rows[0].id !== existingId) throw new Error('SKU already exists');
-  return normalized;
-}
-async function loadProductReferenceMaps(executor = db) {
-  const [categories, brands, suppliers, branches] = await Promise.all([
-    executor.select().from(categoriesTable),
-    executor.select().from(brandsTable),
-    executor.select().from(suppliersTable),
-    executor.select().from(branchesTable)
-  ]);
-  return {
-    categoryMap: Object.fromEntries(categories.map((item) => [item.id, item.name])),
-    brandMap: Object.fromEntries(brands.map((item) => [item.id, item.name])),
-    supplierMap: Object.fromEntries(suppliers.map((item) => [item.id, item.name])),
-    branchMap: Object.fromEntries(branches.map((item) => [item.id, item.name]))
-  };
-}
-function formatProduct(p, catName, brandName, supplierName, stock, branchName) {
-  const photos = normalizePhotoList(p.productPhotos);
-  const primaryPhoto = p.imageUrl ?? photos[0] ?? null;
+function formatProduct(p, catName, brandName, supplierName, stock) {
   return {
     id: p.id,
-    sku: p.productCode,
     product_code: p.productCode,
     barcode: p.barcode,
     product_name: p.productName,
@@ -70340,190 +70035,87 @@ function formatProduct(p, catName, brandName, supplierName, stock, branchName) {
     brand_name: brandName ?? null,
     supplier_id: p.supplierId,
     supplier_name: supplierName ?? null,
-    buying_price: Number(p.costPrice),
     cost_price: Number(p.costPrice),
     selling_price: Number(p.sellingPrice),
     vat_rate: Number(p.vatRate),
-    tax_inclusive: !!p.taxInclusive,
-    tax_settings: { rate: Number(p.vatRate), inclusive: !!p.taxInclusive },
     current_stock: stock ? stock.current : p.currentStock,
     min_stock: stock ? stock.min : p.minStock,
-    image_url: primaryPhoto,
-    product_photos: photos,
-    primary_branch_id: p.primaryBranchId ?? null,
-    branch_id: p.primaryBranchId ?? null,
-    branch_name: branchName ?? null,
-    primary_branch_name: branchName ?? null,
+    image_url: p.imageUrl,
     unit: p.unit,
-    unit_of_measure: p.unit,
-    status: normalizeProductStatus(p.status),
-    is_archived: p.isArchived ?? false,
-    archived_at: p.archivedAt ?? null,
     created_at: p.createdAt
   };
 }
-function stockFor(map2, p, options = {}) {
+function stockFor(map2, p) {
   const v = map2.get(p.id);
-  const fallbackCurrent = options.fallbackToProductCurrent ? p.currentStock : 0;
-  return { current: v?.cur ?? fallbackCurrent, min: v && v.min != null ? v.min : p.minStock };
+  return { current: v?.cur ?? 0, min: v && v.min != null ? v.min : p.minStock };
 }
-router6.get('/products', async (req, res) => {
-  const { search, q, category_id, brand_id, supplier_id, status, low_stock, in_stock_only, fallback_product_stock, include_archived, page = '1', limit = '50' } = req.query;
+router6.get("/products", async (req, res) => {
+  const { search, category_id, brand_id, low_stock, page = "1", limit = "50" } = req.query;
   const p = Math.max(1, parseInt(page, 10));
-  const l = Math.min(500, parseInt(limit, 10));
+  const l = Math.min(200, parseInt(limit, 10));
   const conditions = [];
-  const searchTerm = cleanText(search) ?? cleanText(q);
-  if (searchTerm) conditions.push(or(ilike(productsTable.productName, `%${searchTerm}%`), ilike(productsTable.productCode, `%${searchTerm}%`), ilike(productsTable.barcode, `%${searchTerm}%`), ilike(productsTable.description, `%${searchTerm}%`)));
-  const catId = parseOptionalInteger(category_id);
-  if (catId != null) conditions.push(eq(productsTable.categoryId, catId));
-  const brandId = parseOptionalInteger(brand_id);
-  if (brandId != null) conditions.push(eq(productsTable.brandId, brandId));
-  const supplierId = parseOptionalInteger(supplier_id);
-  if (supplierId != null) conditions.push(eq(productsTable.supplierId, supplierId));
-  const branchScope = getBranchScope(req);
-  const selectedBranchId = branchScope.isSuper ? parseOptionalInteger(req.query.branch_id) ?? branchScope.branchId : branchScope.branchId;
-  if (selectedBranchId != null) conditions.push(eq(productsTable.primaryBranchId, selectedBranchId));
-  const normalizedStatus = cleanText(status);
-  if (normalizedStatus === 'active' || normalizedStatus === 'inactive') conditions.push(eq(productsTable.status, normalizedStatus));
-  if (include_archived !== 'true') conditions.push(eq(productsTable.isArchived, false));
+  if (search) conditions.push(ilike(productsTable.productName, `%${search}%`));
+  if (category_id) conditions.push(eq(productsTable.categoryId, parseInt(category_id, 10)));
+  if (brand_id) conditions.push(eq(productsTable.brandId, parseInt(brand_id, 10)));
   const where = conditions.length ? and(...conditions) : void 0;
   const allProducts = await db.select().from(productsTable).where(where).orderBy(productsTable.productName);
-  const useAllBranches = branchScope.mode === 'all' && selectedBranchId == null;
-  const stockMap = await loadStockMap({ branchId: useAllBranches ? null : selectedBranchId, all: useAllBranches });
-  const { categoryMap, brandMap, supplierMap, branchMap } = await loadProductReferenceMaps();
-  const useProductFallbackStock = fallback_product_stock === 'true' || !selectedBranchId;
-  const productsWithStock = allProducts.map((prod) => ({
-    product: prod,
-    stock: stockFor(stockMap, prod, { fallbackToProductCurrent: useProductFallbackStock })
-  }));
-  const inStockOnly = in_stock_only === 'true';
-  const scopedProducts = inStockOnly ? productsWithStock.filter((row) => Number(row.stock.current) > 0) : productsWithStock;
-  let formatted = scopedProducts.map((row) => formatProduct(
-    row.product,
-    row.product.categoryId ? categoryMap[row.product.categoryId] : null,
-    row.product.brandId ? brandMap[row.product.brandId] : null,
-    row.product.supplierId ? supplierMap[row.product.supplierId] : null,
-    row.stock,
-    branchMap[row.product.primaryBranchId ?? selectedBranchId] ?? null
-  ));
-  if (low_stock === 'true') formatted = formatted.filter((item) => item.current_stock <= item.min_stock);
+  const scope = getBranchScope(req);
+  const stockMap = await loadStockMap({ branchId: scope.branchId, all: scope.mode === "all" });
+  const [categories, brands, suppliers] = await Promise.all([
+    db.select().from(categoriesTable),
+    db.select().from(brandsTable),
+    db.select().from(suppliersTable)
+  ]);
+  const catMap = Object.fromEntries(categories.map((c) => [c.id, c.name]));
+  const brandMap = Object.fromEntries(brands.map((b) => [b.id, b.name]));
+  const supplierMap = Object.fromEntries(suppliers.map((s) => [s.id, s.name]));
+  let formatted = allProducts.map(
+    (prod) => formatProduct(prod, prod.categoryId ? catMap[prod.categoryId] : null, prod.brandId ? brandMap[prod.brandId] : null, prod.supplierId ? supplierMap[prod.supplierId] : null, stockFor(stockMap, prod))
+  );
+  if (low_stock === "true") formatted = formatted.filter((r) => r.current_stock <= r.min_stock);
   const total = formatted.length;
   const offset = (p - 1) * l;
   res.json({ data: formatted.slice(offset, offset + l), total, page: p, limit: l });
 });
-router6.get('/products/categorization/suggest', requireRole('administrator', 'manager', 'storekeeper', 'sales_cashier'), async (req, res) => {
-  const productName = cleanText(req.query?.product_name);
-  if (!productName) {
-    res.json({ detected: false });
+router6.post("/products", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
+  const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, current_stock, min_stock, image_url, unit } = req.body;
+  if (!product_code || !product_name) {
+    res.status(400).json({ error: "product_code and product_name required" });
     return;
   }
-  const suggestion = await detectProductCategorySuggestion(productName);
-  if (!suggestion) {
-    res.json({ detected: false });
-    return;
+  const [p] = await db.insert(productsTable).values({
+    productCode: product_code,
+    barcode,
+    productName: product_name,
+    description,
+    categoryId: category_id,
+    brandId: brand_id,
+    supplierId: supplier_id,
+    costPrice: cost_price?.toString() ?? "0",
+    sellingPrice: selling_price?.toString() ?? "0",
+    vatRate: vat_rate?.toString() ?? "16",
+    currentStock: current_stock ?? 0,
+    minStock: min_stock ?? 0,
+    imageUrl: image_url,
+    unit
+  }).returning();
+  const branchId = await resolveWriteBranchId(req);
+  await setBranchStock(branchId, p.id, current_stock ?? 0, min_stock ?? 0);
+  if ((current_stock ?? 0) > 0) {
+    await db.insert(stockMovementsTable).values({ branchId, productId: p.id, type: "opening", quantity: current_stock, quantityBefore: 0, quantityAfter: current_stock, reference: `OPEN-${p.productCode}`, notes: "Opening stock" });
   }
-  res.json({
-    detected: true,
-    category_id: suggestion.categoryId,
-    category_name: suggestion.categoryName,
-    rule_id: suggestion.ruleId,
-    rule_name: suggestion.ruleName,
-    matched_keyword: suggestion.matchedKeyword
-  });
-});
-async function generateUniqueProductCode(dbConn) {
-  const prefix = 'P';
-  const rows = await dbConn.execute(
-    sql`SELECT product_code FROM products WHERE product_code ~ ${`^${prefix}[0-9]{6,}$`} ORDER BY length(product_code) DESC, product_code DESC LIMIT 1`
-  );
-  let next = 1;
-  if (rows.rows && rows.rows.length > 0) {
-    const last = rows.rows[0].product_code;
-    const num = parseInt(last.slice(prefix.length), 10);
-    if (!isNaN(num)) next = num + 1;
-  }
-  let candidate = prefix + String(next).padStart(6, '0');
-  while (true) {
-    const [existing] = await dbConn.select({ code: productsTable.productCode }).from(productsTable).where(eq(productsTable.productCode, candidate));
-    if (!existing) break;
-    next = next + 1;
-    candidate = prefix + String(next).padStart(6, '0');
-  }
-  return candidate;
-}
-router6.post('/products', requireRole('administrator', 'manager', 'storekeeper'), async (req, res) => {
-  const productName = cleanText(req.body?.product_name);
-  if (!productName) {
-    res.status(400).json({ error: 'product_name required' });
-    return;
-  }
-  try {
-    const requestedBranchId = parseOptionalInteger(req.body?.branch_id) ?? parseOptionalInteger(req.body?.primary_branch_id);
-    const branchId = await resolveWriteBranchId(req, requestedBranchId ?? void 0);
-    const result = await db.transaction(async (tx) => {
-      const recategorizeRequested = parseOptionalBoolean(req.body?.recategorize) === true;
-      let categoryId = await ensureCategoryId(req.body, tx);
-      let categorization = null;
-      if ((categoryId == null || recategorizeRequested) && productName) {
-        const suggestion = await detectProductCategorySuggestion(productName, tx);
-        if (suggestion?.categoryName) {
-          categoryId = await ensureCategoryId({ category_name: suggestion.categoryName }, tx);
-          categorization = suggestion;
-        }
-      }
-      const productCode = await ensureProductCode(tx, req.body?.product_code);
-      const openingStock = Math.max(0, Math.round(parseOptionalNumber(req.body?.current_stock, 0) ?? 0));
-      const minStock = Math.max(0, Math.round(parseOptionalNumber(req.body?.min_stock, 0) ?? 0));
-      const photos = normalizePhotoList(req.body?.product_photos);
-      const [product] = await tx.insert(productsTable).values({
-        productCode,
-        barcode: cleanText(req.body?.barcode),
-        productName,
-        description: cleanText(req.body?.description),
-        categoryId,
-        brandId: parseOptionalInteger(req.body?.brand_id),
-        supplierId: parseOptionalInteger(req.body?.supplier_id),
-        costPrice: String(parseOptionalNumber(req.body?.cost_price, 0) ?? 0),
-        sellingPrice: String(parseOptionalNumber(req.body?.selling_price, 0) ?? 0),
-        vatRate: String(parseOptionalNumber(req.body?.vat_rate, 16) ?? 16),
-        taxInclusive: parseOptionalBoolean(req.body?.tax_inclusive) ?? false,
-        currentStock: openingStock,
-        minStock,
-        imageUrl: cleanText(req.body?.image_url) ?? photos[0] ?? null,
-        productPhotos: photos,
-        unit: cleanText(req.body?.unit) ?? cleanText(req.body?.unit_of_measure),
-        status: normalizeProductStatus(req.body?.status),
-        primaryBranchId: parseOptionalInteger(req.body?.primary_branch_id) ?? branchId
-      }).returning();
-      await setBranchStock(branchId, product.id, openingStock, minStock, tx);
-      const stock = await getBranchStockRow(branchId, product.id, tx);
-      return { product, stock, branchId, categorization };
-    });
-    const { categoryMap, brandMap, supplierMap, branchMap } = await loadProductReferenceMaps();
-    const response = formatProduct(
-      result.product,
-      result.product.categoryId ? categoryMap[result.product.categoryId] : null,
-      result.product.brandId ? brandMap[result.product.brandId] : null,
-      result.product.supplierId ? supplierMap[result.product.supplierId] : null,
-      { current: result.stock?.currentStock ?? result.product.currentStock, min: result.stock?.minStock ?? result.product.minStock },
-      branchMap[result.product.primaryBranchId ?? result.branchId] ?? null
-    );
-    await logAudit(req, { action: 'product.created', entityType: 'product', entityId: result.product.id, description: `Created product "${result.product.productName}" (${result.product.productCode})`, metadata: { after: response, auto_categorization: result.categorization ?? null } });
-    res.status(201).json(response);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to create product';
-    res.status(message === 'SKU already exists' ? 409 : 400).json({ error: message });
-  }
+  await logAudit(req, { action: "product.created", entityType: "product", entityId: p.id, description: `Created product "${p.productName}" (${p.productCode})` });
+  res.status(201).json(formatProduct(p, void 0, void 0, void 0, { current: current_stock ?? 0, min: min_stock ?? 0 }));
 });
 function makeBarcode(productCode, productId) {
-  const prefix = productCode.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 4).padEnd(4, 'X');
-  const suffix = String(productId).padStart(8, '0');
+  const prefix = productCode.replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0, 4).padEnd(4, "X");
+  const suffix = String(productId).padStart(8, "0");
   return `${prefix}${suffix}`;
 }
-router6.patch('/products/generate-barcodes', requireRole('administrator'), async (req, res) => {
+router6.patch("/products/generate-barcodes", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
   const { product_ids } = req.body;
   if (!Array.isArray(product_ids)) {
-    res.status(400).json({ error: 'product_ids is required and must be a non-empty array of positive integers' });
+    res.status(400).json({ error: "product_ids is required and must be a non-empty array of positive integers" });
     return;
   }
   const parsed = product_ids.map((id) => {
@@ -70531,11 +70123,11 @@ router6.patch('/products/generate-barcodes', requireRole('administrator'), async
     return Number.isInteger(n) && n > 0 ? n : NaN;
   });
   if (parsed.some(isNaN)) {
-    res.status(400).json({ error: 'product_ids must be an array of positive integers' });
+    res.status(400).json({ error: "product_ids must be an array of positive integers" });
     return;
   }
   if (parsed.length === 0) {
-    res.json({ updated: 0, message: 'No products selected.' });
+    res.json({ updated: 0, message: "No products selected." });
     return;
   }
   const filterIds = [...new Set(parsed)];
@@ -70546,32 +70138,32 @@ router6.patch('/products/generate-barcodes', requireRole('administrator'), async
   );
   const untagged = await db.select({ id: productsTable.id, productCode: productsTable.productCode, productName: productsTable.productName }).from(productsTable).where(where);
   if (untagged.length === 0) {
-    res.json({ updated: 0, message: 'All selected products already have barcodes.' });
+    res.json({ updated: 0, message: "All selected products already have barcodes." });
     return;
   }
   const updatedIds = [];
-  for (const p2 of untagged) {
-    const barcode = makeBarcode(p2.productCode, p2.id);
-    const rows = await db.update(productsTable).set({ barcode }).where(and(eq(productsTable.id, p2.id), sql`${productsTable.barcode} IS NULL OR ${productsTable.barcode} = ''`)).returning({ id: productsTable.id });
-    if (rows.length > 0) updatedIds.push(p2.id);
+  for (const p of untagged) {
+    const barcode = makeBarcode(p.productCode, p.id);
+    const rows = await db.update(productsTable).set({ barcode }).where(and(eq(productsTable.id, p.id), sql`${productsTable.barcode} IS NULL OR ${productsTable.barcode} = ''`)).returning({ id: productsTable.id });
+    if (rows.length > 0) updatedIds.push(p.id);
   }
   if (updatedIds.length === 0) {
-    res.json({ updated: 0, message: 'All selected products already have barcodes.' });
+    res.json({ updated: 0, message: "All selected products already have barcodes." });
     return;
   }
   await logAudit(req, {
-    action: 'product.barcodes_generated',
-    entityType: 'product',
+    action: "product.barcodes_generated",
+    entityType: "product",
     entityId: 0,
     description: `Bulk-generated barcodes for ${updatedIds.length} selected product(s)`,
     metadata: { count: updatedIds.length, productIds: updatedIds }
   });
   const updatedIdSet = new Set(updatedIds);
-  const updatedProducts = untagged.filter((p2) => updatedIdSet.has(p2.id)).map((p2) => ({
-    id: p2.id,
-    product_code: p2.productCode,
-    product_name: p2.productName,
-    barcode: makeBarcode(p2.productCode, p2.id)
+  const updatedProducts = untagged.filter((p) => updatedIdSet.has(p.id)).map((p) => ({
+    id: p.id,
+    product_code: p.productCode,
+    product_name: p.productName,
+    barcode: makeBarcode(p.productCode, p.id)
   }));
   res.json({
     updated: updatedIds.length,
@@ -70579,246 +70171,70 @@ router6.patch('/products/generate-barcodes', requireRole('administrator'), async
     products: updatedProducts
   });
 });
-router6.get('/products/barcode/:barcode', async (req, res) => {
+router6.get("/products/barcode/:barcode", async (req, res) => {
   const barcode = Array.isArray(req.params.barcode) ? req.params.barcode[0] : req.params.barcode;
-  const [product] = await db.select().from(productsTable).where(eq(productsTable.barcode, barcode));
-  if (!product) {
-    res.status(404).json({ error: 'Product not found' });
+  const [p] = await db.select().from(productsTable).where(eq(productsTable.barcode, barcode));
+  if (!p) {
+    res.status(404).json({ error: "Product not found" });
     return;
   }
   const scope = getBranchScope(req);
-  const selectedBranchId = scope.isSuper ? parseOptionalInteger(req.query.branch_id) ?? scope.branchId : scope.branchId;
-  const stockMap = await loadStockMap({ branchId: scope.mode === 'all' && selectedBranchId == null ? null : selectedBranchId, all: scope.mode === 'all' && selectedBranchId == null });
-  const { categoryMap, brandMap, supplierMap, branchMap } = await loadProductReferenceMaps();
-  res.json(formatProduct(product, product.categoryId ? categoryMap[product.categoryId] : null, product.brandId ? brandMap[product.brandId] : null, product.supplierId ? supplierMap[product.supplierId] : null, stockFor(stockMap, product, { fallbackToProductCurrent: !selectedBranchId }), branchMap[product.primaryBranchId ?? selectedBranchId] ?? null));
+  const map2 = await loadStockMap({ branchId: scope.branchId, all: scope.mode === "all" });
+  res.json(formatProduct(p, void 0, void 0, void 0, stockFor(map2, p)));
 });
-router6.get('/products/:id/history', requireRole('administrator', 'manager', 'storekeeper'), async (req, res) => {
+router6.get("/products/:id", async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [product] = await db.select().from(productsTable).where(eq(productsTable.id, id));
-  if (!product) {
-    res.status(404).json({ error: 'Product not found' });
-    return;
-  }
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit ?? '30', 10)));
-  const movementWhere = combine(eq(stockMovementsTable.productId, id), branchCondition(stockMovementsTable.branchId, req));
-  const [auditRows, movementRows, refs] = await Promise.all([
-    db.select().from(auditLogTable).where(and(eq(auditLogTable.entityType, 'product'), eq(auditLogTable.entityId, String(id)))).orderBy(desc(auditLogTable.createdAt)).limit(limit),
-    db.select().from(stockMovementsTable).where(movementWhere).orderBy(desc(stockMovementsTable.createdAt)).limit(limit),
-    loadProductReferenceMaps()
-  ]);
-  res.json({
-    audit: auditRows.map((entry) => ({
-      id: entry.id,
-      action: entry.action,
-      actor_name: entry.actorName,
-      actor_role: entry.actorRole,
-      description: entry.description,
-      metadata: entry.metadata ?? null,
-      created_at: entry.createdAt
-    })),
-    movements: movementRows.map((movement) => ({
-      id: movement.id,
-      type: movement.type,
-      quantity: movement.quantity,
-      quantity_before: movement.quantityBefore,
-      quantity_after: movement.quantityAfter,
-      reference: movement.reference,
-      notes: movement.notes,
-      branch_id: movement.branchId,
-      branch_name: refs.branchMap[movement.branchId] ?? null,
-      created_at: movement.createdAt
-    }))
-  });
-});
-router6.post('/products/:id/duplicate', requireRole('administrator', 'manager', 'storekeeper'), async (req, res) => {
-  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [source] = await db.select().from(productsTable).where(eq(productsTable.id, id));
-  if (!source) {
-    res.status(404).json({ error: 'Product not found' });
-    return;
-  }
-  const requestedBranchId = parseOptionalInteger(req.body?.branch_id) ?? source.primaryBranchId ?? null;
-  const branchId = await resolveWriteBranchId(req, requestedBranchId ?? void 0);
-  const result = await db.transaction(async (tx) => {
-    const duplicateCode = await generateUniqueProductCode(tx);
-    const photos = normalizePhotoList(source.productPhotos);
-    const [copy] = await tx.insert(productsTable).values({
-      productCode: duplicateCode,
-      barcode: null,
-      productName: `${source.productName} Copy`,
-      description: source.description,
-      categoryId: source.categoryId,
-      brandId: source.brandId,
-      supplierId: source.supplierId,
-      costPrice: source.costPrice,
-      sellingPrice: source.sellingPrice,
-      vatRate: source.vatRate,
-      taxInclusive: source.taxInclusive ?? false,
-      currentStock: 0,
-      minStock: source.minStock,
-      imageUrl: source.imageUrl,
-      productPhotos: photos,
-      unit: source.unit,
-      status: 'inactive',
-      primaryBranchId: branchId
-    }).returning();
-    await setBranchStock(branchId, copy.id, 0, source.minStock, tx);
-    const stock = await getBranchStockRow(branchId, copy.id, tx);
-    return { copy, stock };
-  });
-  const { categoryMap, brandMap, supplierMap, branchMap } = await loadProductReferenceMaps();
-  const response = formatProduct(result.copy, result.copy.categoryId ? categoryMap[result.copy.categoryId] : null, result.copy.brandId ? brandMap[result.copy.brandId] : null, result.copy.supplierId ? supplierMap[result.copy.supplierId] : null, { current: result.stock?.currentStock ?? 0, min: result.stock?.minStock ?? result.copy.minStock }, branchMap[result.copy.primaryBranchId] ?? null);
-  await logAudit(req, { action: 'product.duplicated', entityType: 'product', entityId: result.copy.id, description: `Duplicated product "${source.productName}" as "${result.copy.productName}"`, metadata: { source_product_id: source.id, after: response } });
-  res.status(201).json(response);
-});
-router6.get('/products/:id', async (req, res) => {
-  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [product] = await db.select().from(productsTable).where(eq(productsTable.id, id));
-  if (!product) {
-    res.status(404).json({ error: 'Product not found' });
+  const [p] = await db.select().from(productsTable).where(eq(productsTable.id, id));
+  if (!p) {
+    res.status(404).json({ error: "Product not found" });
     return;
   }
   const scope = getBranchScope(req);
-  const selectedBranchId = scope.isSuper ? parseOptionalInteger(req.query.branch_id) ?? scope.branchId : scope.branchId;
-  const stockMap = await loadStockMap({ branchId: scope.mode === 'all' && selectedBranchId == null ? null : selectedBranchId, all: scope.mode === 'all' && selectedBranchId == null });
-  const { categoryMap, brandMap, supplierMap, branchMap } = await loadProductReferenceMaps();
-  res.json(formatProduct(product, product.categoryId ? categoryMap[product.categoryId] : null, product.brandId ? brandMap[product.brandId] : null, product.supplierId ? supplierMap[product.supplierId] : null, stockFor(stockMap, product, { fallbackToProductCurrent: !selectedBranchId }), branchMap[product.primaryBranchId ?? selectedBranchId] ?? null));
+  const map2 = await loadStockMap({ branchId: scope.branchId, all: scope.mode === "all" });
+  res.json(formatProduct(p, void 0, void 0, void 0, stockFor(map2, p)));
 });
-router6.patch('/products/:id', requireRole('administrator', 'manager', 'storekeeper'), async (req, res) => {
+router6.patch("/products/:id", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, current_stock, min_stock, image_url, unit } = req.body;
   const [before] = await db.select().from(productsTable).where(eq(productsTable.id, id));
   if (!before) {
-    res.status(404).json({ error: 'Product not found' });
+    res.status(404).json({ error: "Product not found" });
     return;
   }
-  try {
-    const requestedBranchId = parseOptionalInteger(req.body?.branch_id) ?? parseOptionalInteger(req.body?.primary_branch_id) ?? before.primaryBranchId ?? null;
-    const branchId = await resolveWriteBranchId(req, requestedBranchId ?? void 0);
-    const result = await db.transaction(async (tx) => {
-      const updateData = {};
-      const recategorizeRequested = parseOptionalBoolean(req.body?.recategorize) === true;
-      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'product_code')) updateData.productCode = await ensureProductCode(tx, req.body?.product_code, before.id);
-      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'barcode')) updateData.barcode = cleanText(req.body?.barcode);
-      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'product_name')) updateData.productName = cleanText(req.body?.product_name) ?? before.productName;
-      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'description')) updateData.description = cleanText(req.body?.description);
-      const hasManualCategoryInput = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'category_id') || Object.prototype.hasOwnProperty.call(req.body ?? {}, 'create_category_name') || Object.prototype.hasOwnProperty.call(req.body ?? {}, 'category_name');
-      if (hasManualCategoryInput) updateData.categoryId = await ensureCategoryId(req.body, tx);
-      let categorization = null;
-      const effectiveName = Object.prototype.hasOwnProperty.call(updateData, 'productName') ? updateData.productName : before.productName;
-      const effectiveCategoryId = Object.prototype.hasOwnProperty.call(updateData, 'categoryId') ? updateData.categoryId : before.categoryId;
-      if (effectiveName && (recategorizeRequested || effectiveCategoryId == null) && (!hasManualCategoryInput || recategorizeRequested)) {
-        const suggestion = await detectProductCategorySuggestion(effectiveName, tx);
-        if (suggestion?.categoryName) {
-          updateData.categoryId = await ensureCategoryId({ category_name: suggestion.categoryName }, tx);
-          categorization = suggestion;
-        }
-      }
-      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'brand_id')) updateData.brandId = parseOptionalInteger(req.body?.brand_id);
-      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'supplier_id')) updateData.supplierId = parseOptionalInteger(req.body?.supplier_id);
-      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'cost_price')) updateData.costPrice = String(parseOptionalNumber(req.body?.cost_price, 0) ?? 0);
-      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'selling_price')) updateData.sellingPrice = String(parseOptionalNumber(req.body?.selling_price, 0) ?? 0);
-      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'vat_rate')) updateData.vatRate = String(parseOptionalNumber(req.body?.vat_rate, 16) ?? 16);
-      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'tax_inclusive')) updateData.taxInclusive = parseOptionalBoolean(req.body?.tax_inclusive) ?? false;
-      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'unit') || Object.prototype.hasOwnProperty.call(req.body ?? {}, 'unit_of_measure')) updateData.unit = cleanText(req.body?.unit) ?? cleanText(req.body?.unit_of_measure);
-      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'status')) updateData.status = normalizeProductStatus(req.body?.status);
-      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'primary_branch_id') || Object.prototype.hasOwnProperty.call(req.body ?? {}, 'branch_id')) updateData.primaryBranchId = parseOptionalInteger(req.body?.primary_branch_id) ?? parseOptionalInteger(req.body?.branch_id) ?? branchId;
-      const photoFieldsChanged = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'product_photos') || Object.prototype.hasOwnProperty.call(req.body ?? {}, 'image_url');
-      if (photoFieldsChanged) {
-        const photos = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'product_photos') ? normalizePhotoList(req.body?.product_photos) : normalizePhotoList(before.productPhotos);
-        const requestedImage = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'image_url') ? cleanText(req.body?.image_url) : before.imageUrl;
-        updateData.productPhotos = photos;
-        updateData.imageUrl = requestedImage ?? photos[0] ?? null;
-      }
-      const currentStockInput = parseOptionalNumber(req.body?.current_stock);
-      const minStockInput = parseOptionalNumber(req.body?.min_stock);
-      const stockAdjustmentInput = parseOptionalNumber(req.body?.stock_adjustment, 0) ?? 0;
-      const currentRow = await getBranchStockRow(branchId, id, tx);
-      const beforeCurrent = currentRow?.currentStock ?? 0;
-      const beforeMin = currentRow?.minStock ?? before.minStock ?? 0;
-      const nextMin = minStockInput == null ? beforeMin : Math.max(0, Math.round(minStockInput));
-      let nextCurrent = currentStockInput == null ? beforeCurrent : Math.max(0, Math.round(currentStockInput));
-      nextCurrent = Math.max(0, nextCurrent + Math.round(stockAdjustmentInput));
-      let movement = null;
-      if (currentStockInput != null || minStockInput != null || stockAdjustmentInput !== 0) {
-        await setBranchStock(branchId, id, nextCurrent, nextMin, tx);
-        if (nextCurrent !== beforeCurrent) {
-          const [createdMovement] = await tx.insert(stockMovementsTable).values({
-            branchId,
-            productId: id,
-            type: 'adjustment',
-            quantity: nextCurrent - beforeCurrent,
-            quantityBefore: beforeCurrent,
-            quantityAfter: nextCurrent,
-            reference: `ADJ-${Date.now()}`,
-            notes: cleanText(req.body?.adjustment_reason) ?? cleanText(req.body?.notes) ?? 'Inventory editor adjustment'
-          }).returning();
-          movement = createdMovement;
-        }
-        updateData.currentStock = nextCurrent;
-        updateData.minStock = nextMin;
-      }
-      const [product] = Object.keys(updateData).length ? await tx.update(productsTable).set(updateData).where(eq(productsTable.id, id)).returning() : [before];
-      const stock = await getBranchStockRow(branchId, id, tx);
-      return { product, stock, branchId, movement, categorization };
-    });
-    const refs = await loadProductReferenceMaps();
-    const beforeSnap = formatProduct(before, before.categoryId ? refs.categoryMap[before.categoryId] : null, before.brandId ? refs.brandMap[before.brandId] : null, before.supplierId ? refs.supplierMap[before.supplierId] : null, { current: before.currentStock, min: before.minStock }, refs.branchMap[before.primaryBranchId] ?? null);
-    const afterSnap = formatProduct(result.product, result.product.categoryId ? refs.categoryMap[result.product.categoryId] : null, result.product.brandId ? refs.brandMap[result.product.brandId] : null, result.product.supplierId ? refs.supplierMap[result.product.supplierId] : null, { current: result.stock?.currentStock ?? result.product.currentStock, min: result.stock?.minStock ?? result.product.minStock }, refs.branchMap[result.product.primaryBranchId ?? result.branchId] ?? null);
-    await logAudit(req, { action: 'product.updated', entityType: 'product', entityId: result.product.id, description: `Updated product "${result.product.productName}" (${result.product.productCode})`, metadata: { before: beforeSnap, after: afterSnap, stock_adjustment: result.movement ? { quantity: result.movement.quantity, branch_id: result.movement.branchId, reference: result.movement.reference } : null, reason: cleanText(req.body?.adjustment_reason) ?? null, auto_categorization: result.categorization ?? null } });
-    res.json(afterSnap);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to update product';
-    res.status(message === 'SKU already exists' ? 409 : 400).json({ error: message });
+  const updateData = {};
+  if (product_code !== void 0) updateData.productCode = product_code;
+  if (barcode !== void 0) updateData.barcode = barcode;
+  if (product_name !== void 0) updateData.productName = product_name;
+  if (description !== void 0) updateData.description = description;
+  if (category_id !== void 0) updateData.categoryId = category_id;
+  if (brand_id !== void 0) updateData.brandId = brand_id;
+  if (supplier_id !== void 0) updateData.supplierId = supplier_id;
+  if (cost_price !== void 0) updateData.costPrice = cost_price.toString();
+  if (selling_price !== void 0) updateData.sellingPrice = selling_price.toString();
+  if (vat_rate !== void 0) updateData.vatRate = vat_rate.toString();
+  if (image_url !== void 0) updateData.imageUrl = image_url;
+  if (unit !== void 0) updateData.unit = unit;
+  const [p] = Object.keys(updateData).length ? await db.update(productsTable).set(updateData).where(eq(productsTable.id, id)).returning() : [before];
+  const branchId = await resolveWriteBranchId(req);
+  if (current_stock !== void 0 || min_stock !== void 0) {
+    const row = await getBranchStockRow(branchId, id);
+    const newCur = current_stock !== void 0 ? current_stock : row?.currentStock ?? 0;
+    const newMin = min_stock !== void 0 ? min_stock : row?.minStock ?? 0;
+    await setBranchStock(branchId, id, newCur, newMin);
   }
+  const stockRow = await getBranchStockRow(branchId, id);
+  const stock = { current: stockRow?.currentStock ?? 0, min: stockRow?.minStock ?? p.minStock };
+  const beforeSnap = formatProduct(before);
+  const afterSnap = formatProduct(p, void 0, void 0, void 0, stock);
+  await logAudit(req, { action: "product.updated", entityType: "product", entityId: p.id, description: `Updated product "${p.productName}" (${p.productCode})`, metadata: { before: beforeSnap, after: afterSnap } });
+  res.json(afterSnap);
 });
-router6.delete('/products/:id', requireAuth, requireSuperAdmin, async (req, res) => {
+router6.delete("/products/:id", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [p2] = await db.select().from(productsTable).where(eq(productsTable.id, id));
-  if (!p2) {
-    res.status(404).json({ error: 'Product not found' });
-    return;
-  }
-  const [saleUsage] = await db.select({ count: sql`count(*)` }).from(saleItemsTable).where(eq(saleItemsTable.productId, id));
-  if (Number(saleUsage?.count ?? 0) > 0) {
-    res.status(422).json({ error: 'This product has sales history and cannot be permanently deleted. Archive it instead to hide it from normal lists while preserving historical records.', code: 'HAS_SALES_HISTORY' });
-    return;
-  }
-  const { reason } = req.body ?? {};
+  const [p] = await db.select().from(productsTable).where(eq(productsTable.id, id));
   await db.delete(productsTable).where(eq(productsTable.id, id));
-  await logAudit(req, { action: 'product.deleted', entityType: 'product', entityId: id, description: `Permanently deleted product "${p2?.productName ?? id}" (${p2?.productCode ?? ''})${reason ? ' — Reason: ' + reason : ''}`, metadata: { reason: reason ?? null } });
+  await logAudit(req, { action: "product.deleted", entityType: "product", entityId: id, description: `Deleted product "${p?.productName ?? id}"` });
   res.sendStatus(204);
-});
-router6.patch('/products/:id/archive', requireAuth, requireSuperAdmin, async (req, res) => {
-  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [p2] = await db.select().from(productsTable).where(eq(productsTable.id, id));
-  if (!p2) {
-    res.status(404).json({ error: 'Product not found' });
-    return;
-  }
-  if (p2.isArchived) {
-    res.status(409).json({ error: 'Product is already archived' });
-    return;
-  }
-  const { reason } = req.body ?? {};
-  const actorId = req.user?.userId ?? null;
-  const [updated] = await db.update(productsTable).set({ isArchived: true, archivedAt: new Date(), archivedBy: actorId }).where(eq(productsTable.id, id)).returning();
-  await logAudit(req, { action: 'product.archived', entityType: 'product', entityId: id, description: `Archived product "${p2.productName}" (${p2.productCode})${reason ? ' — Reason: ' + reason : ''}`, metadata: { reason: reason ?? null } });
-  res.json(formatProduct(updated));
-});
-router6.patch('/products/:id/restore', requireAuth, requireSuperAdmin, async (req, res) => {
-  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [p2] = await db.select().from(productsTable).where(eq(productsTable.id, id));
-  if (!p2) {
-    res.status(404).json({ error: 'Product not found' });
-    return;
-  }
-  if (!p2.isArchived) {
-    res.status(409).json({ error: 'Product is not archived' });
-    return;
-  }
-  const [updated] = await db.update(productsTable).set({ isArchived: false, archivedAt: null, archivedBy: null }).where(eq(productsTable.id, id)).returning();
-  await logAudit(req, { action: 'product.restored', entityType: 'product', entityId: id, description: `Restored archived product "${p2.productName}" (${p2.productCode})` });
-  res.json(formatProduct(updated));
 });
 var products_default = router6;
 
@@ -70829,7 +70245,6 @@ var import_express7 = __toESM(require_express2(), 1);
 var PREFIX = {
   quotation: "QTN",
   invoice: "INV",
-  receipt: "RCP",
   transfer: "TRF"
 };
 async function nextDocumentNumber(docType, when = /* @__PURE__ */ new Date()) {
@@ -70907,7 +70322,7 @@ router7.get("/inventory/movements", async (req, res) => {
   const [{ count }] = await db.select({ count: sql`count(*)` }).from(stockMovementsTable).where(where);
   const movements = await db.select().from(stockMovementsTable).where(where).orderBy(sql`${stockMovementsTable.createdAt} desc`).limit(l).offset(offset);
   const productIds = [...new Set(movements.map((m) => m.productId))];
-  const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(inArray(productsTable.id, productIds)) : [];
+  const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(sql`${productsTable.id} = ANY(${productIds})`) : [];
   const productMap = Object.fromEntries(products.map((p2) => [p2.id, p2.name]));
   res.json({
     data: movements.map((m) => formatMovement(m, productMap[m.productId])),
@@ -70916,10 +70331,14 @@ router7.get("/inventory/movements", async (req, res) => {
     limit: l
   });
 });
-router7.post("/inventory/receive", async (req, res) => {
+router7.post("/inventory/receive", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
   const { product_id, quantity, notes, reference } = req.body;
   if (!product_id || !quantity) {
     res.status(400).json({ error: "product_id and quantity required" });
+    return;
+  }
+  if (!Number.isInteger(quantity) || quantity <= 0) {
+    res.status(400).json({ error: "quantity must be a positive integer" });
     return;
   }
   const [product] = await db.select().from(productsTable).where(eq(productsTable.id, product_id));
@@ -70942,10 +70361,14 @@ router7.post("/inventory/receive", async (req, res) => {
   await logAudit(req, { action: "stock.received", entityType: "product", entityId: product_id, description: `Received ${quantity} units of "${product.productName}" \u2014 stock ${before} \u2192 ${after}`, metadata: { reference } });
   res.status(201).json(formatMovement(m, product.productName));
 });
-router7.post("/inventory/adjust", async (req, res) => {
+router7.post("/inventory/adjust", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
   const { product_id, quantity, reason, notes } = req.body;
   if (!product_id || quantity === void 0) {
     res.status(400).json({ error: "product_id and quantity required" });
+    return;
+  }
+  if (!Number.isInteger(quantity) || quantity === 0) {
+    res.status(400).json({ error: "quantity must be a non-zero integer" });
     return;
   }
   const [product] = await db.select().from(productsTable).where(eq(productsTable.id, product_id));
@@ -70954,7 +70377,12 @@ router7.post("/inventory/adjust", async (req, res) => {
     return;
   }
   const branchId = await resolveWriteBranchId(req);
-  const { before, after } = await adjustBranchStock(branchId, product_id, (b) => Math.max(0, b + quantity));
+  const result = await applyStockDelta(branchId, product_id, quantity);
+  if (!result.ok) {
+    res.status(400).json({ error: `Adjustment would make stock negative \u2014 only ${result.before} in stock` });
+    return;
+  }
+  const { before, after } = result;
   const [m] = await db.insert(stockMovementsTable).values({
     branchId,
     productId: product_id,
@@ -71213,8 +70641,7 @@ router7.get("/inventory/stock-count", async (req, res) => {
     return;
   }
   const prodConditions = [];
-  const stockCatId = category_id ? parseInt(category_id, 10) : NaN;
-  if (!Number.isNaN(stockCatId)) prodConditions.push(eq(productsTable.categoryId, stockCatId));
+  if (category_id) prodConditions.push(eq(productsTable.categoryId, parseInt(category_id, 10)));
   const products = await db.select().from(productsTable).where(prodConditions.length ? and(...prodConditions) : void 0).orderBy(productsTable.productName);
   const stockRows = scope.mode === "single" ? await db.select().from(productStockTable).where(eq(productStockTable.branchId, scope.branchId)) : await db.select().from(productStockTable);
   const stockMap = /* @__PURE__ */ new Map();
@@ -71298,12 +70725,11 @@ router8.post("/purchases", async (req, res) => {
   const purchaseNumber = `PO-${Date.now()}`;
   let subtotal = 0;
   for (const item of items) {
-    subtotal += item.quantity * (item.unit_cost ?? item.unit_price ?? 0);
+    subtotal += item.quantity * item.unit_cost;
   }
   const [purchase] = await db.insert(purchasesTable).values({ purchaseNumber, branchId, supplierId: supplier_id, subtotal: subtotal.toString(), total: subtotal.toString(), notes, expectedDate: expected_date }).returning();
   for (const item of items) {
-    const unitCostVal = item.unit_cost ?? item.unit_price ?? 0;
-    await db.insert(purchaseItemsTable).values({ purchaseId: purchase.id, productId: item.product_id, quantity: item.quantity, unitCost: unitCostVal.toString(), total: (item.quantity * unitCostVal).toString() });
+    await db.insert(purchaseItemsTable).values({ purchaseId: purchase.id, productId: item.product_id, quantity: item.quantity, unitCost: item.unit_cost.toString(), total: (item.quantity * item.unit_cost).toString() });
   }
   await logAudit(req, { action: "purchase.created", entityType: "purchase", entityId: purchase.id, description: `Created purchase order ${purchaseNumber} \u2014 KES ${subtotal.toLocaleString()} (${items.length} item${items.length !== 1 ? "s" : ""})` });
   res.status(201).json(await formatPurchase(purchase));
@@ -71335,17 +70761,26 @@ router8.post("/purchases/:id/receive", async (req, res) => {
     res.status(404).json({ error: "Purchase not found" });
     return;
   }
-  const items = await db.select().from(purchaseItemsTable).where(eq(purchaseItemsTable.purchaseId, id));
-  for (const item of items) {
-    const [product] = await db.select().from(productsTable).where(eq(productsTable.id, item.productId));
-    if (product) {
-      const { before, after } = await adjustBranchStock(purchase.branchId, item.productId, (b) => b + item.quantity);
-      await db.insert(stockMovementsTable).values({ branchId: purchase.branchId, productId: item.productId, type: "receive", quantity: item.quantity, quantityBefore: before, quantityAfter: after, reference: purchase.purchaseNumber });
-    }
-  }
   const now = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-  const [updated] = await db.update(purchasesTable).set({ status: "received", receivedDate: now }).where(eq(purchasesTable.id, id)).returning();
-  await logAudit(req, { action: "purchase.received", entityType: "purchase", entityId: id, description: `Marked purchase order ${purchase.purchaseNumber} as received \u2014 stock updated for ${items.length} product${items.length !== 1 ? "s" : ""}` });
+  const updated = await db.transaction(async (tx) => {
+    const claimed = await tx.update(purchasesTable).set({ status: "received", receivedDate: now }).where(and(eq(purchasesTable.id, id), sql`${purchasesTable.status} <> 'received'`)).returning();
+    if (!claimed.length) return null;
+    const items = await tx.select().from(purchaseItemsTable).where(eq(purchaseItemsTable.purchaseId, id));
+    for (const item of items) {
+      const [product] = await tx.select().from(productsTable).where(eq(productsTable.id, item.productId));
+      if (product) {
+        const { before, after } = await applyStockDelta(purchase.branchId, item.productId, item.quantity, {}, tx);
+        await tx.insert(stockMovementsTable).values({ branchId: purchase.branchId, productId: item.productId, type: "receive", quantity: item.quantity, quantityBefore: before, quantityAfter: after, reference: purchase.purchaseNumber });
+      }
+    }
+    await tx.update(suppliersTable).set({ balance: sql`${suppliersTable.balance} + ${Number(purchase.total)}` }).where(eq(suppliersTable.id, purchase.supplierId));
+    return claimed[0];
+  });
+  if (!updated) {
+    res.status(400).json({ error: "Purchase order already received" });
+    return;
+  }
+  await logAudit(req, { action: "purchase.received", entityType: "purchase", entityId: id, description: `Marked purchase order ${purchase.purchaseNumber} as received \u2014 stock updated` });
   res.json(await formatPurchase(updated));
 });
 var purchases_default = router8;
@@ -71420,8 +70855,51 @@ router9.delete("/customers/:id", async (req, res) => {
   await db.delete(customersTable).where(eq(customersTable.id, id));
   res.sendStatus(204);
 });
+router9.post("/customers/:id/payments", async (req, res) => {
+  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const { amount, method = "cash", reference, notes } = req.body;
+  const amt = Number(amount);
+  if (!amt || amt <= 0) {
+    res.status(400).json({ error: "amount must be a positive number" });
+    return;
+  }
+  const [c] = await db.select().from(customersTable).where(eq(customersTable.id, id));
+  if (!c || !isBranchInScope(req, c.branchId)) {
+    res.status(404).json({ error: "Customer not found" });
+    return;
+  }
+  const createdBy = req.user?.name ?? null;
+  const [p] = await db.insert(partyPaymentsTable).values({ partyType: "customer", partyId: id, branchId: c.branchId, amount: amt.toString(), method, reference, notes, createdBy }).returning();
+  const [updated] = await db.update(customersTable).set({ balance: sql`GREATEST(0, ${customersTable.balance} - ${amt})` }).where(eq(customersTable.id, id)).returning();
+  await logAudit(req, { action: "customer.payment", entityType: "customer", entityId: id, description: `Payment of KES ${amt.toLocaleString()} received from "${c.name}" via ${method}`, metadata: { reference: reference ?? null } });
+  res.status(201).json({ id: p.id, customer_id: id, amount: amt, method, reference: reference ?? null, notes: notes ?? null, balance: Number(updated.balance), created_at: p.createdAt });
+});
+router9.get("/customers/:id/payments", async (req, res) => {
+  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const [c] = await db.select().from(customersTable).where(eq(customersTable.id, id));
+  if (!c || !isBranchInScope(req, c.branchId)) {
+    res.status(404).json({ error: "Customer not found" });
+    return;
+  }
+  const rows = await db.select().from(partyPaymentsTable).where(and(eq(partyPaymentsTable.partyType, "customer"), eq(partyPaymentsTable.partyId, id))).orderBy(desc(partyPaymentsTable.createdAt)).limit(200);
+  res.json(rows.map((r) => ({ id: r.id, amount: Number(r.amount), method: r.method, reference: r.reference, notes: r.notes, created_by: r.createdBy, created_at: r.createdAt })));
+});
 router9.get("/customers/:id/ledger", async (req, res) => {
-  res.json([]);
+  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const [c] = await db.select().from(customersTable).where(eq(customersTable.id, id));
+  if (!c || !isBranchInScope(req, c.branchId)) {
+    res.status(404).json({ error: "Customer not found" });
+    return;
+  }
+  const sales = await db.select().from(salesTable).where(eq(salesTable.customerId, id)).orderBy(desc(salesTable.createdAt)).limit(200);
+  const invoices = await db.select().from(invoicesTable).where(and(eq(invoicesTable.customerId, id), sql`${invoicesTable.status} != 'draft'`)).orderBy(desc(invoicesTable.createdAt)).limit(200);
+  const payments = await db.select().from(partyPaymentsTable).where(and(eq(partyPaymentsTable.partyType, "customer"), eq(partyPaymentsTable.partyId, id))).orderBy(desc(partyPaymentsTable.createdAt)).limit(200);
+  const entries = [
+    ...sales.map((s) => ({ date: s.createdAt, type: "sale", reference: s.receiptNumber, debit: Number(s.total), credit: Number(s.amountPaid) > Number(s.total) ? Number(s.total) : Number(s.amountPaid), notes: s.paymentMethod })),
+    ...invoices.map((i) => ({ date: i.createdAt, type: "invoice", reference: i.invoiceNumber, debit: Number(i.total), credit: Number(i.amountPaid), notes: i.status })),
+    ...payments.map((p) => ({ date: p.createdAt, type: "payment", reference: p.reference ?? `PAY-${p.id}`, debit: 0, credit: Number(p.amount), notes: p.method }))
+  ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  res.json(entries);
 });
 var customers_default = router9;
 
@@ -71492,6 +70970,50 @@ router10.delete("/suppliers/:id", async (req, res) => {
   }
   await db.delete(suppliersTable).where(eq(suppliersTable.id, id));
   res.sendStatus(204);
+});
+router10.post("/suppliers/:id/payments", async (req, res) => {
+  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const { amount, method = "cash", reference, notes } = req.body;
+  const amt = Number(amount);
+  if (!amt || amt <= 0) {
+    res.status(400).json({ error: "amount must be a positive number" });
+    return;
+  }
+  const [s] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, id));
+  if (!s || !isBranchInScope(req, s.branchId)) {
+    res.status(404).json({ error: "Supplier not found" });
+    return;
+  }
+  const createdBy = req.user?.name ?? null;
+  const [p] = await db.insert(partyPaymentsTable).values({ partyType: "supplier", partyId: id, branchId: s.branchId, amount: amt.toString(), method, reference, notes, createdBy }).returning();
+  const [updated] = await db.update(suppliersTable).set({ balance: sql`GREATEST(0, ${suppliersTable.balance} - ${amt})` }).where(eq(suppliersTable.id, id)).returning();
+  await logAudit(req, { action: "supplier.payment", entityType: "supplier", entityId: id, description: `Paid KES ${amt.toLocaleString()} to "${s.name}" via ${method}`, metadata: { reference: reference ?? null } });
+  res.status(201).json({ id: p.id, supplier_id: id, amount: amt, method, reference: reference ?? null, notes: notes ?? null, balance: Number(updated.balance), created_at: p.createdAt });
+});
+router10.get("/suppliers/:id/payments", async (req, res) => {
+  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const [s] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, id));
+  if (!s || !isBranchInScope(req, s.branchId)) {
+    res.status(404).json({ error: "Supplier not found" });
+    return;
+  }
+  const rows = await db.select().from(partyPaymentsTable).where(and(eq(partyPaymentsTable.partyType, "supplier"), eq(partyPaymentsTable.partyId, id))).orderBy(desc(partyPaymentsTable.createdAt)).limit(200);
+  res.json(rows.map((r) => ({ id: r.id, amount: Number(r.amount), method: r.method, reference: r.reference, notes: r.notes, created_by: r.createdBy, created_at: r.createdAt })));
+});
+router10.get("/suppliers/:id/ledger", async (req, res) => {
+  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const [s] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, id));
+  if (!s || !isBranchInScope(req, s.branchId)) {
+    res.status(404).json({ error: "Supplier not found" });
+    return;
+  }
+  const purchases = await db.select().from(purchasesTable).where(and(eq(purchasesTable.supplierId, id), sql`${purchasesTable.status} = 'received'`)).orderBy(desc(purchasesTable.createdAt)).limit(200);
+  const payments = await db.select().from(partyPaymentsTable).where(and(eq(partyPaymentsTable.partyType, "supplier"), eq(partyPaymentsTable.partyId, id))).orderBy(desc(partyPaymentsTable.createdAt)).limit(200);
+  const entries = [
+    ...purchases.map((p) => ({ date: p.receivedDate ?? p.createdAt, type: "purchase", reference: p.purchaseNumber, debit: Number(p.total), credit: 0, notes: p.status })),
+    ...payments.map((p) => ({ date: p.createdAt, type: "payment", reference: p.reference ?? `PAY-${p.id}`, debit: 0, credit: Number(p.amount), notes: p.method }))
+  ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  res.json(entries);
 });
 var suppliers_default = router10;
 
@@ -71653,30 +71175,64 @@ router11.post("/quotations/:id/convert", async (req, res) => {
     return;
   }
   const invoiceNumber = await nextDocumentNumber("invoice");
-  const [invoice] = await db.insert(invoicesTable).values({
-    invoiceNumber,
-    branchId: q.branchId,
-    customerId: q.customerId,
-    subtotal: q.subtotal,
-    discountAmount: q.discountAmount,
-    taxAmount: q.taxAmount,
-    total: q.total,
-    balanceDue: q.total,
-    status: "sent",
-    notes: q.notes
-  }).returning();
-  const qItems = await db.select().from(quotationItemsTable).where(eq(quotationItemsTable.quotationId, id));
-  for (const item of qItems) {
-    await db.insert(invoiceItemsTable).values({ invoiceId: invoice.id, productId: item.productId, description: item.description, unit: item.unit, quantity: item.quantity, unitPrice: item.unitPrice, discount: item.discount, vatRate: item.vatRate, total: item.total });
-    const [product] = await db.select().from(productsTable).where(eq(productsTable.id, item.productId));
-    if (product) {
-      const { before, after } = await adjustBranchStock(q.branchId, item.productId, (b) => b - item.quantity);
-      await db.insert(stockMovementsTable).values({ branchId: q.branchId, productId: item.productId, type: "sale", quantity: -item.quantity, quantityBefore: before, quantityAfter: after, reference: invoiceNumber, notes: `Invoice from ${q.quotationNumber}` });
+  let invoice;
+  let customerName = null;
+  try {
+    const result = await db.transaction(async (tx) => {
+      const claimed = await tx.update(quotationsTable).set({ status: "converted" }).where(and(eq(quotationsTable.id, id), sql`${quotationsTable.status} <> 'converted'`)).returning();
+      if (!claimed.length) return null;
+      const qItems = await tx.select().from(quotationItemsTable).where(eq(quotationItemsTable.quotationId, id));
+      const deducted = [];
+      for (const item of qItems) {
+        const r = await applyStockDelta(q.branchId, item.productId, -item.quantity, {}, tx);
+        if (!r.ok) throw new InsufficientStockError(item.productId, r.before);
+        deducted.push({ product_id: item.productId, quantity: item.quantity, before: r.before, after: r.after });
+      }
+      const [inv] = await tx.insert(invoicesTable).values({
+        invoiceNumber,
+        branchId: q.branchId,
+        customerId: q.customerId,
+        subtotal: q.subtotal,
+        discountAmount: q.discountAmount,
+        taxAmount: q.taxAmount,
+        total: q.total,
+        balanceDue: q.total,
+        status: "sent",
+        notes: q.notes
+      }).returning();
+      for (const item of qItems) {
+        await tx.insert(invoiceItemsTable).values({ invoiceId: inv.id, productId: item.productId, description: item.description, unit: item.unit, quantity: item.quantity, unitPrice: item.unitPrice, discount: item.discount, vatRate: item.vatRate, total: item.total });
+        const d = deducted.find((x) => x.product_id === item.productId);
+        if (d) {
+          await tx.insert(stockMovementsTable).values({ branchId: q.branchId, productId: item.productId, type: "sale", quantity: -item.quantity, quantityBefore: d.before, quantityAfter: d.after, reference: invoiceNumber, notes: `Invoice from ${q.quotationNumber}` });
+        }
+      }
+      let cName = null;
+      if (q.customerId) {
+        if (Number(inv.total) > 0) {
+          await tx.update(customersTable).set({ balance: sql`${customersTable.balance} + ${Number(inv.total)}` }).where(eq(customersTable.id, q.customerId));
+        }
+        const [c] = await tx.select({ name: customersTable.name }).from(customersTable).where(eq(customersTable.id, q.customerId));
+        cName = c?.name ?? null;
+      }
+      return { inv, cName };
+    });
+    if (!result) {
+      res.status(409).json({ error: "Quotation already converted" });
+      return;
     }
+    invoice = result.inv;
+    customerName = result.cName;
+  } catch (err) {
+    if (err instanceof InsufficientStockError) {
+      const [p] = await db.select({ name: productsTable.productName }).from(productsTable).where(eq(productsTable.id, err.productId));
+      res.status(409).json({ error: `Insufficient stock for "${p?.name ?? `product #${err.productId}`}" \u2014 only ${err.available} available` });
+      return;
+    }
+    throw err;
   }
-  await db.update(quotationsTable).set({ status: "converted" }).where(eq(quotationsTable.id, id));
   await logAudit(req, { action: "quotation.converted", entityType: "invoice", entityId: invoice.id, description: `Converted ${q.quotationNumber} to invoice ${invoiceNumber}` });
-  res.status(201).json({ id: invoice.id, invoice_number: invoice.invoiceNumber, customer_id: invoice.customerId, customer_name: null, items: [], subtotal: Number(invoice.subtotal), discount_amount: Number(invoice.discountAmount), tax_amount: Number(invoice.taxAmount), total: Number(invoice.total), amount_paid: 0, balance_due: Number(invoice.balanceDue), status: invoice.status, due_date: invoice.dueDate, notes: invoice.notes, created_at: invoice.createdAt });
+  res.status(201).json({ id: invoice.id, invoice_number: invoice.invoiceNumber, customer_id: invoice.customerId, customer_name: customerName, items: [], subtotal: Number(invoice.subtotal), discount_amount: Number(invoice.discountAmount), tax_amount: Number(invoice.taxAmount), total: Number(invoice.total), amount_paid: 0, balance_due: Number(invoice.balanceDue), status: invoice.status, due_date: invoice.dueDate, notes: invoice.notes, created_at: invoice.createdAt });
 });
 var quotations_default = router11;
 
@@ -71738,28 +71294,50 @@ router12.post("/invoices", async (req, res) => {
   const branchId = await resolveWriteBranchId(req, req.body.branch_id != null ? Number(req.body.branch_id) : void 0);
   const invoiceNumber = await nextDocumentNumber("invoice");
   const invStatus = status === "draft" ? "draft" : "sent";
-  const [invoice] = await db.insert(invoicesTable).values({
-    invoiceNumber,
-    branchId,
-    customerId: customer_id ?? null,
-    subtotal: subtotal.toString(),
-    discountAmount: discountAmount.toString(),
-    taxAmount: taxAmount.toString(),
-    total: total.toString(),
-    balanceDue: total.toString(),
-    status: invStatus,
-    dueDate: due_date || null,
-    notes
-  }).returning();
-  for (const item of processedItems) {
-    await db.insert(invoiceItemsTable).values({ invoiceId: invoice.id, productId: item.product_id, description: item.description ?? null, unit: item.unit ?? null, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: item.discount.toString(), vatRate: item.vat_rate.toString(), total: item.total.toString() });
-    if (invStatus !== "draft") {
-      const [product] = await db.select().from(productsTable).where(eq(productsTable.id, item.product_id));
-      if (product) {
-        const { before, after } = await adjustBranchStock(branchId, item.product_id, (b) => b - item.quantity);
-        await db.insert(stockMovementsTable).values({ branchId, productId: item.product_id, type: "sale", quantity: -item.quantity, quantityBefore: before, quantityAfter: after, reference: invoiceNumber, notes: "Direct invoice" });
+  let invoice;
+  try {
+    invoice = await db.transaction(async (tx) => {
+      const deducted = [];
+      if (invStatus !== "draft") {
+        for (const item of processedItems) {
+          if (!item.product_id) continue;
+          const result = await applyStockDelta(branchId, item.product_id, -item.quantity, {}, tx);
+          if (!result.ok) throw new InsufficientStockError(item.product_id, result.before);
+          deducted.push({ product_id: item.product_id, quantity: item.quantity, before: result.before, after: result.after });
+        }
       }
+      const [inv] = await tx.insert(invoicesTable).values({
+        invoiceNumber,
+        branchId,
+        customerId: customer_id ?? null,
+        subtotal: subtotal.toString(),
+        discountAmount: discountAmount.toString(),
+        taxAmount: taxAmount.toString(),
+        total: total.toString(),
+        balanceDue: total.toString(),
+        status: invStatus,
+        dueDate: due_date || null,
+        notes
+      }).returning();
+      for (const item of processedItems) {
+        await tx.insert(invoiceItemsTable).values({ invoiceId: inv.id, productId: item.product_id, description: item.description ?? null, unit: item.unit ?? null, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: item.discount.toString(), vatRate: item.vat_rate.toString(), total: item.total.toString() });
+        const d = deducted.find((x) => x.product_id === item.product_id);
+        if (d) {
+          await tx.insert(stockMovementsTable).values({ branchId, productId: item.product_id, type: "sale", quantity: -item.quantity, quantityBefore: d.before, quantityAfter: d.after, reference: invoiceNumber, notes: "Direct invoice" });
+        }
+      }
+      if (invStatus !== "draft" && customer_id && total > 0) {
+        await tx.update(customersTable).set({ balance: sql`${customersTable.balance} + ${total}` }).where(eq(customersTable.id, customer_id));
+      }
+      return inv;
+    });
+  } catch (err) {
+    if (err instanceof InsufficientStockError) {
+      const [p] = await db.select({ name: productsTable.productName }).from(productsTable).where(eq(productsTable.id, err.productId));
+      res.status(409).json({ error: `Insufficient stock for "${p?.name ?? `product #${err.productId}`}" \u2014 only ${err.available} available` });
+      return;
     }
+    throw err;
   }
   await logAudit(req, { action: "invoice.created", entityType: "invoice", entityId: invoice.id, description: `Created invoice ${invoiceNumber} \u2014 KES ${total.toLocaleString()}` });
   res.status(201).json(await formatInvoice(invoice));
@@ -71802,6 +71380,9 @@ router12.post("/invoices/:id/pay", async (req, res) => {
   const newBalanceDue = Math.max(0, Number(invoice.total) - newAmountPaid);
   const newStatus = newBalanceDue <= 0 ? "paid" : "partial";
   const [updated] = await db.update(invoicesTable).set({ amountPaid: newAmountPaid.toString(), balanceDue: newBalanceDue.toString(), status: newStatus }).where(eq(invoicesTable.id, id)).returning();
+  if (invoice.customerId) {
+    await db.update(customersTable).set({ balance: sql`GREATEST(0, ${customersTable.balance} - ${Number(amount)})` }).where(eq(customersTable.id, invoice.customerId));
+  }
   const afterSnap = { status: newStatus, amount_paid: newAmountPaid, balance_due: newBalanceDue };
   await logAudit(req, { action: "invoice.payment", entityType: "invoice", entityId: id, description: `Payment of KES ${Number(amount).toLocaleString()} received for ${invoice.invoiceNumber} via ${method} \u2014 status: ${newStatus}`, metadata: { before: beforeSnap, after: afterSnap, reference } });
   res.json(await formatInvoice(updated));
@@ -71830,13 +71411,12 @@ router13.get("/expenses", async (req, res) => {
 });
 router13.post("/expenses", async (req, res) => {
   const { description, amount, category, payment_method, reference, notes, date: date6, branch_id } = req.body;
-  if (!description || !amount || !category) {
-    res.status(400).json({ error: "description, amount, and category required" });
+  if (!description || !amount || !category || !date6) {
+    res.status(400).json({ error: "description, amount, category and date required" });
     return;
   }
-  const expenseDate = date6 ?? new Date().toISOString().slice(0, 10);
   const branchId = await resolveWriteBranchId(req, branch_id != null ? Number(branch_id) : void 0);
-  const [e] = await db.insert(expensesTable).values({ branchId, description, amount: amount.toString(), category, paymentMethod: payment_method ?? "cash", reference, notes, date: expenseDate }).returning();
+  const [e] = await db.insert(expensesTable).values({ branchId, description, amount: amount.toString(), category, paymentMethod: payment_method ?? "cash", reference, notes, date: date6 }).returning();
   await logAudit(req, { action: "expense.created", entityType: "expense", entityId: e.id, description: `Recorded expense "${e.description}" \u2014 KES ${Number(e.amount).toLocaleString()} (${e.category})` });
   res.status(201).json(fmt3(e));
 });
@@ -71911,123 +71491,184 @@ async function formatSale(sale) {
     payment_method: sale.paymentMethod,
     cashier_name: sale.cashierName,
     status: sale.status,
-    notes: sale.notes ?? null,
-    original_sale_id: sale.originalSaleId ?? null,
-    voided_at: sale.voidedAt ?? null,
     created_at: sale.createdAt
   };
 }
 router14.post("/pos/sale", async (req, res) => {
-  const { customer_id, items, discount_amount = 0, amount_paid, payment_method, shipping_amount = 0, status: requestedStatus, notes } = req.body;
-  const saleStatus = requestedStatus === "draft" ? "draft" : "completed";
-  if (!items?.length || (saleStatus === "completed" && amount_paid === void 0) || (saleStatus === "completed" && !payment_method)) {
-    res.status(400).json({ error: "items required; amount_paid and payment_method required for completed sales" });
+  const { customer_id, items, discount_amount = 0, amount_paid, payment_method } = req.body;
+  if (!items?.length || amount_paid === void 0 || !payment_method) {
+    res.status(400).json({ error: "items, amount_paid, and payment_method required" });
+    return;
+  }
+  for (const item of items) {
+    if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+      res.status(400).json({ error: "Each item quantity must be a positive integer" });
+      return;
+    }
+  }
+  if (payment_method === "credit" && !customer_id) {
+    res.status(400).json({ error: "A customer is required for credit sales" });
     return;
   }
   const branchId = await resolveWriteBranchId(req);
-  // Only validate stock for completed (not draft) sales
-  if (saleStatus === "completed") {
-    for (const item of items) {
-      const stockRow = await getBranchStockRow(branchId, item.product_id);
-      const available = Number(stockRow?.currentStock ?? 0);
-      if (available < item.quantity) {
-        const [prod] = await db.select({ name: productsTable.productName }).from(productsTable).where(eq(productsTable.id, item.product_id));
-        res.status(422).json({ error: `Insufficient stock for "${prod?.name ?? "product " + item.product_id}": available ${available}, requested ${item.quantity}` });
-        return;
-      }
-    }
-  }
-  const cashierName = req.user?.name ?? null;
+  const receiptNumber = `RCP-${Date.now()}`;
   let subtotal = 0;
-  let taxAmount = 0;
   for (const item of items) {
-    const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
-    subtotal += lineBase;
-    taxAmount += lineBase * (Number(item.vat_rate ?? 0) / 100);
+    subtotal += item.quantity * item.unit_price;
   }
-  const shippingAmt = Number(shipping_amount || 0);
-  const total = Math.max(0, subtotal - Number(discount_amount) + taxAmount + shippingAmt);
-  const change = Math.max(0, Number(amount_paid || 0) - total);
-  const invStatus = payment_method === "credit" ? "partial" : Number(amount_paid || 0) >= total ? "paid" : "partial";
-  const balanceDue = Math.max(0, total - Number(amount_paid || 0));
-  const result = await db.transaction(async (tx) => {
-    const receiptNumber = await nextDocumentNumber("receipt");
-    const invoiceNumber = await nextDocumentNumber("invoice");
-    const [sale] = await tx.insert(salesTable).values({
-      receiptNumber,
-      branchId,
-      customerId: customer_id ?? null,
-      subtotal: subtotal.toString(),
-      discountAmount: discount_amount.toString(),
-      taxAmount: taxAmount.toString(),
-      total: total.toString(),
-      amountPaid: (amount_paid ?? 0).toString(),
-      change: change.toString(),
-      paymentMethod: payment_method ?? "cash",
-      cashierName,
-      status: saleStatus,
-      notes: notes ?? null
-    }).returning();
-    for (const item of items) {
-      const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
-      const lineVat = lineBase * (Number(item.vat_rate ?? 0) / 100);
-      const lineTotal = lineBase + lineVat;
-      await tx.insert(saleItemsTable).values({ saleId: sale.id, productId: item.product_id, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: (item.discount ?? 0).toString(), vatRate: (item.vat_rate ?? 16).toString(), total: lineTotal.toString() });
-      // Only deduct stock for completed sales
-      if (saleStatus === "completed") {
-        const { before, after } = await adjustBranchStock(branchId, item.product_id, (b) => Math.max(0, b - item.quantity), tx);
-        await tx.insert(stockMovementsTable).values({ branchId, productId: item.product_id, type: "sale", quantity: -item.quantity, quantityBefore: before, quantityAfter: after, reference: receiptNumber });
+  const total = subtotal - Number(discount_amount);
+  const change = Math.max(0, Number(amount_paid) - total);
+  const cashierName = req.user?.name ?? null;
+  let sale;
+  try {
+    sale = await db.transaction(async (tx) => {
+      const deducted = [];
+      for (const item of items) {
+        const result = await applyStockDelta(branchId, item.product_id, -item.quantity, {}, tx);
+        if (!result.ok) throw new InsufficientStockError(item.product_id, result.before);
+        deducted.push({ product_id: item.product_id, quantity: item.quantity, before: result.before, after: result.after });
       }
-    }
-    let invoiceId = null;
-    let invoiceNum = null;
-    if (saleStatus === "completed") {
-      const [invoice] = await tx.insert(invoicesTable).values({
-        invoiceNumber,
+      const [s] = await tx.insert(salesTable).values({
+        receiptNumber,
         branchId,
-        customerId: customer_id ?? null,
+        customerId: customer_id,
         subtotal: subtotal.toString(),
         discountAmount: discount_amount.toString(),
-        taxAmount: taxAmount.toString(),
         total: total.toString(),
-        amountPaid: (amount_paid ?? 0).toString(),
-        balanceDue: balanceDue.toString(),
-        status: invStatus
+        amountPaid: amount_paid.toString(),
+        change: change.toString(),
+        paymentMethod: payment_method,
+        cashierName
       }).returning();
-      invoiceId = invoice.id;
-      invoiceNum = invoice.invoiceNumber;
       for (const item of items) {
-        const lineBase = (Number(item.unit_price) - Number(item.discount ?? 0)) * item.quantity;
-        const lineVat = lineBase * (Number(item.vat_rate ?? 0) / 100);
-        await tx.insert(invoiceItemsTable).values({
-          invoiceId: invoice.id,
-          productId: item.product_id,
-          quantity: item.quantity,
-          unitPrice: item.unit_price.toString(),
-          discount: (item.discount ?? 0).toString(),
-          vatRate: (item.vat_rate ?? 16).toString(),
-          total: (lineBase + lineVat).toString()
-        });
+        const lineTotal = item.quantity * item.unit_price;
+        await tx.insert(saleItemsTable).values({ saleId: s.id, productId: item.product_id, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: (item.discount ?? 0).toString(), vatRate: (item.vat_rate ?? 16).toString(), total: lineTotal.toString() });
+        const d = deducted.find((x) => x.product_id === item.product_id);
+        await tx.insert(stockMovementsTable).values({ branchId, productId: item.product_id, type: "sale", quantity: -item.quantity, quantityBefore: d.before, quantityAfter: d.after, reference: receiptNumber });
       }
-      if (Number(amount_paid) > 0) {
-        const pmVal = ["cash", "mpesa", "bank_transfer", "card", "credit", "split"].includes(payment_method) ? payment_method : "cash";
-        await tx.insert(invoicePaymentsTable).values({
-          invoiceId: invoice.id,
-          amount: amount_paid.toString(),
-          method: pmVal
-        });
+      const unpaid = Math.max(0, total - Number(amount_paid));
+      if (customer_id && unpaid > 0) {
+        await tx.update(customersTable).set({ balance: sql`${customersTable.balance} + ${unpaid}` }).where(eq(customersTable.id, customer_id));
       }
-      await tx.execute(sql`
-        INSERT INTO receipts (sale_id, invoice_id, receipt_number, issued_to, amount)
-        VALUES (${sale.id}, ${invoice.id}, ${receiptNumber}, ${cashierName || "Cash sale"}, ${total})
-        RETURNING id
-      `);
+      return s;
+    });
+  } catch (err) {
+    if (err instanceof InsufficientStockError) {
+      const [p] = await db.select({ name: productsTable.productName }).from(productsTable).where(eq(productsTable.id, err.productId));
+      res.status(409).json({ error: `Insufficient stock for "${p?.name ?? `product #${err.productId}`}" \u2014 only ${err.available} available` });
+      return;
     }
-    return { sale, invoiceId, invoiceNumber: invoiceNum, receiptNumber };
+    throw err;
+  }
+  await logAudit(req, { action: "sale.created", entityType: "sale", entityId: sale.id, description: `Sale ${receiptNumber} \u2014 KES ${total.toLocaleString()} (${items.length} item${items.length !== 1 ? "s" : ""}) via ${payment_method}`, metadata: { receipt: receiptNumber } });
+  res.status(201).json(await formatSale(sale));
+});
+router14.post("/pos/returns", async (req, res) => {
+  const { sale_id, items, reason, refund_method = "cash" } = req.body;
+  if (!sale_id || !items?.length) {
+    res.status(400).json({ error: "sale_id and items required" });
+    return;
+  }
+  const [saleCheck] = await db.select().from(salesTable).where(eq(salesTable.id, sale_id));
+  if (!saleCheck || !isBranchInScope(req, saleCheck.branchId)) {
+    res.status(404).json({ error: "Sale not found" });
+    return;
+  }
+  const returnNumber = `RTN-${Date.now()}`;
+  const createdBy = req.user?.name ?? null;
+  class ReturnValidationError extends Error {
+  }
+  let outcome;
+  try {
+    outcome = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM sales WHERE id = ${sale_id} FOR UPDATE`);
+      const [sale2] = await tx.select().from(salesTable).where(eq(salesTable.id, sale_id));
+      if (sale2.status === "void") throw new ReturnValidationError("Cannot return items from a voided sale");
+      const saleItems = await tx.select().from(saleItemsTable).where(eq(saleItemsTable.saleId, sale_id));
+      const itemMap = new Map(saleItems.map((i) => [i.id, i]));
+      const prevReturns = await tx.select({ saleItemId: saleReturnItemsTable.saleItemId, qty: sql`sum(${saleReturnItemsTable.quantity})` }).from(saleReturnItemsTable).innerJoin(saleReturnsTable, eq(saleReturnItemsTable.returnId, saleReturnsTable.id)).where(eq(saleReturnsTable.saleId, sale_id)).groupBy(saleReturnItemsTable.saleItemId);
+      const returnedMap = new Map(prevReturns.map((r) => [r.saleItemId, Number(r.qty)]));
+      const [prevTotals] = await tx.select({ total: sql`coalesce(sum(${saleReturnsTable.total}), 0)` }).from(saleReturnsTable).where(eq(saleReturnsTable.saleId, sale_id));
+      const prevRefundTotal = Number(prevTotals?.total ?? 0);
+      let refundTotal2 = 0;
+      const lines2 = [];
+      for (const item of items) {
+        const saleItem = itemMap.get(item.sale_item_id);
+        if (!saleItem) throw new ReturnValidationError(`Sale item ${item.sale_item_id} does not belong to this sale`);
+        if (!Number.isInteger(item.quantity) || item.quantity <= 0) throw new ReturnValidationError("Return quantities must be positive integers");
+        const remaining = saleItem.quantity - (returnedMap.get(saleItem.id) ?? 0);
+        if (item.quantity > remaining) throw new ReturnValidationError(`Only ${remaining} unit(s) of this item can still be returned`);
+        const lineTotal = item.quantity * Number(saleItem.unitPrice);
+        refundTotal2 += lineTotal;
+        lines2.push({ saleItem, quantity: item.quantity, lineTotal });
+      }
+      const [ret2] = await tx.insert(saleReturnsTable).values({
+        returnNumber,
+        saleId: sale_id,
+        branchId: sale2.branchId,
+        total: refundTotal2.toString(),
+        refundMethod: refund_method,
+        reason: reason ?? null,
+        createdBy
+      }).returning();
+      for (const line2 of lines2) {
+        await tx.insert(saleReturnItemsTable).values({ returnId: ret2.id, saleItemId: line2.saleItem.id, productId: line2.saleItem.productId, quantity: line2.quantity, unitPrice: line2.saleItem.unitPrice, total: line2.lineTotal.toString() });
+        const { before, after } = await applyStockDelta(sale2.branchId, line2.saleItem.productId, line2.quantity, { allowNegative: true }, tx);
+        await tx.insert(stockMovementsTable).values({ branchId: sale2.branchId, productId: line2.saleItem.productId, type: "return", quantity: line2.quantity, quantityBefore: before, quantityAfter: after, reference: returnNumber, notes: `Return against ${sale2.receiptNumber}` });
+      }
+      if (sale2.customerId) {
+        const unpaidOnSale = Math.max(0, Number(sale2.total) - Number(sale2.amountPaid));
+        const remainingUnpaid = Math.max(0, unpaidOnSale - prevRefundTotal);
+        const balanceReduction = Math.min(refundTotal2, remainingUnpaid);
+        if (balanceReduction > 0) {
+          await tx.update(customersTable).set({ balance: sql`GREATEST(0, ${customersTable.balance} - ${balanceReduction})` }).where(eq(customersTable.id, sale2.customerId));
+        }
+      }
+      const totalSold = saleItems.reduce((s, i) => s + i.quantity, 0);
+      const totalReturned = [...returnedMap.values()].reduce((s, q) => s + q, 0) + lines2.reduce((s, l) => s + l.quantity, 0);
+      if (totalReturned >= totalSold) {
+        await tx.update(salesTable).set({ status: "refunded" }).where(eq(salesTable.id, sale_id));
+      }
+      return { ret: ret2, sale: sale2, refundTotal: refundTotal2, lines: lines2 };
+    });
+  } catch (err) {
+    if (err instanceof ReturnValidationError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    throw err;
+  }
+  const { ret, sale, refundTotal, lines } = outcome;
+  await logAudit(req, { action: "sale.returned", entityType: "sale", entityId: sale_id, description: `Return ${returnNumber} against ${sale.receiptNumber} \u2014 KES ${refundTotal.toLocaleString()} refunded via ${refund_method}`, metadata: { return_number: returnNumber, reason: reason ?? null } });
+  res.status(201).json({
+    id: ret.id,
+    return_number: returnNumber,
+    sale_id,
+    receipt_number: sale.receiptNumber,
+    branch_id: sale.branchId,
+    total: refundTotal,
+    refund_method,
+    reason: reason ?? null,
+    items: lines.map((l) => ({ sale_item_id: l.saleItem.id, product_id: l.saleItem.productId, quantity: l.quantity, unit_price: Number(l.saleItem.unitPrice), total: l.lineTotal })),
+    created_at: ret.createdAt
   });
-  await logAudit(req, { action: saleStatus === "draft" ? "sale.draft_saved" : "sale.created", entityType: "sale", entityId: result.sale.id, description: saleStatus === "draft" ? `Saved draft sale ${result.receiptNumber} — KES ${total.toLocaleString()} (${items.length} item${items.length !== 1 ? "s" : ""})` : `Sale ${result.receiptNumber} — KES ${total.toLocaleString()} (${items.length} item${items.length !== 1 ? "s" : ""}) via ${payment_method}`, metadata: result.invoiceNumber ? { receipt: result.receiptNumber, invoice: result.invoiceNumber } : { receipt: result.receiptNumber } });
-  const saleData = await formatSale(result.sale);
-  res.status(201).json({ ...saleData, invoice_id: result.invoiceId, invoice_number: result.invoiceNumber });
+});
+router14.get("/pos/returns", async (req, res) => {
+  const { page = "1", limit = "50" } = req.query;
+  const p = Math.max(1, parseInt(page, 10));
+  const l = Math.min(200, parseInt(limit, 10));
+  const where = branchCondition(saleReturnsTable.branchId, req);
+  const [{ count }] = await db.select({ count: sql`count(*)` }).from(saleReturnsTable).where(where);
+  const rows = await db.select().from(saleReturnsTable).where(where).orderBy(sql`${saleReturnsTable.createdAt} desc`).limit(l).offset((p - 1) * l);
+  const saleIds = [...new Set(rows.map((r) => r.saleId))];
+  const sales = saleIds.length ? await db.select({ id: salesTable.id, receipt: salesTable.receiptNumber }).from(salesTable).where(inArray(salesTable.id, saleIds)) : [];
+  const receiptMap = Object.fromEntries(sales.map((s) => [s.id, s.receipt]));
+  res.json({
+    data: rows.map((r) => ({ id: r.id, return_number: r.returnNumber, sale_id: r.saleId, receipt_number: receiptMap[r.saleId] ?? null, branch_id: r.branchId, total: Number(r.total), refund_method: r.refundMethod, reason: r.reason, created_by: r.createdBy, created_at: r.createdAt })),
+    total: Number(count),
+    page: p,
+    limit: l
+  });
 });
 router14.get("/pos/sales", async (req, res) => {
   const { page = "1", limit = "50" } = req.query;
@@ -72049,136 +71690,6 @@ router14.get("/pos/sales/:id", async (req, res) => {
   }
   res.json(await formatSale(sale));
 });
-// Void a completed sale (Super Admin only).
-// Reverses stock movements and marks the sale as void. The original record is preserved.
-router14.patch("/pos/sales/:id/void", requireAuth, requireSuperAdmin, async (req, res) => {
-  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [sale] = await db.select().from(salesTable).where(eq(salesTable.id, id));
-  if (!sale || !isBranchInScope(req, sale.branchId)) {
-    res.status(404).json({ error: "Sale not found" });
-    return;
-  }
-  if (sale.status !== "completed") {
-    res.status(422).json({ error: `Only completed sales can be voided. This sale has status: ${sale.status}` });
-    return;
-  }
-  const { reason } = req.body ?? {};
-  if (!reason?.trim()) {
-    res.status(400).json({ error: "A reason is required when voiding a sale" });
-    return;
-  }
-  const branchId = sale.branchId;
-  const actorId = req.user?.userId ?? null;
-  await db.transaction(async (tx) => {
-    // Reverse stock movements for each sold item
-    const items = await tx.select().from(saleItemsTable).where(eq(saleItemsTable.saleId, sale.id));
-    for (const item of items) {
-      const { before, after } = await adjustBranchStock(branchId, item.productId, (b) => b + item.quantity, tx);
-      await tx.insert(stockMovementsTable).values({ branchId, productId: item.productId, type: "adjustment", quantity: item.quantity, quantityBefore: before, quantityAfter: after, reference: sale.receiptNumber, notes: `Void of sale ${sale.receiptNumber}` });
-    }
-    await tx.update(salesTable).set({ status: "void", notes: reason, voidedAt: new Date(), voidedBy: actorId }).where(eq(salesTable.id, id));
-  });
-  await logAudit(req, { action: "sale.voided", entityType: "sale", entityId: id, description: `Voided sale ${sale.receiptNumber} — KES ${Number(sale.total).toLocaleString()}. Reason: ${reason}`, metadata: { receipt: sale.receiptNumber, reason } });
-  const [updated] = await db.select().from(salesTable).where(eq(salesTable.id, id));
-  res.json(await formatSale(updated));
-});
-// Permanently delete a DRAFT sale (Super Admin only).
-// Completed sales must never be deleted — use void instead.
-router14.delete("/pos/sales/:id", requireAuth, requireSuperAdmin, async (req, res) => {
-  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [sale] = await db.select().from(salesTable).where(eq(salesTable.id, id));
-  if (!sale || !isBranchInScope(req, sale.branchId)) {
-    res.status(404).json({ error: "Sale not found" });
-    return;
-  }
-  if (sale.status !== "draft") {
-    res.status(422).json({ error: "Only draft transactions may be permanently deleted. Completed sales must be voided instead." });
-    return;
-  }
-  const { reason } = req.body ?? {};
-  await db.delete(saleItemsTable).where(eq(saleItemsTable.saleId, id));
-  await db.delete(salesTable).where(eq(salesTable.id, id));
-  await logAudit(req, { action: "sale.deleted", entityType: "sale", entityId: id, description: `Permanently deleted draft sale ${sale.receiptNumber}${reason ? " — Reason: " + reason : ""}`, metadata: { receipt: sale.receiptNumber, reason: reason ?? null } });
-  res.sendStatus(204);
-});
-// Create a return/refund transaction linked to the original sale (Super Admin only).
-// This creates a new sale record with status 'returned' and reverses stock.
-router14.post("/pos/sales/:id/return", requireAuth, requireSuperAdmin, async (req, res) => {
-  const originalId = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const [originalSale] = await db.select().from(salesTable).where(eq(salesTable.id, originalId));
-  if (!originalSale || !isBranchInScope(req, originalSale.branchId)) {
-    res.status(404).json({ error: "Original sale not found" });
-    return;
-  }
-  if (originalSale.status !== "completed") {
-    res.status(422).json({ error: "Returns can only be processed against completed sales" });
-    return;
-  }
-  const { reason, items: returnItems } = req.body ?? {};
-  if (!reason?.trim()) {
-    res.status(400).json({ error: "A reason is required when processing a return" });
-    return;
-  }
-  if (!returnItems?.length) {
-    res.status(400).json({ error: "At least one item must be specified for the return" });
-    return;
-  }
-  const branchId = originalSale.branchId;
-  const cashierName = req.user?.name ?? null;
-  // Validate returned items against original sale items
-  const originalItems = await db.select().from(saleItemsTable).where(eq(saleItemsTable.saleId, originalId));
-  const originalItemMap = Object.fromEntries(originalItems.map((i) => [i.productId, i]));
-  for (const ri of returnItems) {
-    const orig = originalItemMap[ri.product_id];
-    if (!orig) {
-      res.status(422).json({ error: `Product ${ri.product_id} was not in the original sale` });
-      return;
-    }
-    if (ri.quantity > orig.quantity) {
-      res.status(422).json({ error: `Cannot return more than original quantity for product ${ri.product_id}` });
-      return;
-    }
-  }
-  let subtotal = 0;
-  let taxAmount = 0;
-  for (const ri of returnItems) {
-    const orig = originalItemMap[ri.product_id];
-    const lineBase = Number(orig.unitPrice) * ri.quantity;
-    subtotal += lineBase;
-    taxAmount += lineBase * (Number(orig.vatRate ?? 0) / 100);
-  }
-  const total = subtotal + taxAmount;
-  const receiptNumber = await nextDocumentNumber("receipt");
-  const result = await db.transaction(async (tx) => {
-    const [returnSale] = await tx.insert(salesTable).values({
-      receiptNumber,
-      branchId,
-      customerId: originalSale.customerId,
-      subtotal: subtotal.toString(),
-      discountAmount: "0",
-      taxAmount: taxAmount.toString(),
-      total: total.toString(),
-      amountPaid: total.toString(),
-      change: "0",
-      paymentMethod: originalSale.paymentMethod,
-      cashierName,
-      status: "returned",
-      notes: reason,
-      originalSaleId: originalId
-    }).returning();
-    for (const ri of returnItems) {
-      const orig = originalItemMap[ri.product_id];
-      const lineBase = Number(orig.unitPrice) * ri.quantity;
-      const lineVat = lineBase * (Number(orig.vatRate ?? 0) / 100);
-      await tx.insert(saleItemsTable).values({ saleId: returnSale.id, productId: ri.product_id, quantity: ri.quantity, unitPrice: orig.unitPrice.toString(), discount: "0", vatRate: orig.vatRate.toString(), total: (lineBase + lineVat).toString() });
-      const { before, after } = await adjustBranchStock(branchId, ri.product_id, (b) => b + ri.quantity, tx);
-      await tx.insert(stockMovementsTable).values({ branchId, productId: ri.product_id, type: "purchase_return", quantity: ri.quantity, quantityBefore: before, quantityAfter: after, reference: receiptNumber, notes: `Return of sale ${originalSale.receiptNumber}` });
-    }
-    return { returnSale };
-  });
-  await logAudit(req, { action: "sale.returned", entityType: "sale", entityId: result.returnSale.id, description: `Return ${receiptNumber} for original sale ${originalSale.receiptNumber} — KES ${total.toLocaleString()} (${returnItems.length} item${returnItems.length !== 1 ? "s" : ""}). Reason: ${reason}`, metadata: { original_receipt: originalSale.receiptNumber, return_receipt: receiptNumber, reason } });
-  res.status(201).json(await formatSale(result.returnSale));
-});
 var pos_default = router14;
 
 // artifacts/api-server/src/routes/users.ts
@@ -72195,6 +71706,11 @@ router15.post("/users", async (req, res) => {
   const { name, email: email3, password, role, branch, branch_id, phone } = req.body;
   if (!name || !email3 || !password || !role) {
     res.status(400).json({ error: "name, email, password and role required" });
+    return;
+  }
+  const actorRole = req.user?.role;
+  if (role === "super_admin" && actorRole !== "super_admin") {
+    res.status(403).json({ error: "Only a super admin can create super admin accounts" });
     return;
   }
   const passwordHash = await hashPassword(password);
@@ -72218,6 +71734,11 @@ router15.patch("/users/:id", async (req, res) => {
   const [before] = await db.select().from(usersTable).where(eq(usersTable.id, id));
   if (!before) {
     res.status(404).json({ error: "User not found" });
+    return;
+  }
+  const actorRole = req.user?.role;
+  if (actorRole !== "super_admin" && (role === "super_admin" || before.role === "super_admin")) {
+    res.status(403).json({ error: "Only a super admin can manage super admin accounts" });
     return;
   }
   const updateData = {};
@@ -72264,7 +71785,7 @@ function fmt5(s) {
     currency: s.currency,
     currency_symbol: s.currencySymbol,
     vat_rate: Number(s.vatRate),
-    logo_url: normalizeLogoUrl(s.logoUrl),
+    logo_url: s.logoUrl,
     receipt_footer: s.receiptFooter,
     fiscal_year_start: s.fiscalYearStart,
     country: s.country,
@@ -72327,7 +71848,7 @@ function fmtBranding(s) {
     business_phone2: s.businessPhone2 ?? null,
     business_email: s.businessEmail ?? null,
     website: s.website ?? null,
-    logo_url: normalizeLogoUrl(s.logoUrl),
+    logo_url: s.logoUrl ?? null,
     primary_color: s.primaryColor ?? null,
     secondary_color: s.secondaryColor ?? null,
     tax_number: s.taxNumber ?? null,
@@ -72354,160 +71875,22 @@ var PAYMENT_FIELDS = [
   ["other_payment_methods", "otherPaymentMethods"],
   ["payment_instructions", "paymentInstructions"]
 ];
-function normalizeCategorizationRuleInput(body, options = {}) {
-  const ruleName = cleanText(body?.rule_name);
-  const categoryName = cleanText(body?.category_name);
-  const keywords = parseRuleKeywords(body?.keywords);
-  const priorityRaw = Number(body?.priority);
-  const priority = Number.isFinite(priorityRaw) ? Math.max(1, Math.round(priorityRaw)) : options.defaultPriority ?? 100;
-  const enabledRaw = parseOptionalBoolean(body?.is_enabled);
-  const isEnabled = enabledRaw == null ? options.defaultEnabled ?? true : enabledRaw;
-  return { ruleName, categoryName, keywords, priority, isEnabled };
-}
-function formatProductCategorizationRule(row) {
-  return {
-    id: Number(row.id),
-    rule_name: row.rule_name,
-    category_name: row.category_name,
-    keywords: parseRuleKeywords(row.keywords),
-    priority: Number(row.priority || 100),
-    is_enabled: row.is_enabled !== false,
-    created_by_id: row.created_by_id ?? null,
-    created_at: row.created_at,
-    updated_at: row.updated_at
-  };
-}
-router16.get("/settings/product-categorization-rules", requireRole("administrator"), async (_req, res) => {
-  await ensureProductCategorizationRuleSchema();
-  const { rows } = await pool.query(`SELECT * FROM product_categorization_rules ORDER BY priority ASC, id ASC`);
-  res.json({ data: rows.map(formatProductCategorizationRule) });
-});
-router16.post("/settings/product-categorization-rules", requireSuperAdmin, async (req, res) => {
-  await ensureProductCategorizationRuleSchema();
-  const input = normalizeCategorizationRuleInput(req.body);
-  if (!input.ruleName || !input.categoryName || !input.keywords.length) {
-    res.status(400).json({ error: "rule_name, category_name and at least one keyword are required." });
-    return;
-  }
-  const { rows } = await pool.query(
-    `INSERT INTO product_categorization_rules
-      (rule_name, category_name, keywords, priority, is_enabled, created_by_id, updated_at)
-     VALUES ($1, $2, $3::jsonb, $4, $5, $6, NOW())
-     RETURNING *`,
-    [input.ruleName, input.categoryName, JSON.stringify(input.keywords), input.priority, input.isEnabled, req.user?.userId ?? null]
-  );
-  invalidateProductCategorizationRulesCache();
-  await logAudit(req, {
-    action: "settings.product_categorization_rule_created",
-    entityType: "settings",
-    entityId: rows[0].id,
-    description: `Created product categorization rule "${input.ruleName}"`,
-    metadata: { after: formatProductCategorizationRule(rows[0]) }
-  });
-  res.status(201).json(formatProductCategorizationRule(rows[0]));
-});
-router16.patch("/settings/product-categorization-rules/:id", requireSuperAdmin, async (req, res) => {
-  await ensureProductCategorizationRuleSchema();
-  const id = parseOptionalInteger(req.params.id);
-  if (!id) {
-    res.status(400).json({ error: "Invalid rule id" });
-    return;
-  }
-  const { rows: existingRows } = await pool.query(`SELECT * FROM product_categorization_rules WHERE id = $1`, [id]);
-  const existing = existingRows[0];
-  if (!existing) {
-    res.status(404).json({ error: "Rule not found" });
-    return;
-  }
-  const input = normalizeCategorizationRuleInput(req.body, { defaultPriority: Number(existing.priority || 100), defaultEnabled: existing.is_enabled !== false });
-  const update = {
-    rule_name: input.ruleName ?? existing.rule_name,
-    category_name: input.categoryName ?? existing.category_name,
-    keywords: input.keywords.length ? input.keywords : parseRuleKeywords(existing.keywords),
-    priority: input.priority,
-    is_enabled: input.isEnabled
-  };
-  const { rows } = await pool.query(
-    `UPDATE product_categorization_rules
-     SET rule_name = $2,
-         category_name = $3,
-         keywords = $4::jsonb,
-         priority = $5,
-         is_enabled = $6,
-         updated_at = NOW()
-     WHERE id = $1
-     RETURNING *`,
-    [id, update.rule_name, update.category_name, JSON.stringify(update.keywords), update.priority, update.is_enabled]
-  );
-  invalidateProductCategorizationRulesCache();
-  await logAudit(req, {
-    action: "settings.product_categorization_rule_updated",
-    entityType: "settings",
-    entityId: id,
-    description: `Updated product categorization rule "${update.rule_name}"`,
-    metadata: { before: formatProductCategorizationRule(existing), after: formatProductCategorizationRule(rows[0]) }
-  });
-  res.json(formatProductCategorizationRule(rows[0]));
-});
-router16.delete("/settings/product-categorization-rules/:id", requireSuperAdmin, async (req, res) => {
-  await ensureProductCategorizationRuleSchema();
-  const id = parseOptionalInteger(req.params.id);
-  if (!id) {
-    res.status(400).json({ error: "Invalid rule id" });
-    return;
-  }
-  const { rows } = await pool.query(`DELETE FROM product_categorization_rules WHERE id = $1 RETURNING *`, [id]);
-  if (!rows[0]) {
-    res.status(404).json({ error: "Rule not found" });
-    return;
-  }
-  invalidateProductCategorizationRulesCache();
-  await logAudit(req, {
-    action: "settings.product_categorization_rule_deleted",
-    entityType: "settings",
-    entityId: id,
-    description: `Deleted product categorization rule "${rows[0].rule_name}"`,
-    metadata: { before: formatProductCategorizationRule(rows[0]) }
-  });
-  res.sendStatus(204);
-});
-router16.post("/settings/product-categorization-rules/reorder", requireSuperAdmin, async (req, res) => {
-  await ensureProductCategorizationRuleSchema();
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((item) => Number(item)).filter((item) => Number.isInteger(item) && item > 0) : [];
-  if (!ids.length) {
-    res.status(400).json({ error: "ids array is required" });
-    return;
-  }
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    for (let index = 0; index < ids.length; index += 1) {
-      await client.query(`UPDATE product_categorization_rules SET priority = $2, updated_at = NOW() WHERE id = $1`, [ids[index], index + 1]);
-    }
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-  invalidateProductCategorizationRulesCache();
-  const { rows } = await pool.query(`SELECT * FROM product_categorization_rules ORDER BY priority ASC, id ASC`);
-  await logAudit(req, {
-    action: "settings.product_categorization_rules_reordered",
-    entityType: "settings",
-    entityId: 0,
-    description: "Reordered product categorization rules",
-    metadata: { ids }
-  });
-  res.json({ data: rows.map(formatProductCategorizationRule) });
-});
 router16.get("/settings", async (_req, res) => {
-  const settings = await ensureBusinessSettingsWithDefaults();
+  const [settings] = await db.select().from(businessSettingsTable);
+  if (!settings) {
+    const [s] = await db.insert(businessSettingsTable).values({}).returning();
+    res.json(fmt5(s));
+    return;
+  }
   res.json(fmt5(settings));
 });
 router16.get("/settings/branding", async (_req, res) => {
-  const settings = await ensureBusinessSettingsWithDefaults();
+  const [settings] = await db.select().from(businessSettingsTable);
+  if (!settings) {
+    const [s] = await db.insert(businessSettingsTable).values({}).returning();
+    res.json(fmtBranding(s));
+    return;
+  }
   res.json(fmtBranding(settings));
 });
 router16.patch("/settings", requireRole("administrator"), async (req, res) => {
@@ -72714,1335 +72097,17 @@ router16.patch("/settings/security", requireSuperAdmin, async (req, res) => {
 });
 var settings_default = router16;
 
-// artifacts/api-server/src/routes/documents.ts
-var import_express17 = __toESM(require_express2(), 1);
-var import_pdfkit = __toESM(require("pdfkit"), 1);
-var router17 = (0, import_express17.Router)();
-var DEFAULT_COMPANY_LOGO_URL = "/assets/unique-solar-kenya-logo.svg";
-var PDF_EOF_MARKER = Buffer.from("%%EOF");
-var PDF_GENERATION_TIMEOUT_MS = 30000;
-function safeNum(value) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
-function fmtCurrency2(value, currency = "KES") {
-  return safeNum(value).toLocaleString("en-KE", { style: "currency", currency, maximumFractionDigits: 2 });
-}
-function normalizePaper(raw, fallback = "a4") {
-  const paper = String(raw || fallback).toLowerCase();
-  if (paper === "58mm" || paper === "80mm" || paper === "a4") return paper;
-  return fallback;
-}
-function paperToPdfSize(paper) {
-  if (paper === "58mm") return [164.4, 900];
-  if (paper === "80mm") return [226.8, 900];
-  return "A4";
-}
-async function ensureBusinessSettingsWithDefaults() {
-  const [settings] = await db.select().from(businessSettingsTable);
-  if (!settings) {
-    const [created] = await db.insert(businessSettingsTable).values({ logoUrl: DEFAULT_COMPANY_LOGO_URL }).returning();
-    return created;
-  }
-  if (!settings.logoUrl) {
-    const [updated] = await db.update(businessSettingsTable).set({ logoUrl: DEFAULT_COMPANY_LOGO_URL }).where(sql`${businessSettingsTable.id} = ${settings.id}`).returning();
-    return updated;
-  }
-  return settings;
-}
-async function getDocSettings() {
-  return await ensureBusinessSettingsWithDefaults();
-}
-async function getBranchDetails(branchId) {
-  if (!branchId) return null;
-  const [branch] = await db.select().from(branchesTable).where(eq(branchesTable.id, branchId));
-  return branch ?? null;
-}
-async function getBranchName(branchId) {
-  const branch = await getBranchDetails(branchId);
-  if (!branchId) return "Main Branch";
-  return branch?.name ?? `Branch ${branchId}`;
-}
-function htmlEscape2(v) {
-  return String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
-function safeHex2(value, fallback) {
-  return value && /^#?[0-9a-fA-F]{6}$/.test(value) ? value.startsWith("#") ? value : `#${value}` : fallback;
-}
-function brandInitials2(name) {
-  const parts = String(name || "UniquePOS").trim().split(/\s+/).filter(Boolean).slice(0, 2);
-  const initials = parts.map((part) => part[0]?.toUpperCase() || "").join("");
-  return initials || "UP";
-}
-function placeholderLogoDataUri(name, primaryColor, secondaryColor) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${primaryColor}"/><stop offset="100%" stop-color="${secondaryColor}"/></linearGradient></defs><rect width="160" height="160" rx="28" fill="url(#g)"/><text x="80" y="94" text-anchor="middle" font-family="Arial, sans-serif" font-size="52" font-weight="700" fill="#ffffff">${htmlEscape2(brandInitials2(name))}</text></svg>`;
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
-}
-function resolveStoredAssetUrl(rawPath) {
-  const raw = String(rawPath || "").trim();
-  if (!raw) return "";
-  if (raw.startsWith("/objects/")) return `/api/storage/objects/${encodeURIComponent(raw.slice("/objects/".length)).replace(/%2F/g, "/")}`;
-  if (raw.startsWith("/api/storage/objects/")) return raw;
-  return "";
-}
-function assetMimeType(rawPath) {
-  const lower = String(rawPath || "").toLowerCase();
-  if (lower.endsWith(".svg")) return "image/svg+xml";
-  if (lower.endsWith(".webp")) return "image/webp";
-  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
-  return "image/png";
-}
-function selectDocumentLogoPath(settings, branch) {
-  return settings?.logoUrl || branch?.logoUrl || null;
-}
-function buildDocumentFooter(settings) {
-  const sections = [
-    settings?.documentFooter || settings?.receiptFooter || "",
-    settings?.invoicePaymentTerms ? `Terms: ${settings.invoicePaymentTerms}` : "",
-    settings?.warrantyText ? `Warranty: ${settings.warrantyText}` : "",
-    settings?.returnPolicy ? `Returns: ${settings.returnPolicy}` : "",
-    settings?.paymentInstructions ? `Payment: ${settings.paymentInstructions}` : ""
-  ].filter(Boolean);
-  return sections.join("\n\n") || "Thank you for your business.";
-}
-function branchDetailsText(branch) {
-  if (!branch) return "";
-  return [
-    branch.name,
-    branch.address,
-    [branch.phone, branch.phone2].filter(Boolean).join(" / "),
-    branch.email,
-    branch.kraPin ? `KRA PIN: ${branch.kraPin}` : ""
-  ].filter(Boolean).join("\n");
-}
-async function loadStoredAssetBuffer(rawPath) {
-  if (!rawPath || !String(rawPath).startsWith("/objects/")) return null;
-  try {
-    const file2 = await objectStorageService.getObjectEntityFile(String(rawPath));
-    const [buf] = await file2.download();
-    return buf;
-  } catch {
-    return null;
-  }
-}
-function dateText2(value) {
-  if (!value) return "—";
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString("en-KE", { timeZone: "Africa/Nairobi" });
-}
-function normalizeLogoUrl(logoUrl) {
-  const value = typeof logoUrl === "string" ? logoUrl.trim() : "";
-  return value || DEFAULT_COMPANY_LOGO_URL;
-}
-function absoluteLogoUrl(req, logoUrl) {
-  const resolved = normalizeLogoUrl(logoUrl);
-  if (/^https?:\/\//i.test(resolved)) return resolved;
-  const protocol = req.get("x-forwarded-proto") || req.protocol || "https";
-  return `${protocol}://${req.get("host")}${resolved.startsWith("/") ? "" : "/"}${resolved}`;
-}
-async function loadLogoBuffer(logoUrl) {
-  const resolved = normalizeLogoUrl(logoUrl);
-  if (resolved.startsWith("/objects/")) {
-    try {
-      const file2 = await objectStorageService.getObjectEntityFile(resolved);
-      const [buf] = await file2.download();
-      return buf;
-    } catch {
-      return null;
-    }
-  }
-  if (!resolved.startsWith("/")) return null;
-  const path3 = require("node:path");
-  const fs3 = require("node:fs/promises");
-  const publicRoot = path3.resolve(process.env.SERVE_CLIENT_DIR || path3.join(process.cwd(), "public"));
-  const abs = path3.resolve(publicRoot, `.${resolved}`);
-  if (abs !== publicRoot && !abs.startsWith(`${publicRoot}${path3.sep}`)) return null;
-  try {
-    return await fs3.readFile(abs);
-  } catch {
-    return null;
-  }
-}
-function documentFooterForType(settings, documentType) {
-  if (documentType === "invoice" || documentType === "delivery_note" || documentType === "credit_note") {
-    return settings.documentFooter || settings.invoiceFooter || settings.receiptFooter || "Thank you for your business.";
-  }
-  if (documentType === "quotation") {
-    return settings.documentFooter || settings.quotationFooter || settings.receiptFooter || "Thank you for your business.";
-  }
-  return settings.documentFooter || settings.receiptFooter || "Thank you for your business.";
-}
-async function loadProductMetaMap(productIds) {
-  const ids = [...new Set((productIds || []).map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0))];
-  if (!ids.length) return /* @__PURE__ */ new Map();
-  const products = await db.select({
-    id: productsTable.id,
-    name: productsTable.productName,
-    productCode: productsTable.productCode,
-    unit: productsTable.unit
-  }).from(productsTable).where(inArray(productsTable.id, ids));
-  return new Map(products.map((product) => [product.id, product]));
-}
-async function formatDocumentRows(items, options = {}) {
-  const productMetaMap = await loadProductMetaMap((items || []).map((item) => item?.productId ?? item?.product_id));
-  const resolveDescription = options.resolveDescription || ((item) => item?.description || productMetaMap.get(Number(item?.productId ?? item?.product_id))?.name || `Product #${item?.productId ?? item?.product_id ?? "?"}`);
-  return (items || []).map((item) => {
-    const productMeta = productMetaMap.get(Number(item?.productId ?? item?.product_id)) || null;
-    return {
-      itemCode: item?.productCode || item?.product_code || productMeta?.productCode || "—",
-      description: resolveDescription(item),
-      quantity: safeNum(item?.quantity),
-      unit: item?.unit || productMeta?.unit || "pcs",
-      unitPrice: safeNum(item?.unitPrice ?? item?.unitPrice2 ?? item?.unit_price ?? item?.unitCost ?? item?.unit_cost),
-      discount: safeNum(item?.discount),
-      vatRate: safeNum(item?.vatRate ?? item?.vat_rate, 16),
-      total: safeNum(item?.total)
-    };
-  });
-}
-function assertPdfBuffer(pdf) {
-  if (!Buffer.isBuffer(pdf) || pdf.length < 32) {
-    throw new Error("PDF generation returned an empty file.");
-  }
-  if (pdf.subarray(0, 4).toString("utf8") !== "%PDF") {
-    throw new Error("PDF generation returned invalid output.");
-  }
-  if (!pdf.includes(PDF_EOF_MARKER)) {
-    throw new Error("PDF generation returned a truncated file.");
-  }
-  return pdf;
-}
-async function buildDocumentQrDataUrl(value, width = 128) {
-  try {
-    return await import_qrcode.default.toDataURL(String(value || "document"), {
-      margin: 1,
-      width,
-      color: { dark: "#083D6D", light: "#FFFFFFFF" }
-    });
-  } catch {
-    return "";
-  }
-}
-async function normalizeDocumentPreviewData(opts, paper) {
-  const settings = opts.settings || {};
-  const currency = settings.currency || "KES";
-  const primary = safeHex2(settings.primaryColor, "#083D6D");
-  const secondary = safeHex2(settings.secondaryColor, "#F7931E");
-  const logoPath = selectDocumentLogoPath(settings, opts.branch);
-  const logoSrc = resolveStoredAssetUrl(logoPath) || placeholderLogoDataUri(settings.businessName || opts.branchName || "UniquePOS", primary, secondary);
-  const customer = opts.customer || {};
-  const meta = opts.meta || {};
-  const totals = opts.totals || {};
-  const normalizedRows = (opts.rows || []).map((row) => ({
-    itemCode: row?.itemCode || row?.productCode || row?.product_code || "—",
-    description: row?.description || "Item",
-    quantity: safeNum(row?.quantity),
-    unit: row?.unit || "pcs",
-    unitPrice: safeNum(row?.unitPrice ?? row?.unit_price),
-    discount: safeNum(row?.discount),
-    vatRate: safeNum(row?.vatRate ?? row?.vat_rate, 16),
-    total: safeNum(row?.total)
-  }));
-  const fallbackNotes = [
-    ["Warranty", settings.warrantyText || meta.warranty || ""],
-    ["Delivery Terms", meta.deliveryTerms || ""],
-    ["Return Policy", settings.returnPolicy || ""],
-    ["Additional Notes", opts.notes || documentFooterForType(settings, String(opts.requestedType || opts.documentType || "").toLowerCase())]
-  ].filter((entry) => entry[1]);
-  const notesSections = Array.isArray(opts.notesSections) && opts.notesSections.length ? opts.notesSections.filter((entry) => Array.isArray(entry) && entry[1]) : fallbackNotes;
-  const qrDataUrl = await buildDocumentQrDataUrl([
-    opts.documentType || "Document",
-    opts.documentNumber || "",
-    customer.name || opts.partyName || "Walk-in Customer",
-    safeNum(totals.total)
-  ].join(" | "), paper === "a4" ? 132 : paper === "80mm" ? 110 : 92);
-  const footerLine = [settings.website || "", settings.businessEmail || ""].filter(Boolean).join(" · ");
-  const termsText = settings.invoicePaymentTerms || "";
-  const termsLines = termsText
-    ? termsText.split(/\n/).filter((l) => l.trim())
-    : [
-        `Quotation valid for ${settings.quotationValidityDays || 30} days.`,
-        "Goods remain the property of the seller until paid in full.",
-        "Warranty applies where specified.",
-        "Returns are subject to our return policy.",
-        "Errors and Omissions Excepted (E&OE)."
-      ];
-  const payment = {
-    mpesaPaybill: settings.mpesaPaybill || "",
-    mpesaTill: settings.mpesaTill || "",
-    mpesaAccount: settings.mpesaPaybillAccount || opts.documentNumber || "",
-    bankName: settings.bankName || "",
-    bankBranch: settings.bankBranch || "",
-    bankAccountName: settings.bankAccountName || "",
-    bankAccountNumber: settings.bankAccountNumber || "",
-    bankSwiftCode: settings.bankSwiftCode || "",
-    paymentInstructions: settings.paymentInstructions || ""
-  };
-  return {
-    paper,
-    isReceipt: paper === "58mm" || paper === "80mm",
-    primary,
-    secondary,
-    currency,
-    logoSrc,
-    qrDataUrl,
-    companyName: settings.businessName || "UniquePOS",
-    companyAddress: settings.businessAddress || "",
-    companyPhone: [settings.businessPhone, settings.businessPhone2].filter(Boolean).join(" / ") || "—",
-    companyEmail: settings.businessEmail || "—",
-    website: settings.website || "",
-    taxPin: settings.taxNumber || "",
-    vatNumber: settings.vatNumber || "",
-    slogan: settings.tagline || "",
-    supportEmail: settings.businessEmail || "",
-    branchInfo: branchDetailsText(opts.branch) || opts.branchName || "Main Branch",
-    branchName: opts.branch?.name || opts.branchName || "",
-    documentTitle: opts.documentType || "Document",
-    documentNumber: opts.documentNumber || "—",
-    customerName: customer.name || opts.partyName || "Walk-in Customer",
-    customerCompany: customer.company || "",
-    customerAddress: customer.address || "",
-    customerPhone: customer.phone || opts.partyPhone || "",
-    customerEmail: customer.email || opts.partyEmail || "",
-    customerTaxNumber: customer.taxNumber || "",
-    salesperson: meta.salesperson || customer.cashier || "Sales Team",
-    reference: meta.reference || opts.documentNumber || "—",
-    paymentTerms: meta.paymentTerms || settings.invoicePaymentTerms || "Due on receipt",
-    paymentMethod: meta.paymentMethod || "cash",
-    paymentMethodLabel: String(meta.paymentMethod || "cash").replace(/[_-]+/g, " "),
-    paymentMethodDisplay: String(meta.paymentMethod || "cash").replace(/[_-]+/g, " ").replace(/(^|\s)\S/g, (match) => match.toUpperCase()),
-    documentDate: meta.date || opts.generatedAt || new Date().toISOString(),
-    dueDate: meta.dueDate || meta.validUntil || "",
-    dueDateLabel: String(opts.documentType || "").toLowerCase() === "quotation" ? "Valid Until" : "Due Date",
-    amountPaid: safeNum(meta.amountPaid ?? totals.paid),
-    changeAmount: safeNum(meta.change ?? totals.change ?? totals.balance),
-    totals: {
-      subtotal: safeNum(totals.subtotal),
-      discount: safeNum(totals.discount),
-      tax: safeNum(totals.tax),
-      shipping: safeNum(totals.shipping),
-      total: safeNum(totals.total),
-      balanceDue: safeNum(totals.balanceDue),
-      paid: safeNum(meta.amountPaid ?? totals.paid),
-      change: safeNum(meta.change ?? totals.change ?? totals.balance)
-    },
-    notesSections,
-    termsLines,
-    payment,
-    footerLine,
-    rows: normalizedRows
-  };
-}
-async function buildDocumentHtml(opts) {
-  const data = await normalizeDocumentPreviewData(opts, opts.paper || "a4");
-  const widthCss = data.paper === "58mm" ? "58mm" : data.paper === "80mm" ? "80mm" : "210mm";
-  const thermalFontSm = data.paper === "58mm" ? "9px" : "10.5px";
-  const thermalFontMd = data.paper === "58mm" ? "10px" : "11.5px";
-  const thermalLogoSz = data.paper === "58mm" ? "42px" : "52px";
-  const thermalQrSz = data.paper === "58mm" ? "68px" : "82px";
-  const thermalGrandSz = data.paper === "58mm" ? "12px" : "14px";
-
-  // A4 rows
-  const a4Rows = data.rows.map((row) =>
-    `<tr><td>${htmlEscape2(row.itemCode)}</td><td><strong>${htmlEscape2(row.description)}</strong></td>` +
-    `<td class="num">${safeNum(row.quantity).toLocaleString()}</td><td>${htmlEscape2(row.unit)}</td>` +
-    `<td class="num">${fmtCurrency2(row.unitPrice, data.currency)}</td>` +
-    `<td class="num">${fmtCurrency2(row.discount, data.currency)}</td>` +
-    `<td class="num">${safeNum(row.vatRate).toLocaleString()}%</td>` +
-    `<td class="num"><strong>${fmtCurrency2(row.total, data.currency)}</strong></td></tr>`
-  ).join("") || `<tr><td colspan="8" class="empty">No line items</td></tr>`;
-
-  // Thermal rows
-  const thermalRows = data.rows.map((row) =>
-    `<tr><td><strong>${htmlEscape2(row.description)}</strong><div class="tsub">${htmlEscape2(row.itemCode)}</div></td>` +
-    `<td class="num">${safeNum(row.quantity).toLocaleString()}</td>` +
-    `<td class="num">${fmtCurrency2(row.unitPrice, data.currency)}</td>` +
-    `<td class="num">${fmtCurrency2(row.total, data.currency)}</td></tr>`
-  ).join("") || `<tr><td colspan="4" class="empty">No items</td></tr>`;
-
-  // Notes markup
-  const notesMarkup = data.notesSections.length
-    ? data.notesSections.map(([label, value]) =>
-        `<div class="nc"><h4>${htmlEscape2(label)}</h4><p>${htmlEscape2(value).replace(/\n/g, "<br/>")}</p></div>`
-      ).join("")
-    : `<div class="nc nc-full"><h4>Notes</h4><p>No additional notes.</p></div>`;
-
-  // Payment section
-  const p = data.payment;
-  const hasMpesa = p.mpesaPaybill || p.mpesaTill;
-  const hasBank = p.bankName || p.bankAccountNumber;
-  const mpesaCard = hasMpesa
-    ? `<div class="pc"><div class="pc-head"><span class="pc-icon">📱</span><h4>M-PESA Payment</h4></div>` +
-      (p.mpesaPaybill ? `<div class="pr"><span>Paybill No.</span><strong>${htmlEscape2(p.mpesaPaybill)}</strong></div>` : "") +
-      (p.mpesaAccount ? `<div class="pr"><span>Account No.</span><strong>${htmlEscape2(p.mpesaAccount)}</strong></div>` : "") +
-      (p.mpesaTill ? `<div class="pr"><span>Till No. (Buy Goods)</span><strong>${htmlEscape2(p.mpesaTill)}</strong></div>` : "") +
-      `<div class="pr pr-total"><span>Amount</span><strong>${fmtCurrency2(data.totals.total, data.currency)}</strong></div></div>`
-    : "";
-  const bankCard = hasBank
-    ? `<div class="pc"><div class="pc-head"><span class="pc-icon">🏦</span><h4>Bank Transfer</h4></div>` +
-      (p.bankName ? `<div class="pr"><span>Bank</span><strong>${htmlEscape2(p.bankName)}</strong></div>` : "") +
-      (p.bankBranch ? `<div class="pr"><span>Branch</span><strong>${htmlEscape2(p.bankBranch)}</strong></div>` : "") +
-      (p.bankAccountName ? `<div class="pr"><span>Account Name</span><strong>${htmlEscape2(p.bankAccountName)}</strong></div>` : "") +
-      (p.bankAccountNumber ? `<div class="pr"><span>Account No.</span><strong>${htmlEscape2(p.bankAccountNumber)}</strong></div>` : "") +
-      (p.bankSwiftCode ? `<div class="pr"><span>Swift Code</span><strong>${htmlEscape2(p.bankSwiftCode)}</strong></div>` : "") +
-      `</div>`
-    : "";
-  const extraInstructions = p.paymentInstructions
-    ? `<div class="pc pc-full"><div class="pc-head"><span class="pc-icon">💳</span><h4>Additional Payment Instructions</h4></div><p class="pc-note">${htmlEscape2(p.paymentInstructions).replace(/\n/g, "<br/>")}</p></div>`
-    : "";
-  const paymentSection = hasMpesa || hasBank || extraInstructions
-    ? `<div class="psec"><h3 class="slabel">How to Pay</h3><div class="pcards">${mpesaCard}${bankCard}${extraInstructions}</div></div>`
-    : "";
-
-  // Terms section
-  const termsSection = !data.isReceipt && data.termsLines.length
-    ? `<div class="tsec"><h3 class="slabel">Terms &amp; Conditions</h3><ol class="tlist">` +
-      data.termsLines.map((l) => `<li>${htmlEscape2(l)}</li>`).join("") +
-      `</ol></div>`
-    : "";
-
-  const css = `
-  :root { color-scheme: light only; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #f0f4f8; color: #0f172a; font-family: Inter, Arial, sans-serif; font-size: 13px; line-height: 1.5; }
-  .page { padding: 18px; }
-  .sheet { width: min(${widthCss}, 100%); margin: 0 auto; background: #fff; box-shadow: 0 4px 24px rgba(15,23,42,.12); overflow: hidden; }
-  .sheet--a4 { min-height: 297mm; border-radius: 14px; }
-  .sheet--th { border-radius: 10px; }
-  .accent { height: 7px; background: linear-gradient(90deg, ${data.primary} 0%, #1565c0 55%, ${data.secondary} 100%); }
-  .body { padding: 22px 26px; }
-  /* Header */
-  .hdr { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 18px; }
-  .brand { display: flex; gap: 12px; align-items: flex-start; flex: 1; min-width: 0; }
-  .brand img { width: 68px; height: 68px; object-fit: contain; border-radius: 10px; border: 1px solid #e2e8f0; padding: 7px; background: #fff; flex-shrink: 0; }
-  .brand h1 { font-size: 18px; font-weight: 800; color: ${data.primary}; margin-bottom: 4px; line-height: 1.2; }
-  .brand-meta { color: #475569; font-size: 11px; line-height: 1.7; }
-  /* Title card */
-  .tc { min-width: 210px; max-width: 260px; background: ${data.primary}; border-radius: 12px; padding: 16px 18px; flex-shrink: 0; }
-  .tc h2 { font-size: 20px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: #fff; margin-bottom: 5px; }
-  .tc .dn { font-size: 12px; color: rgba(255,255,255,.75); padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,.2); margin-bottom: 12px; }
-  .tc .ig { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px 10px; }
-  .tc .ig span { display: block; font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.6); margin-bottom: 1px; }
-  .tc .ig strong { font-size: 11.5px; font-weight: 600; color: #fff; }
-  /* Meta grid */
-  .mg { display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px; margin-bottom: 18px; }
-  .panel { border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; }
-  .panel h3 { font-size: 9.5px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: ${data.primary}; margin-bottom: 8px; }
-  .panel .pn { font-size: 14px; font-weight: 600; color: #0f172a; margin-bottom: 3px; }
-  .panel p { color: #475569; font-size: 11.5px; line-height: 1.5; margin-top: 2px; }
-  .ig2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px 12px; }
-  .ig2 span { display: block; font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #64748b; margin-bottom: 2px; }
-  .ig2 strong { font-size: 12px; font-weight: 600; color: #0f172a; word-break: break-word; }
-  /* Items table */
-  .items { border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; margin-bottom: 18px; }
-  table { width: 100%; border-collapse: collapse; }
-  thead th { background: ${data.primary}; color: #fff; font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding: 10px 9px; text-align: left; }
-  tbody td { padding: 10px 9px; border-bottom: 1px solid #f1f5f9; font-size: 12px; vertical-align: top; }
-  tbody tr:nth-child(even) { background: #f8faff; }
-  tbody tr:last-child td { border-bottom: none; }
-  .num { text-align: right; white-space: nowrap; }
-  /* Summary grid */
-  .sg { display: grid; grid-template-columns: 1.15fr .85fr; gap: 14px; margin-bottom: 18px; align-items: start; }
-  .ng { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
-  .nc { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; background: #f8faff; min-height: 80px; }
-  .nc h4 { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: ${data.primary}; margin-bottom: 5px; }
-  .nc p { color: #475569; font-size: 11px; line-height: 1.5; }
-  .nc-full { grid-column: 1 / -1; }
-  /* Totals panel */
-  .tp { border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
-  .tr2 { display: flex; justify-content: space-between; align-items: center; padding: 9px 14px; border-bottom: 1px solid #f1f5f9; font-size: 12px; }
-  .tr2 span { color: #64748b; }
-  .tr2 strong { font-weight: 600; }
-  .gtb { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; background: ${data.primary}; color: #fff; }
-  .gtb .gl { font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.8); }
-  .gtb .ga { font-size: 20px; font-weight: 800; }
-  /* Payment section */
-  .slabel { font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: ${data.primary}; margin-bottom: 10px; }
-  .psec { margin-bottom: 16px; }
-  .pcards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-  .pc { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; background: #f8faff; }
-  .pc-full { grid-column: 1 / -1; }
-  .pc-head { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; padding-bottom: 9px; border-bottom: 1px solid #e2e8f0; }
-  .pc-icon { font-size: 17px; line-height: 1; }
-  .pc h4 { font-size: 12px; font-weight: 700; color: ${data.primary}; }
-  .pr { display: flex; justify-content: space-between; align-items: baseline; padding: 3px 0; font-size: 11px; }
-  .pr span { color: #64748b; }
-  .pr strong { font-weight: 600; color: #0f172a; text-align: right; max-width: 55%; }
-  .pr-total { margin-top: 7px; padding-top: 7px; border-top: 1px solid #e2e8f0; }
-  .pr-total strong { color: ${data.primary}; font-size: 12px; font-weight: 700; }
-  .pc-note { font-size: 11px; color: #475569; line-height: 1.55; }
-  /* Terms section */
-  .tsec { margin-bottom: 16px; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 10px; }
-  .tlist { padding-left: 16px; color: #475569; }
-  .tlist li { font-size: 11px; line-height: 1.6; padding: 2px 0; }
-  /* Signatures */
-  .sigs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
-  .sig { padding: 26px 12px 9px; border: 1px solid #e2e8f0; border-radius: 10px; }
-  .sig-line { height: 1px; background: #94a3b8; margin-bottom: 7px; }
-  .sig-label { font-size: 10.5px; color: #64748b; text-align: center; }
-  /* Footer */
-  .ftr { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 10px; background: #f8faff; border: 1px solid #e2e8f0; }
-  .ftr img.qr { width: 76px; height: 76px; object-fit: contain; border-radius: 8px; border: 1px solid #e2e8f0; background: #fff; padding: 4px; flex-shrink: 0; }
-  .ftr h4 { font-size: 13px; font-weight: 700; color: ${data.primary}; margin-bottom: 4px; }
-  .ftr p { color: #64748b; font-size: 11px; margin-top: 2px; }
-  /* Thermal */
-  .th-wrap { padding: 12px 10px 14px; }
-  .th-head { text-align: center; border-bottom: 1px dashed #cbd5e1; padding-bottom: 9px; margin-bottom: 9px; }
-  .th-head img { display: block; margin: 0 auto 7px; width: ${thermalLogoSz}; height: ${thermalLogoSz}; border-radius: 8px; object-fit: contain; border: 1px solid #e2e8f0; }
-  .th-head h1 { font-size: ${data.paper === "58mm" ? "13px" : "16px"}; font-weight: 800; color: #0f172a; margin-bottom: 3px; }
-  .th-sub { color: #475569; font-size: ${thermalFontSm}; line-height: 1.5; }
-  .th-meta { font-size: ${thermalFontMd}; margin-bottom: 9px; }
-  .th-mrow { display: flex; justify-content: space-between; gap: 4px; padding: 2px 0; }
-  .th-items thead th { padding: 6px 4px; font-size: 9px; }
-  .th-items tbody td { padding: 6px 4px; font-size: ${thermalFontMd}; }
-  .tsub { color: #64748b; font-size: 8.5px; margin-top: 1px; }
-  .th-totals { font-size: ${thermalFontMd}; margin-top: 7px; }
-  .th-trow { display: flex; justify-content: space-between; padding: 2px 0; }
-  .th-grand { font-size: ${thermalGrandSz}; font-weight: 800; border-top: 1px solid #0f172a; padding-top: 6px; margin-top: 5px; }
-  .th-ftr { text-align: center; border-top: 1px dashed #cbd5e1; margin-top: 9px; padding-top: 9px; }
-  .th-qr { width: ${thermalQrSz}; height: ${thermalQrSz}; margin: 7px auto; display: block; border: 1px solid #e2e8f0; border-radius: 8px; padding: 4px; background: #fff; }
-  .empty { text-align: center; color: #94a3b8; padding: 18px; }
-  @page { size: ${data.paper === "58mm" ? "58mm auto" : data.paper === "80mm" ? "80mm auto" : "A4"}; margin: ${data.isReceipt ? "0" : "10mm"}; }
-  @media print { body { background: #fff; } .page { padding: 0; } .sheet { box-shadow: none; border-radius: 0; } }
-  @media (max-width: 900px) { .page { padding: 0; } .sheet--a4 { width: 100%; min-height: auto; border-radius: 0; } .hdr { flex-direction: column; } .tc { max-width: 100%; min-width: 0; } .mg, .sg, .pcards, .sigs { grid-template-columns: 1fr; } .ng { grid-template-columns: 1fr; } }`;
-
-  const a4Html = `<div class="page"><div class="sheet sheet--a4">
-    <div class="accent"></div>
-    <div class="body">
-      <div class="hdr">
-        <div class="brand">
-          <img src="${htmlEscape2(data.logoSrc)}" alt="logo" />
-          <div>
-            <h1>${htmlEscape2(data.companyName)}</h1>
-            <p class="brand-meta">${htmlEscape2(data.companyAddress).replace(/\n/g, "<br/>")}<br/>Tel: ${htmlEscape2(data.companyPhone)}<br/>Email: ${htmlEscape2(data.companyEmail)}${data.website ? `<br/>Web: ${htmlEscape2(data.website)}` : ""}${data.taxPin ? `<br/>KRA PIN: ${htmlEscape2(data.taxPin)}` : ""}${data.vatNumber ? ` | VAT: ${htmlEscape2(data.vatNumber)}` : ""}${data.branchName ? `<br/>${htmlEscape2(data.branchName)}` : ""}</p>
-          </div>
-        </div>
-        <div class="tc">
-          <h2>${htmlEscape2(data.documentTitle)}</h2>
-          <div class="dn">${htmlEscape2(data.documentNumber)}</div>
-          <div class="ig">
-            <div><span>Date</span><strong>${htmlEscape2(dateText2(data.documentDate))}</strong></div>
-            <div><span>${htmlEscape2(data.dueDateLabel)}</span><strong>${htmlEscape2(data.dueDate ? dateText2(data.dueDate) : "—")}</strong></div>
-            <div><span>Salesperson</span><strong>${htmlEscape2(data.salesperson)}</strong></div>
-            <div><span>Currency</span><strong>${htmlEscape2(data.currency)}</strong></div>
-          </div>
-        </div>
-      </div>
-      <div class="mg">
-        <section class="panel">
-          <h3>Bill To</h3>
-          <div class="pn">${htmlEscape2(data.customerName)}</div>
-          ${data.customerCompany ? `<p>${htmlEscape2(data.customerCompany)}</p>` : ""}
-          ${data.customerAddress ? `<p>${htmlEscape2(data.customerAddress)}</p>` : ""}
-          ${data.customerPhone ? `<p>Tel: ${htmlEscape2(data.customerPhone)}</p>` : ""}
-          ${data.customerEmail ? `<p>${htmlEscape2(data.customerEmail)}</p>` : ""}
-          ${data.customerTaxNumber ? `<p>KRA PIN: ${htmlEscape2(data.customerTaxNumber)}</p>` : ""}
-        </section>
-        <section class="panel">
-          <h3>Document Details</h3>
-          <div class="ig2">
-            <div><span>${htmlEscape2(String(data.documentTitle).toLowerCase() === "quotation" ? "Quote No." : String(data.documentTitle).toLowerCase().includes("invoice") ? "Invoice No." : "Doc No.")}</span><strong>${htmlEscape2(data.documentNumber)}</strong></div>
-            <div><span>Reference</span><strong>${htmlEscape2(data.reference)}</strong></div>
-            <div><span>Payment Terms</span><strong>${htmlEscape2(data.paymentTerms)}</strong></div>
-            <div><span>Currency</span><strong>${htmlEscape2(data.currency)}</strong></div>
-          </div>
-        </section>
-      </div>
-      <section class="items">
-        <table>
-          <thead><tr><th>Code</th><th>Description</th><th class="num">Qty</th><th>Unit</th><th class="num">Unit Price</th><th class="num">Disc.</th><th class="num">VAT</th><th class="num">Amount</th></tr></thead>
-          <tbody>${a4Rows}</tbody>
-        </table>
-      </section>
-      <div class="sg">
-        <div class="ng">${notesMarkup}</div>
-        <div class="tp">
-          <div class="tr2"><span>Subtotal</span><strong>${fmtCurrency2(data.totals.subtotal, data.currency)}</strong></div>
-          ${data.totals.discount > 0 ? `<div class="tr2"><span>Discount</span><strong>&minus; ${fmtCurrency2(data.totals.discount, data.currency)}</strong></div>` : ""}
-          <div class="tr2"><span>VAT</span><strong>${fmtCurrency2(data.totals.tax, data.currency)}</strong></div>
-          ${data.totals.shipping > 0 ? `<div class="tr2"><span>Shipping</span><strong>${fmtCurrency2(data.totals.shipping, data.currency)}</strong></div>` : ""}
-          <div class="gtb"><span class="gl">Grand Total</span><span class="ga">${fmtCurrency2(data.totals.total, data.currency)}</span></div>
-        </div>
-      </div>
-      ${paymentSection}
-      ${termsSection}
-      <div class="sigs">
-        <div class="sig"><div class="sig-line"></div><div class="sig-label">Prepared By</div></div>
-        <div class="sig"><div class="sig-line"></div><div class="sig-label">Customer Acceptance</div></div>
-        <div class="sig"><div class="sig-line"></div><div class="sig-label">Approved By</div></div>
-      </div>
-      <div class="ftr">
-        <img class="qr" src="${htmlEscape2(data.qrDataUrl)}" alt="QR code" />
-        <div>
-          <h4>Thank you for your business!</h4>
-          ${data.footerLine ? `<p>${htmlEscape2(data.footerLine)}</p>` : ""}
-          ${data.companyPhone ? `<p>Tel: ${htmlEscape2(data.companyPhone)}</p>` : ""}
-        </div>
-      </div>
-    </div>
-  </div></div>`;
-
-  const thermalHtml = `<div class="page"><div class="sheet sheet--th">
-    <div class="accent"></div>
-    <div class="th-wrap">
-      <div class="th-head">
-        <img src="${htmlEscape2(data.logoSrc)}" alt="logo" />
-        <h1>${htmlEscape2(data.companyName)}</h1>
-        <p class="th-sub">${htmlEscape2(data.companyAddress).replace(/\n/g, " ")}</p>
-        <p class="th-sub">${htmlEscape2(data.companyPhone)}</p>
-      </div>
-      <div class="th-meta">
-        <div class="th-mrow"><span>Receipt No.</span><strong>${htmlEscape2(data.documentNumber)}</strong></div>
-        <div class="th-mrow"><span>Date</span><strong>${htmlEscape2(dateText2(data.documentDate))}</strong></div>
-        <div class="th-mrow"><span>Cashier</span><strong>${htmlEscape2(data.salesperson)}</strong></div>
-        <div class="th-mrow"><span>Customer</span><strong>${htmlEscape2(data.customerName)}</strong></div>
-        <div class="th-mrow"><span>Payment</span><strong>${htmlEscape2(data.paymentMethodDisplay)}</strong></div>
-      </div>
-      <table class="th-items">
-        <thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Total</th></tr></thead>
-        <tbody>${thermalRows}</tbody>
-      </table>
-      <div class="th-totals">
-        <div class="th-trow"><span>Subtotal</span><strong>${fmtCurrency2(data.totals.subtotal, data.currency)}</strong></div>
-        ${data.totals.discount > 0 ? `<div class="th-trow"><span>Discount</span><strong>&minus; ${fmtCurrency2(data.totals.discount, data.currency)}</strong></div>` : ""}
-        <div class="th-trow"><span>VAT</span><strong>${fmtCurrency2(data.totals.tax, data.currency)}</strong></div>
-        <div class="th-trow"><span>Cash Tendered</span><strong>${fmtCurrency2(data.amountPaid, data.currency)}</strong></div>
-        <div class="th-trow"><span>Change</span><strong>${fmtCurrency2(Math.max(0, data.changeAmount), data.currency)}</strong></div>
-        <div class="th-trow th-grand"><span>TOTAL</span><strong>${fmtCurrency2(data.totals.total, data.currency)}</strong></div>
-      </div>
-      <div class="th-ftr">
-        <img class="th-qr" src="${htmlEscape2(data.qrDataUrl)}" alt="QR code" />
-        <p class="th-sub">Thank you for your business!</p>
-        ${data.footerLine ? `<p class="th-sub">${htmlEscape2(data.footerLine)}</p>` : ""}
-      </div>
-    </div>
-  </div></div>`;
-
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>${htmlEscape2(data.companyName)} - ${htmlEscape2(data.documentTitle)} ${htmlEscape2(data.documentNumber)}</title><style>${css}</style></head><body>${data.isReceipt ? thermalHtml : a4Html}</body></html>`;
-}
-async function resolveDocumentPayload(req, type, id) {
-  const settings = await getDocSettings();
-  const requestedType = type;
-  const mappedType = type === "payment_receipt" ? "receipt" : type === "delivery_note" ? "invoice" : type === "credit_note" ? "invoice" : type;
-  type = mappedType;
-  if (type === "invoice") {
-    const [invoice] = await db.select().from(invoicesTable).where(eq(invoicesTable.id, id));
-    if (!invoice || !isBranchInScope(req, invoice.branchId)) return null;
-    const items = await db.select().from(invoiceItemsTable).where(eq(invoiceItemsTable.invoiceId, invoice.id));
-    const [customer] = invoice.customerId ? await db.select().from(customersTable).where(eq(customersTable.id, invoice.customerId)) : [null];
-    const branch = await getBranchDetails(invoice.branchId);
-    const invoiceTotals = {
-      subtotal: invoice.subtotal,
-      tax: invoice.taxAmount,
-      discount: invoice.discountAmount,
-      total: requestedType === "credit_note" ? -safeNum(invoice.total) : invoice.total
-    };
-    return {
-      settings,
-      documentType: requestedType === "delivery_note" ? "Delivery Note" : requestedType === "credit_note" ? "Credit Note" : "Invoice",
-      documentNumber: invoice.invoiceNumber,
-      branchName: branch?.name ?? await getBranchName(invoice.branchId),
-      branch,
-      partyName: customer?.name ?? "Walk-in",
-      partyEmail: customer?.email ?? "",
-      partyPhone: customer?.phone ?? "",
-      customer: {
-        name: customer?.name ?? "Walk-in Customer",
-        company: customer?.company ?? "",
-        address: customer?.address ?? "",
-        phone: customer?.phone ?? "",
-        email: customer?.email ?? "",
-        taxNumber: customer?.taxNumber ?? ""
-      },
-      meta: {
-        date: invoice.createdAt,
-        dueDate: invoice.dueDate,
-        salesperson: customer?.contactPerson ?? "Sales Team",
-        reference: String(invoice.status || "sent"),
-        paymentTerms: settings.invoicePaymentTerms || "Due on receipt",
-        paymentMethod: safeNum(invoice.balanceDue) > 0 ? "credit" : "paid",
-        amountPaid: invoice.amountPaid,
-        change: 0
-      },
-      notes: invoice.notes || "",
-      notesSections: [
-        ["Warranty", settings.warrantyText || ""],
-        ["Return Policy", settings.returnPolicy || ""],
-        ["Additional Notes", [invoice.notes, documentFooterForType(settings, requestedType)].filter(Boolean).join("\n\n")]
-      ].filter((entry) => entry[1]),
-      requestedType,
-      rows: await formatDocumentRows(items),
-      totals: Object.assign({ shipping: 0, balanceDue: invoice.balanceDue, paid: invoice.amountPaid }, invoiceTotals)
-    };
-  }
-  if (type === "quotation") {
-    const [quotation] = await db.select().from(quotationsTable).where(eq(quotationsTable.id, id));
-    if (!quotation || !isBranchInScope(req, quotation.branchId)) return null;
-    const items = await db.select().from(quotationItemsTable).where(eq(quotationItemsTable.quotationId, quotation.id));
-    const [customer] = quotation.customerId ? await db.select().from(customersTable).where(eq(customersTable.id, quotation.customerId)) : [null];
-    const branch = await getBranchDetails(quotation.branchId);
-    return {
-      settings,
-      documentType: "Quotation",
-      documentNumber: quotation.quotationNumber,
-      branchName: branch?.name ?? await getBranchName(quotation.branchId),
-      branch,
-      partyName: customer?.name ?? "Walk-in",
-      partyEmail: customer?.email ?? "",
-      partyPhone: customer?.phone ?? "",
-      customer: {
-        name: customer?.name ?? "Walk-in Customer",
-        company: customer?.company ?? "",
-        address: customer?.address ?? "",
-        phone: customer?.phone ?? "",
-        email: customer?.email ?? "",
-        taxNumber: customer?.taxNumber ?? ""
-      },
-      meta: {
-        date: quotation.createdAt,
-        validUntil: quotation.validUntil,
-        dueDate: quotation.validUntil,
-        salesperson: customer?.contactPerson ?? "Sales Team",
-        reference: String(quotation.status || "draft"),
-        paymentTerms: quotation.paymentTerms || settings.invoicePaymentTerms || "As agreed",
-        deliveryTerms: quotation.deliveryTime || "",
-        warranty: quotation.warranty || settings.warrantyText || ""
-      },
-      notes: quotation.notes || "",
-      notesSections: [
-        ["Warranty", quotation.warranty || settings.warrantyText || ""],
-        ["Delivery Terms", quotation.deliveryTime || ""],
-        ["Return Policy", settings.returnPolicy || ""],
-        ["Additional Notes", [quotation.notes, documentFooterForType(settings, requestedType)].filter(Boolean).join("\n\n")]
-      ].filter((entry) => entry[1]),
-      requestedType,
-      rows: await formatDocumentRows(items),
-      totals: { subtotal: quotation.subtotal, tax: quotation.taxAmount, discount: quotation.discountAmount, shipping: 0, total: quotation.total }
-    };
-  }
-  if (type === "receipt") {
-    const [sale] = await db.select().from(salesTable).where(eq(salesTable.id, id));
-    if (!sale || !isBranchInScope(req, sale.branchId)) return null;
-    const items = await db.select().from(saleItemsTable).where(eq(saleItemsTable.saleId, sale.id));
-    const [customer] = sale.customerId ? await db.select().from(customersTable).where(eq(customersTable.id, sale.customerId)) : [null];
-    const branch = await getBranchDetails(sale.branchId);
-    return {
-      settings,
-      documentType: "Receipt",
-      documentNumber: sale.receiptNumber,
-      branchName: branch?.name ?? await getBranchName(sale.branchId),
-      branch,
-      partyName: customer?.name ?? "Walk-in",
-      partyEmail: customer?.email ?? "",
-      partyPhone: customer?.phone ?? "",
-      customer: {
-        name: customer?.name ?? "Walk-in Customer",
-        company: customer?.company ?? "",
-        address: customer?.address ?? "",
-        phone: customer?.phone ?? "",
-        email: customer?.email ?? "",
-        taxNumber: customer?.taxNumber ?? "",
-        cashier: sale.cashierName || "Cashier"
-      },
-      meta: {
-        date: sale.createdAt,
-        salesperson: sale.cashierName || "Cashier",
-        reference: branch?.name ?? "Counter sale",
-        paymentTerms: "Paid on receipt",
-        paymentMethod: sale.paymentMethod || "cash",
-        amountPaid: sale.amountPaid,
-        change: sale.change
-      },
-      notes: `Payment method: ${sale.paymentMethod || "cash"}`,
-      notesSections: [
-        ["Additional Notes", documentFooterForType(settings, requestedType)]
-      ].filter((entry) => entry[1]),
-      requestedType,
-      rows: await formatDocumentRows(items),
-      totals: { subtotal: sale.subtotal, tax: sale.taxAmount ?? 0, discount: sale.discountAmount, shipping: 0, total: sale.total, paid: sale.amountPaid, change: sale.change }
-    };
-  }
-  if (type === "customer_statement") {
-    const [customer] = await db.select().from(customersTable).where(eq(customersTable.id, id));
-    if (!customer || !isBranchInScope(req, customer.branchId)) return null;
-    const invoices = await db.select().from(invoicesTable).where(eq(invoicesTable.customerId, id)).orderBy(sql`${invoicesTable.createdAt} desc`).limit(200);
-    const branch = await getBranchDetails(customer.branchId);
-    return {
-      settings,
-      documentType: "Customer Statement",
-      documentNumber: `CST-${customer.id}`,
-      branchName: branch?.name ?? await getBranchName(customer.branchId),
-      branch,
-      partyName: customer.name,
-      partyEmail: customer.email ?? "",
-      partyPhone: customer.phone ?? "",
-      notes: "Outstanding invoices and balances.",
-      requestedType,
-      rows: invoices.map((i) => ({ description: `${i.invoiceNumber} (${dateText2(i.createdAt)})`, quantity: 1, unitPrice: i.total, total: i.balanceDue })),
-      totals: {
-        subtotal: invoices.reduce((sum, i) => sum + safeNum(i.total), 0),
-        tax: 0,
-        discount: 0,
-        total: invoices.reduce((sum, i) => sum + safeNum(i.balanceDue), 0)
-      }
-    };
-  }
-  if (type === "supplier_statement") {
-    const [supplier] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, id));
-    if (!supplier || !isBranchInScope(req, supplier.branchId)) return null;
-    const purchases = await db.select().from(purchasesTable).where(eq(purchasesTable.supplierId, id)).orderBy(sql`${purchasesTable.createdAt} desc`).limit(200);
-    const branch = await getBranchDetails(supplier.branchId);
-    return {
-      settings,
-      documentType: "Supplier Statement",
-      documentNumber: `SST-${supplier.id}`,
-      branchName: branch?.name ?? await getBranchName(supplier.branchId),
-      branch,
-      partyName: supplier.name,
-      partyEmail: supplier.email ?? "",
-      partyPhone: supplier.phone ?? "",
-      notes: "Purchase order history and balances.",
-      requestedType,
-      rows: purchases.map((p) => ({ description: `${p.purchaseNumber} (${dateText2(p.createdAt)})`, quantity: 1, unitPrice: p.total, total: p.total })),
-      totals: {
-        subtotal: purchases.reduce((sum, p) => sum + safeNum(p.total), 0),
-        tax: purchases.reduce((sum, p) => sum + safeNum(p.taxAmount), 0),
-        discount: 0,
-        total: purchases.reduce((sum, p) => sum + safeNum(p.total), 0)
-      }
-    };
-  }
-  if (type === "purchase_order" || type === "goods_received_note") {
-    const [purchase] = await db.select().from(purchasesTable).where(eq(purchasesTable.id, id));
-    if (!purchase || !isBranchInScope(req, purchase.branchId)) return null;
-    const [supplier] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, purchase.supplierId));
-    const items = await db.select().from(purchaseItemsTable).where(eq(purchaseItemsTable.purchaseId, purchase.id));
-    const branch = await getBranchDetails(purchase.branchId);
-    return {
-      settings,
-      documentType: type === "purchase_order" ? "Purchase Order" : "Goods Received Note",
-      documentNumber: purchase.purchaseNumber,
-      branchName: branch?.name ?? await getBranchName(purchase.branchId),
-      branch,
-      partyName: supplier?.name ?? "Supplier",
-      partyEmail: supplier?.email ?? "",
-      partyPhone: supplier?.phone ?? "",
-      notes: [purchase.notes, type === "goods_received_note" ? `Received date: ${purchase.receivedDate || "Pending"}` : `Expected date: ${purchase.expectedDate || "—"}`].filter(Boolean).join("\n"),
-      requestedType,
-      rows: await formatDocumentRows(items),
-      totals: { subtotal: purchase.subtotal, tax: purchase.taxAmount, discount: 0, total: purchase.total }
-    };
-  }
-  if (type === "stock_transfer_note") {
-    const [transfer] = await db.select().from(stockTransfersTable).where(eq(stockTransfersTable.id, id));
-    if (!transfer || (!isBranchInScope(req, transfer.sourceBranchId) && !isBranchInScope(req, transfer.destinationBranchId))) return null;
-    const [product] = await db.select().from(productsTable).where(eq(productsTable.id, transfer.productId));
-    const branch = await getBranchDetails(transfer.sourceBranchId);
-    return {
-      settings,
-      documentType: "Stock Transfer Note",
-      documentNumber: transfer.transferNumber,
-      branchName: `${await getBranchName(transfer.sourceBranchId)} → ${await getBranchName(transfer.destinationBranchId)}`,
-      branch,
-      partyName: "Internal Transfer",
-      partyEmail: "",
-      partyPhone: "",
-      notes: [transfer.notes, transfer.status ? `Status: ${transfer.status}` : ""].filter(Boolean).join("\n"),
-      requestedType,
-      rows: [{ description: product?.productName || `Product #${transfer.productId}`, quantity: transfer.quantity, unitPrice: 0, total: 0 }],
-      totals: { subtotal: 0, tax: 0, discount: 0, total: 0 }
-    };
-  }
-  if (type === "stock_adjustment_report") {
-    const movements = await db.select().from(stockMovementsTable).where(and(eq(stockMovementsTable.type, "adjust"), branchCondition(stockMovementsTable.branchId, req))).orderBy(sql`${stockMovementsTable.createdAt} desc`).limit(200);
-    const productIds = movements.map((m) => m.productId).filter(Boolean);
-    const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(inArray(productsTable.id, productIds)) : [];
-    const map2 = new Map(products.map((p) => [p.id, p.name]));
-    const branch = movements[0] ? await getBranchDetails(movements[0].branchId) : null;
-    const branchName = branch?.name ?? (movements[0] ? await getBranchName(movements[0].branchId) : "All branches");
-    return {
-      settings,
-      documentType: "Stock Adjustment Report",
-      documentNumber: `SAR-${new Date().toISOString().slice(0, 10)}`,
-      branchName,
-      branch,
-      partyName: "Internal",
-      partyEmail: "",
-      partyPhone: "",
-      notes: "Latest stock adjustments",
-      requestedType,
-      rows: movements.map((m) => ({ description: `${map2.get(m.productId) || `Product #${m.productId}`} (${dateText2(m.createdAt)})`, quantity: m.quantity, unitPrice: 0, total: 0 })),
-      totals: { subtotal: 0, tax: 0, discount: 0, total: 0 }
-    };
-  }
-  return null;
-}
-async function renderPdfBuffer(payload, paper) {
-  const data = await normalizeDocumentPreviewData(payload, paper);
-  const logoPath = selectDocumentLogoPath(payload.settings, payload.branch);
-  const logoBuffer = await loadStoredAssetBuffer(logoPath) || await loadLogoBuffer(payload.settings.logoUrl || logoPath);
-  const qrBuffer = data.qrDataUrl && data.qrDataUrl.includes(",") ? Buffer.from(data.qrDataUrl.split(",")[1], "base64") : null;
-  let doc;
-  let timeoutTimer;
-  return await new Promise((resolve4, reject) => {
-    let settled = false;
-    function settle(fn, value) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeoutTimer);
-      fn(value);
-    }
-    timeoutTimer = setTimeout(() => {
-      try {
-        if (doc) doc.end();
-      } catch {
-      }
-      settle(reject, new Error("PDF generation timed out"));
-    }, PDF_GENERATION_TIMEOUT_MS);
-    if (timeoutTimer.unref) timeoutTimer.unref();
-    const chunks = [];
-    doc = new import_pdfkit.default({ margin: data.isReceipt ? 16 : 28, size: paperToPdfSize(paper) });
-    doc.on("data", (chunk) => chunks.push(chunk));
-    doc.on("error", (err) => settle(reject, err));
-    doc.on("end", () => settle(resolve4, Buffer.concat(chunks)));
-    function imageOrPlaceholder(x, y, size) {
-      if (logoBuffer) {
-        try {
-          doc.image(logoBuffer, x, y, { fit: [size, size], align: "center", valign: "center" });
-          return;
-        } catch {
-        }
-      }
-      doc.save();
-      doc.roundedRect(x, y, size, size, Math.max(10, size / 6)).fill(data.secondary);
-      doc.fillColor("white").font("Helvetica-Bold").fontSize(Math.max(12, size / 2.2)).text(brandInitials2(data.companyName), x, y + size / 3, { width: size, align: "center" });
-      doc.restore();
-    }
-    function drawLabelValueRow(label, value, x, y, width, rightAlign = false) {
-      doc.font("Helvetica").fontSize(8.5).fillColor("#64748B").text(label, x, y, { width, align: rightAlign ? "right" : "left" });
-      doc.font("Helvetica-Bold").fontSize(10).fillColor("#0F172A").text(value, x, y + 11, { width, align: rightAlign ? "right" : "left" });
-      return y + 26;
-    }
-    function ensurePageSpace(requiredHeight, drawTableHeader) {
-      if (doc.y + requiredHeight <= doc.page.height - doc.page.margins.bottom - 28) return;
-      doc.addPage();
-      doc.y = doc.page.margins.top;
-      if (drawTableHeader) drawTableHeader();
-    }
-    function drawReceiptPdf() {
-      const left = doc.page.margins.left;
-      const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-      const fontBase = paper === "58mm" ? 8.5 : 9.5;
-      doc.rect(0, 0, doc.page.width, 10).fill(data.primary);
-      doc.y = 18;
-      imageOrPlaceholder(left + (width - (paper === "58mm" ? 40 : 54)) / 2, doc.y, paper === "58mm" ? 40 : 54);
-      doc.y += paper === "58mm" ? 46 : 60;
-      doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(paper === "58mm" ? 13 : 15).text(data.companyName, left, doc.y, { width, align: "center" });
-      doc.moveDown(0.2);
-      doc.font("Helvetica").fontSize(fontBase).fillColor("#475569").text(data.companyAddress || "", left, doc.y, { width, align: "center" });
-      doc.text(data.companyPhone || "", left, doc.y + 2, { width, align: "center" });
-      doc.text(data.companyEmail || "", left, doc.y + 2, { width, align: "center" });
-      doc.moveDown(0.3);
-      doc.strokeColor("#CBD5E1").dash(2, { space: 2 }).moveTo(left, doc.y).lineTo(left + width, doc.y).stroke().undash();
-      doc.moveDown(0.4);
-      const metaRows = [
-        ["Receipt", data.documentNumber],
-        ["Date", dateText2(data.documentDate)],
-        ["Cashier", data.salesperson],
-        ["Customer", data.customerName]
-      ];
-      metaRows.forEach(([label, value]) => {
-        doc.font("Helvetica").fontSize(fontBase).fillColor("#64748B").text(label, left, doc.y, { width: width * 0.38 });
-        doc.font("Helvetica-Bold").fillColor("#0F172A").text(value || "—", left + width * 0.38, doc.y, { width: width * 0.62, align: "right" });
-        doc.moveDown(0.15);
-      });
-      doc.moveDown(0.3);
-      const tableY = doc.y;
-      const colX = [left, left + width * 0.46, left + width * 0.62, left + width * 0.8];
-      const colW = [width * 0.46, width * 0.16, width * 0.18, width * 0.2];
-      doc.fillColor(data.primary).rect(left, tableY, width, 18).fill();
-      ["Item", "Qty", "Price", "Total"].forEach((heading, index) => {
-        doc.fillColor("white").font("Helvetica-Bold").fontSize(fontBase - 0.2).text(heading, colX[index] + 3, tableY + 5, { width: colW[index] - 6, align: index === 0 ? "left" : "right" });
-      });
-      doc.y = tableY + 20;
-      data.rows.forEach((row, index) => {
-        const rowHeight = Math.max(22, doc.heightOfString(row.description, { width: colW[0] - 8 }) + 12);
-        doc.fillColor(index % 2 === 0 ? "#FFFFFF" : "#F8FBFF").rect(left, doc.y, width, rowHeight).fill();
-        doc.fillColor("#0F172A").font("Helvetica-Bold").fontSize(fontBase).text(row.description, colX[0] + 3, doc.y + 4, { width: colW[0] - 6 });
-        doc.fillColor("#64748B").font("Helvetica").fontSize(fontBase - 0.5).text(row.itemCode, colX[0] + 3, doc.y + rowHeight - 10, { width: colW[0] - 6 });
-        doc.fillColor("#0F172A").font("Helvetica").fontSize(fontBase).text(String(safeNum(row.quantity)), colX[1] + 3, doc.y + 6, { width: colW[1] - 6, align: "right" });
-        doc.text(fmtCurrency2(row.unitPrice, data.currency), colX[2] + 3, doc.y + 6, { width: colW[2] - 6, align: "right" });
-        doc.font("Helvetica-Bold").text(fmtCurrency2(row.total, data.currency), colX[3] + 3, doc.y + 6, { width: colW[3] - 6, align: "right" });
-        doc.y += rowHeight;
-      });
-      doc.moveDown(0.35);
-      const receiptTotals = [
-        ["Subtotal", fmtCurrency2(data.totals.subtotal, data.currency)],
-        ["Discount", fmtCurrency2(data.totals.discount, data.currency)],
-        ["VAT", fmtCurrency2(data.totals.tax, data.currency)],
-        ["Payment", data.paymentMethodDisplay],
-        ["Cash", fmtCurrency2(data.amountPaid, data.currency)],
-        ["Change", fmtCurrency2(data.changeAmount, data.currency)]
-      ];
-      receiptTotals.forEach(([label, value]) => {
-        if (label === "Discount" && data.totals.discount <= 0) return;
-        doc.font("Helvetica").fontSize(fontBase).fillColor("#64748B").text(label, left, doc.y, { width: width * 0.4 });
-        doc.font(label === "Payment" ? "Helvetica-Bold" : "Helvetica-Bold").fillColor("#0F172A").text(value, left + width * 0.4, doc.y, { width: width * 0.6, align: "right" });
-        doc.moveDown(0.1);
-      });
-      doc.moveDown(0.1);
-      doc.strokeColor("#0F172A").moveTo(left, doc.y).lineTo(left + width, doc.y).stroke();
-      doc.moveDown(0.25);
-      doc.font("Helvetica-Bold").fontSize(fontBase + 2).fillColor(data.primary).text("TOTAL", left, doc.y, { width: width * 0.38 });
-      doc.text(fmtCurrency2(data.totals.total, data.currency), left + width * 0.38, doc.y, { width: width * 0.62, align: "right" });
-      doc.moveDown(0.5);
-      if (qrBuffer) {
-        try {
-          const qrSize = paper === "58mm" ? 62 : 78;
-          doc.image(qrBuffer, left + (width - qrSize) / 2, doc.y, { fit: [qrSize, qrSize] });
-          doc.y += qrSize + 6;
-        } catch {
-        }
-      }
-      doc.font("Helvetica-Bold").fontSize(fontBase).fillColor(data.primary).text("Thank you for your business", left, doc.y, { width, align: "center" });
-      doc.moveDown(0.15);
-      doc.font("Helvetica").fontSize(fontBase - 0.3).fillColor("#64748B").text(data.footerLine || data.website || data.supportEmail || "", left, doc.y, { width, align: "center" });
-    }
-    function drawA4Pdf() {
-      const left = doc.page.margins.left;
-      const top = doc.page.margins.top;
-      const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-      doc.rect(0, 0, doc.page.width, 12).fill(data.primary);
-      doc.roundedRect(left, top + 6, width, 118, 18).fillAndStroke("#FFFFFF", "#D7E4F1");
-      imageOrPlaceholder(left + 18, top + 22, 72);
-      doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(22).text(data.companyName, left + 104, top + 18, { width: 255 });
-      doc.font("Helvetica").fontSize(9).fillColor("#475569").text(data.companyAddress || "—", left + 104, top + 46, { width: 255 });
-      doc.text(`Telephone: ${data.companyPhone || "—"}`, left + 104, doc.y + 2, { width: 255 });
-      doc.text(`Email: ${data.companyEmail || "—"}`, left + 104, doc.y + 2, { width: 255 });
-      doc.text(`Website: ${data.website || "—"}`, left + 104, doc.y + 2, { width: 255 });
-      doc.text(`KRA PIN: ${data.taxPin || "—"}   VAT: ${data.vatNumber || "—"}`, left + 104, doc.y + 2, { width: 255 });
-      const titleX = left + width - 190;
-      doc.roundedRect(titleX, top + 18, 172, 92, 18).fillAndStroke("#EEF5FB", "#D7E4F1");
-      doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(20).text(String(data.documentTitle || "Document").toUpperCase(), titleX + 16, top + 28, { width: 140, align: "right" });
-      let titleY = top + 58;
-      titleY = drawLabelValueRow("Document No.", data.documentNumber, titleX + 16, titleY, 140, true);
-      drawLabelValueRow(data.dueDateLabel || "Due Date", data.dueDate ? dateText2(data.dueDate) : "—", titleX + 16, titleY, 140, true);
-      const panelY = top + 138;
-      const panelW = (width - 18) / 2;
-      doc.roundedRect(left, panelY, panelW, 126, 18).fillAndStroke("#FFFFFF", "#D7E4F1");
-      doc.roundedRect(left + panelW + 18, panelY, panelW, 126, 18).fillAndStroke("#FFFFFF", "#D7E4F1");
-      doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(10).text("BILL TO", left + 16, panelY + 16);
-      doc.font("Helvetica-Bold").fontSize(13).fillColor("#0F172A").text(data.customerName, left + 16, panelY + 36, { width: panelW - 32 });
-      doc.font("Helvetica").fontSize(9.5).fillColor("#475569").text([data.customerCompany, data.customerAddress, data.customerPhone, data.customerEmail, data.customerTaxNumber ? `KRA PIN: ${data.customerTaxNumber}` : ""].filter(Boolean).join("\n"), left + 16, panelY + 56, { width: panelW - 32 });
-      doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(10).text("DOCUMENT INFORMATION", left + panelW + 34, panelY + 16);
-      let infoY = panelY + 36;
-      infoY = drawLabelValueRow(String(data.documentTitle).toLowerCase() === "quotation" ? "Quote No." : "Invoice No.", data.documentNumber, left + panelW + 34, infoY, panelW - 32);
-      infoY = drawLabelValueRow("Reference", data.reference, left + panelW + 34, infoY, panelW - 32);
-      infoY = drawLabelValueRow("Payment Terms", data.paymentTerms, left + panelW + 34, infoY, panelW - 32);
-      drawLabelValueRow("Currency", data.currency, left + panelW + 34, infoY, panelW - 32);
-      const colWidths = [64, 176, 34, 42, 68, 54, 38, 66];
-      const tableX = left;
-      const tableY = panelY + 146;
-      function drawTableHeader() {
-        let x = tableX;
-        const headers = ["Item Code", "Description", "Qty", "Unit", "Unit Price", "Discount", "VAT", "Total"];
-        doc.fillColor(data.primary).rect(tableX, doc.y, width, 24).fill();
-        headers.forEach((label, index) => {
-          doc.fillColor("white").font("Helvetica-Bold").fontSize(9).text(label, x + 4, doc.y + 7, { width: colWidths[index] - 8, align: index < 2 ? "left" : "right" });
-          x += colWidths[index];
-        });
-        doc.y += 24;
-      }
-      doc.y = tableY;
-      drawTableHeader();
-      data.rows.forEach((row, index) => {
-        const descHeight = doc.heightOfString(row.description, { width: colWidths[1] - 10, align: "left" });
-        const rowHeight = Math.max(24, descHeight + 12);
-        ensurePageSpace(rowHeight + 8, drawTableHeader);
-        if (index % 2 === 1) {
-          doc.fillColor("#F8FBFF").rect(tableX, doc.y, width, rowHeight).fill();
-        }
-        let x = tableX;
-        const values = [
-          row.itemCode,
-          row.description,
-          String(safeNum(row.quantity)),
-          row.unit,
-          fmtCurrency2(row.unitPrice, data.currency),
-          fmtCurrency2(row.discount, data.currency),
-          `${safeNum(row.vatRate).toLocaleString()}%`,
-          fmtCurrency2(row.total, data.currency)
-        ];
-        values.forEach((value, cellIndex) => {
-          doc.fillColor("#0F172A").font(cellIndex === 1 || cellIndex === 7 ? "Helvetica-Bold" : "Helvetica").fontSize(9).text(String(value || "—"), x + 4, doc.y + 6, { width: colWidths[cellIndex] - 8, align: cellIndex < 2 ? "left" : "right" });
-          x += colWidths[cellIndex];
-        });
-        doc.strokeColor("#E5EDF5").moveTo(tableX, doc.y + rowHeight).lineTo(tableX + width, doc.y + rowHeight).stroke();
-        doc.y += rowHeight;
-      });
-      doc.y += 18;
-      const notesX = left;
-      const totalsX = left + width - 208;
-      const notesW = width - 230;
-      doc.roundedRect(notesX, doc.y, notesW, 150, 18).fillAndStroke("#F8FBFF", "#D7E4F1");
-      doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(10).text("NOTES", notesX + 16, doc.y + 14);
-      let notesY = doc.y + 34;
-      data.notesSections.slice(0, 4).forEach(([label, value]) => {
-        doc.fillColor("#0F172A").font("Helvetica-Bold").fontSize(9).text(label, notesX + 16, notesY, { width: notesW - 32 });
-        notesY += 11;
-        doc.fillColor("#475569").font("Helvetica").fontSize(8.5).text(value, notesX + 16, notesY, { width: notesW - 32 });
-        notesY = doc.y + 8;
-      });
-      // Totals panel — white card with accented grand total bar
-      const totalsCardH = 150;
-      const totalsCardTopY = doc.y;
-      doc.roundedRect(totalsX, totalsCardTopY, 208, totalsCardH, 16).fillAndStroke("#FFFFFF", "#E2E8F0");
-      let totalsY = totalsCardTopY + 14;
-      [["Subtotal", data.totals.subtotal], ["Discount", data.totals.discount], ["VAT", data.totals.tax], ["Shipping", data.totals.shipping]].forEach(([label, value]) => {
-        if (label === "Discount" && data.totals.discount <= 0) return;
-        if (label === "Shipping" && data.totals.shipping <= 0) return;
-        doc.fillColor("#64748B").font("Helvetica").fontSize(9).text(label, totalsX + 16, totalsY, { width: 90 });
-        doc.fillColor("#0F172A").font("Helvetica-Bold").fontSize(9).text(fmtCurrency2(value, data.currency), totalsX + 106, totalsY, { width: 86, align: "right" });
-        doc.strokeColor("#F1F5F9").moveTo(totalsX + 12, totalsY + 14).lineTo(totalsX + 196, totalsY + 14).stroke();
-        totalsY += 22;
-      });
-      const gtBarY = totalsCardTopY + totalsCardH - 36;
-      doc.roundedRect(totalsX, gtBarY, 208, 36, 10).fill(data.primary);
-      doc.fillColor("rgba(255,255,255,0.8)").font("Helvetica-Bold").fontSize(8.5).text("GRAND TOTAL", totalsX + 16, gtBarY + 10, { width: 80 });
-      doc.fillColor("white").font("Helvetica-Bold").fontSize(16).text(fmtCurrency2(data.totals.total, data.currency), totalsX + 88, gtBarY + 9, { width: 104, align: "right" });
-      doc.y += totalsCardH + 18;
-      const signY = doc.y;
-      const signW = (width - 24) / 3;
-      ["Prepared By", "Customer Acceptance", "Approved By"].forEach((label, index) => {
-        const x = left + index * (signW + 12);
-        doc.roundedRect(x, signY, signW, 62, 16).stroke("#D7E4F1");
-        doc.strokeColor("#94A3B8").moveTo(x + 16, signY + 36).lineTo(x + signW - 16, signY + 36).stroke();
-        doc.fillColor("#64748B").font("Helvetica").fontSize(8.5).text(label, x + 16, signY + 42, { width: signW - 32, align: "center" });
-      });
-      doc.y = signY + 80;
-      // Payment details section
-      const pd = data.payment;
-      const hasMpesaPdf = pd.mpesaPaybill || pd.mpesaTill;
-      const hasBankPdf = pd.bankName || pd.bankAccountNumber;
-      if (hasMpesaPdf || hasBankPdf) {
-        ensurePageSpace(120, drawTableHeader);
-        doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(9).text("HOW TO PAY", left, doc.y);
-        doc.moveDown(0.4);
-        const payCardW = hasMpesaPdf && hasBankPdf ? (width - 16) / 2 : width;
-        const payCardY = doc.y;
-        if (hasMpesaPdf) {
-          doc.roundedRect(left, payCardY, payCardW, 90, 10).fillAndStroke("#F8FAFF", "#E2E8F0");
-          doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(9.5).text("M-PESA Payment", left + 12, payCardY + 12, { width: payCardW - 24 });
-          doc.strokeColor("#E2E8F0").moveTo(left + 12, payCardY + 27).lineTo(left + payCardW - 12, payCardY + 27).stroke();
-          let pyRow = payCardY + 34;
-          const mpesaFields = [
-            pd.mpesaPaybill ? ["Paybill No.", pd.mpesaPaybill] : null,
-            pd.mpesaAccount ? ["Account No.", pd.mpesaAccount] : null,
-            pd.mpesaTill ? ["Till No. (Buy Goods)", pd.mpesaTill] : null
-          ].filter(Boolean);
-          mpesaFields.forEach(([lbl, val]) => {
-            doc.fillColor("#64748B").font("Helvetica").fontSize(8.5).text(lbl, left + 12, pyRow, { width: payCardW / 2 - 12 });
-            doc.fillColor("#0F172A").font("Helvetica-Bold").fontSize(8.5).text(val, left + payCardW / 2, pyRow, { width: payCardW / 2 - 12, align: "right" });
-            pyRow += 14;
-          });
-        }
-        if (hasBankPdf) {
-          const bankX = hasMpesaPdf ? left + payCardW + 16 : left;
-          doc.roundedRect(bankX, payCardY, payCardW, 90, 10).fillAndStroke("#F8FAFF", "#E2E8F0");
-          doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(9.5).text("Bank Transfer", bankX + 12, payCardY + 12, { width: payCardW - 24 });
-          doc.strokeColor("#E2E8F0").moveTo(bankX + 12, payCardY + 27).lineTo(bankX + payCardW - 12, payCardY + 27).stroke();
-          let byRow = payCardY + 34;
-          const bankFields = [
-            pd.bankName ? ["Bank", pd.bankName] : null,
-            pd.bankBranch ? ["Branch", pd.bankBranch] : null,
-            pd.bankAccountName ? ["Account Name", pd.bankAccountName] : null,
-            pd.bankAccountNumber ? ["Account No.", pd.bankAccountNumber] : null,
-            pd.bankSwiftCode ? ["Swift Code", pd.bankSwiftCode] : null
-          ].filter(Boolean);
-          bankFields.forEach(([lbl, val]) => {
-            doc.fillColor("#64748B").font("Helvetica").fontSize(8.5).text(lbl, bankX + 12, byRow, { width: payCardW / 2 - 12 });
-            doc.fillColor("#0F172A").font("Helvetica-Bold").fontSize(8.5).text(val, bankX + payCardW / 2, byRow, { width: payCardW / 2 - 12, align: "right" });
-            byRow += 14;
-          });
-        }
-        doc.y = payCardY + 98;
-      }
-      // Terms & conditions section
-      if (data.termsLines.length) {
-        ensurePageSpace(60, drawTableHeader);
-        doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(9).text("TERMS & CONDITIONS", left, doc.y);
-        doc.moveDown(0.3);
-        const termsStartY = doc.y;
-        const termsCapped = Math.min(data.termsLines.length, 8);
-        const termsBoxH = termsCapped * 14 + 20;
-        doc.roundedRect(left, termsStartY, width, termsBoxH, 10).fillAndStroke("#F8FAFF", "#E2E8F0");
-        doc.y = termsStartY + 10;
-        data.termsLines.slice(0, termsCapped).forEach((line, idx) => {
-          doc.fillColor("#475569").font("Helvetica").fontSize(8.5).text(`${idx + 1}. ${line}`, left + 12, doc.y, { width: width - 24 });
-          doc.moveDown(0.15);
-        });
-        doc.y = termsStartY + termsBoxH + 12;
-      }
-      doc.roundedRect(left, doc.y, width, 82, 18).fillAndStroke("#F8FBFF", "#D7E4F1");
-      if (qrBuffer) {
-        try {
-          doc.image(qrBuffer, left + 16, doc.y + 10, { fit: [58, 58] });
-        } catch {
-        }
-      }
-      doc.fillColor(data.primary).font("Helvetica-Bold").fontSize(12).text("Thank you for your business!", left + 88, doc.y + 16, { width: width - 104 });
-      const footerContactLine = [data.website, data.companyEmail !== "—" ? data.companyEmail : ""].filter(Boolean).join(" · ");
-      doc.font("Helvetica").fontSize(8.5).fillColor("#475569").text(footerContactLine || data.footerLine || "", left + 88, doc.y + 34, { width: width - 104 });
-      if (data.companyPhone && data.companyPhone !== "—") {
-        doc.text(`Tel: ${data.companyPhone}`, left + 88, doc.y + 48, { width: width - 104 });
-      }
-    }
-    if (data.isReceipt) drawReceiptPdf();
-    else drawA4Pdf();
-    doc.end();
-  });
-}
-router17.get("/documents/:type/:id/preview", async (req, res) => {
-  try {
-    const type = String(req.params.type || "").toLowerCase();
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id) || id <= 0) {
-      res.status(400).json({ error: "invalid document id" });
-      return;
-    }
-    const payload = await resolveDocumentPayload(req, type, id);
-    if (!payload) {
-      res.status(404).json({ error: "document not found" });
-      return;
-    }
-    const paper = normalizePaper(req.query.paper, type === "receipt" ? "80mm" : "a4");
-    const html = await buildDocumentHtml({
-      ...payload,
-      logoSrc: absoluteLogoUrl(req, payload.settings.logoUrl),
-      paper,
-      generatedAt: dateText2(/* @__PURE__ */ new Date())
-    });
-    res.json({ html });
-  } catch (error40) {
-    console.error("[documents.preview] Failed to build preview", error40);
-    res.status(500).json({ error: "Unable to build document preview." });
-  }
-});
-router17.get("/documents/:type/:id/pdf", async (req, res) => {
-  try {
-    const type = String(req.params.type || "").toLowerCase();
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id) || id <= 0) {
-      res.status(400).json({ error: "invalid document id" });
-      return;
-    }
-    const payload = await resolveDocumentPayload(req, type, id);
-    if (!payload) {
-      res.status(404).json({ error: "document not found" });
-      return;
-    }
-    const paper = normalizePaper(req.query.paper, type === "receipt" ? "80mm" : "a4");
-    const pdf = assertPdfBuffer(await renderPdfBuffer(payload, paper));
-    const fileBase = `${type}-${payload.documentNumber || id}`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
-    const disposition = String(req.query.disposition || "").toLowerCase() === "attachment" || String(req.query.download || "") === "1" ? "attachment" : "inline";
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `${disposition}; filename="${fileBase}.pdf"`);
-    res.setHeader("Content-Length", String(pdf.length));
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.send(pdf);
-  } catch (error40) {
-    console.error("[documents.pdf] Failed to generate PDF", error40);
-    res.status(500).json({ error: "Unable to generate document PDF." });
-  }
-});
-router17.post("/documents/:type/:id/email", async (req, res) => {
-  try {
-    const type = String(req.params.type || "").toLowerCase();
-    const id = Number(req.params.id);
-    const to = String(req.body?.to || "").trim();
-    if (!Number.isFinite(id) || id <= 0) {
-      res.status(400).json({ error: "invalid document id" });
-      return;
-    }
-    if (!to) {
-      res.status(400).json({ error: "recipient email is required" });
-      return;
-    }
-    const payload = await resolveDocumentPayload(req, type, id);
-    if (!payload) {
-      res.status(404).json({ error: "document not found" });
-      return;
-    }
-    const smtpHost = payload.settings.smtpHost;
-    if (!smtpHost) {
-      res.status(400).json({ error: "SMTP host is not configured in settings" });
-      return;
-    }
-    const pdf = await renderPdfBuffer(payload, type === "receipt" ? "80mm" : "a4");
-    const transport = createTransport({
-      host: smtpHost,
-      port: payload.settings.smtpPort ?? 587,
-      user: payload.settings.smtpUser ?? "",
-      from: payload.settings.smtpFrom ?? payload.settings.smtpUser ?? ""
-    });
-    const subject = `${payload.settings.businessName || "UniquePOS"} ${payload.documentType} ${payload.documentNumber || ""}`.trim();
-    const emailPrimary = safeHex2(payload.settings.primaryColor, "#0F172A");
-    const emailSecondary = safeHex2(payload.settings.secondaryColor, "#38BDF8");
-    const emailLogoPath = selectDocumentLogoPath(payload.settings, payload.branch);
-    const emailLogoBuffer = await loadStoredAssetBuffer(emailLogoPath);
-    const emailLogoSrc = emailLogoBuffer ? `data:${assetMimeType(emailLogoPath)};base64,${emailLogoBuffer.toString("base64")}` : resolveStoredAssetUrl(emailLogoPath) || placeholderLogoDataUri(payload.settings.businessName || payload.branchName || "UniquePOS", emailPrimary, emailSecondary);
-    const emailFooter = htmlEscape2(buildDocumentFooter(payload.settings)).replace(/\n/g, "<br/>");
-    const emailBranch = htmlEscape2(branchDetailsText(payload.branch) || payload.branchName || "Main Branch").replace(/\n/g, "<br/>");
-    const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5;">
-  <div style="max-width:680px;margin:0 auto;border:1px solid #dbe4ef;border-radius:18px;overflow:hidden;">
-  <div style="background:${emailPrimary};padding:20px;color:#fff;">
-  <table role="presentation" style="width:100%;border-collapse:collapse;"><tr><td style="vertical-align:top;width:84px;"><img src="${emailLogoSrc}" alt="Company logo" style="width:72px;height:72px;object-fit:contain;border-radius:14px;background:#fff;display:block;" /></td><td style="vertical-align:top;padding-left:12px;"><h2 style="margin:0;color:#fff;">${htmlEscape2(payload.settings.businessName || "UniquePOS")}</h2><div style="font-size:13px;line-height:1.5;color:#d6e4f0;">${htmlEscape2(payload.settings.businessAddress || "")}<br/>Tel: ${htmlEscape2([payload.settings.businessPhone, payload.settings.businessPhone2].filter(Boolean).join(" / ") || "-")}<br/>Email: ${htmlEscape2(payload.settings.businessEmail || "-")}<br/>Web: ${htmlEscape2(payload.settings.website || "-")}<br/>KRA PIN: ${htmlEscape2(payload.settings.taxNumber || "-")}<br/>VAT: ${htmlEscape2(payload.settings.vatNumber || "-")}</div></td></tr></table>
-  </div>
-  <div style="padding:20px 22px;">
-  <h2 style="margin:0 0 10px;color:${emailPrimary};">${htmlEscape2(payload.documentType)} ${htmlEscape2(payload.documentNumber || "")}</h2>
-  <p>Hello ${htmlEscape2(payload.partyName || "Customer")},</p>
-  <p>Please find your ${htmlEscape2(payload.documentType.toLowerCase())} attached as PDF.</p>
-  <p>Total: <strong>${fmtCurrency2(payload.totals.total, payload.settings.currency || "KES")}</strong></p>
-  <p style="margin:0 0 14px;"><strong>Branch details</strong><br/>${emailBranch}</p>
-  <div style="padding:14px 16px;background:#f8fafc;border-left:4px solid ${emailSecondary};font-size:13px;">${emailFooter}</div>
-  <p style="margin:16px 0 0;">${htmlEscape2(payload.settings.businessName || "UniquePOS")}<br/>${htmlEscape2(payload.settings.businessPhone || "")}</p>
-  </div></div></body></html>`;
-    const fileBase = `${type}-${payload.documentNumber || id}`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
-    await transport.sendMail({
-      from: payload.settings.smtpFrom || payload.settings.smtpUser,
-      to,
-      subject,
-      html,
-      text: `${payload.documentType} ${payload.documentNumber || ""}\nTotal: ${fmtCurrency2(payload.totals.total, payload.settings.currency || "KES")}\nBranch: ${branchDetailsText(payload.branch) || payload.branchName || "Main Branch"}\n\n${buildDocumentFooter(payload.settings)}`,
-      attachments: [{ filename: `${fileBase}.pdf`, content: pdf, contentType: "application/pdf" }]
-    });
-    await logAudit(req, {
-      action: "document.email_sent",
-      entityType: "document",
-      description: `Emailed ${type} ${payload.documentNumber || id} to ${to}`
-    });
-    res.json({ ok: true });
-  } catch (error40) {
-    console.error("[documents.email] Failed to send document email", error40);
-    res.status(500).json({ error: "Unable to send document email." });
-  }
-});
-var documents_default = router17;
-
 // artifacts/api-server/src/routes/reports.ts
-var import_express18 = __toESM(require_express2(), 1);
-var router18 = (0, import_express18.Router)();
+var import_express17 = __toESM(require_express2(), 1);
+var router17 = (0, import_express17.Router)();
 function combine2(...conds) {
   const list = conds.filter((c) => c !== void 0);
   return list.length ? and(...list) : void 0;
 }
-router18.get("/reports/sales-summary", async (req, res) => {
-  const { from: fromParam, to: toParam, start, end } = req.query;
-  const from = fromParam ?? start;
-  const to = toParam ?? end;
+router17.get("/reports/sales-summary", async (req, res) => {
+  const { from, to } = req.query;
   if (!from || !to) {
-    res.status(400).json({ error: "from/start and to/end dates required" });
+    res.status(400).json({ error: "from and to dates required" });
     return;
   }
   const fromDate = new Date(from);
@@ -74073,7 +72138,7 @@ router18.get("/reports/sales-summary", async (req, res) => {
     daily_breakdown: daily.map((d) => ({ date: d.date, total: Number(d.total), count: Number(d.count) }))
   });
 });
-router18.get("/reports/profit-loss", async (req, res) => {
+router17.get("/reports/profit-loss", async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) {
     res.status(400).json({ error: "from and to dates required" });
@@ -74107,7 +72172,7 @@ router18.get("/reports/profit-loss", async (req, res) => {
     expense_breakdown: expenseByCategory.map((e) => ({ category: e.category, amount: Number(e.amount) }))
   });
 });
-router18.get("/reports/inventory-valuation", async (req, res) => {
+router17.get("/reports/inventory-valuation", async (req, res) => {
   const products = await db.select().from(productsTable).orderBy(productsTable.productName);
   const categories = await db.select().from(categoriesTable);
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c.name]));
@@ -74135,9 +72200,9 @@ router18.get("/reports/inventory-valuation", async (req, res) => {
       status: currentStock === 0 ? "out_of_stock" : currentStock <= minStock ? "low" : "ok"
     };
   });
-  res.json(items);
+  res.json({ total_cost_value: totalCostValue, total_selling_value: totalSellingValue, potential_profit: totalSellingValue - totalCostValue, items });
 });
-router18.get("/reports/branch-comparison", requireSuperAdmin, async (req, res) => {
+router17.get("/reports/branch-comparison", requireSuperAdmin, async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) {
     res.status(400).json({ error: "from and to dates required" });
@@ -74199,12 +72264,12 @@ router18.get("/reports/branch-comparison", requireSuperAdmin, async (req, res) =
   });
   res.json({ branches: rows });
 });
-var reports_default = router18;
+var reports_default = router17;
 
 // artifacts/api-server/src/routes/admin.ts
-var import_express19 = __toESM(require_express2(), 1);
-var router19 = (0, import_express19.Router)();
-router19.post("/admin/reset-transactional-data", async (req, res) => {
+var import_express18 = __toESM(require_express2(), 1);
+var router18 = (0, import_express18.Router)();
+router18.post("/admin/reset-transactional-data", async (req, res) => {
   const user = req.user;
   if (!user || user.role !== "super_admin") {
     res.status(403).json({ error: "super_admin role required" });
@@ -74248,10 +72313,10 @@ router19.post("/admin/reset-transactional-data", async (req, res) => {
     res.status(500).json({ error: "Reset failed", detail: message });
   }
 });
-var admin_default = router19;
+var admin_default = router18;
 
 // artifacts/api-server/src/routes/backups.ts
-var import_express26 = __toESM(require_express2(), 1);
+var import_express19 = __toESM(require_express2(), 1);
 
 // artifacts/api-server/src/lib/backup.local.ts
 var import_child_process = require("child_process");
@@ -74400,7 +72465,7 @@ async function getBackupStream(filename) {
 }
 
 // artifacts/api-server/src/routes/backups.ts
-var router_backups = (0, import_express_backups.Router)();
+var router19 = (0, import_express19.Router)();
 var ADMIN_ROLES = /* @__PURE__ */ new Set(["super_admin", "business_owner"]);
 function sanitizeFilename(raw) {
   return raw.replace(/[^a-zA-Z0-9._-]/g, "");
@@ -74411,8 +72476,6 @@ function isAdmin(req) {
 }
 function resolveAppUrl(req) {
   if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
-  const domain2 = process.env.REPLIT_DEV_DOMAIN;
-  if (domain2) return `https://${domain2}`;
   return `${req.protocol}://${req.get("host")}`;
 }
 function nowEAT() {
@@ -74422,7 +72485,7 @@ function nowEAT() {
     timeStyle: "short"
   });
 }
-router_backups.get("/admin/backups/status", async (req, res) => {
+router19.get("/admin/backups/status", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -74442,7 +72505,7 @@ router_backups.get("/admin/backups/status", async (req, res) => {
     res.status(500).json({ error: "Failed to get backup status" });
   }
 });
-router_backups.get("/admin/backups", async (req, res) => {
+router19.get("/admin/backups", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -74455,7 +72518,7 @@ router_backups.get("/admin/backups", async (req, res) => {
     res.status(500).json({ error: "Failed to list backups" });
   }
 });
-router_backups.post("/admin/backups/run", async (req, res) => {
+router19.post("/admin/backups/run", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -74517,7 +72580,7 @@ router_backups.post("/admin/backups/run", async (req, res) => {
     }
   }
 });
-router_backups.post("/admin/backups/test-email", async (req, res) => {
+router19.post("/admin/backups/test-email", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -74555,7 +72618,7 @@ router_backups.post("/admin/backups/test-email", async (req, res) => {
     res.status(500).json({ error: "Failed to send test email", detail: message });
   }
 });
-router_backups.post("/admin/backups/:filename/restore", async (req, res) => {
+router19.post("/admin/backups/:filename/restore", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -74584,7 +72647,7 @@ router_backups.post("/admin/backups/:filename/restore", async (req, res) => {
     res.status(500).json({ error: "Restore failed", detail: message });
   }
 });
-router_backups.get("/admin/backups/:filename/download", async (req, res) => {
+router19.get("/admin/backups/:filename/download", async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -74612,7 +72675,7 @@ router_backups.get("/admin/backups/:filename/download", async (req, res) => {
     res.status(404).json({ error: message });
   }
 });
-var backups_default = router_backups;
+var backups_default = router19;
 
 // artifacts/api-server/src/routes/audit-log.ts
 var import_express20 = __toESM(require_express2(), 1);
@@ -74652,32 +72715,8 @@ var CONTENT_TYPES = {
   ".jpeg": "image/jpeg",
   ".gif": "image/gif",
   ".webp": "image/webp",
-  ".svg": "image/svg+xml",
-  ".csv": "text/csv; charset=utf-8",
-  ".txt": "text/plain; charset=utf-8",
-  ".pdf": "application/pdf",
-  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  ".svg": "image/svg+xml"
 };
-var ALLOWED_UPLOAD_EXTENSIONS = new Map([
-  ["image/png", ".png"],
-  ["image/jpeg", ".jpg"],
-  ["image/webp", ".webp"],
-  ["image/gif", ".gif"],
-  ["image/svg+xml", ".svg"],
-  ["text/csv", ".csv"],
-  ["text/plain", ".txt"],
-  ["application/pdf", ".pdf"],
-  ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"]
-]);
-function resolveUploadExtension(name, contentType) {
-  const fromType = ALLOWED_UPLOAD_EXTENSIONS.get(String(contentType || "").toLowerCase()) || "";
-  if (fromType) return fromType;
-  const rawExt = path2.extname(String(name || "")).toLowerCase();
-  for (const ext of ALLOWED_UPLOAD_EXTENSIONS.values()) {
-    if (rawExt === ext) return ext;
-  }
-  throw new Error("Unsupported upload file type");
-}
 var ObjectNotFoundError = class _ObjectNotFoundError extends Error {
   constructor() {
     super("Object not found");
@@ -74704,9 +72743,8 @@ var ObjectStorageService = class {
    * Returns a relative URL the browser PUTs the file bytes to. The matching
    * handler is `PUT /storage/upload/:id` (routes/storage.local.ts).
    */
-  async getObjectEntityUploadURL(extension = "") {
-    const safeExtension = typeof extension === "string" && /^\.[a-z0-9]+$/.test(extension) ? extension.toLowerCase() : "";
-    const objectId = `${(0, import_crypto3.randomUUID)()}${safeExtension}`;
+  async getObjectEntityUploadURL() {
+    const objectId = (0, import_crypto3.randomUUID)();
     const exp = String(Date.now() + UPLOAD_TTL_MS);
     const sig = signUpload(objectId, exp);
     return `/api/storage/upload/${objectId}?exp=${exp}&sig=${sig}`;
@@ -74901,7 +72939,16 @@ router20.get("/audit-log/export-pdf", async (req, res) => {
   const companyName = biz?.businessName ?? "UniquePOS";
   const companyPhone = biz?.businessPhone ?? "";
   const companyEmail = biz?.businessEmail ?? "";
-  const logoBuffer = await loadLogoBuffer(biz?.logoUrl);
+  let logoBuffer = null;
+  if (biz?.logoUrl && biz.logoUrl.startsWith("/objects/")) {
+    try {
+      const file2 = await objectStorageService.getObjectEntityFile(biz.logoUrl);
+      const [buf] = await file2.download();
+      logoBuffer = buf;
+    } catch {
+      logoBuffer = null;
+    }
+  }
   const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   const rangeLabel = from || to ? `${from || "beginning"} to ${to || today}` : `All records up to ${today}`;
   const doc = new import_pdfkit.default({ margin: 40, size: "A4" });
@@ -74921,14 +72968,8 @@ router20.get("/audit-log/export-pdf", async (req, res) => {
       doc.image(logoBuffer, 40, 15, { fit: [40, 40] });
       textX = 92;
     } catch {
-      logoBuffer = null;
       textX = 40;
     }
-  }
-  if (!logoBuffer) {
-    doc.roundedRect(40, 15, 40, 40, 10).fill(GOLD);
-    doc.fillColor("white").font("Helvetica-Bold").fontSize(16).text(brandInitials2(companyName), 40, 28, { width: 40, align: "center" });
-    textX = 92;
   }
   doc.fillColor("white").font("Helvetica-Bold").fontSize(18).text(companyName, textX, 20);
   const contactParts = [companyPhone, companyEmail].filter(Boolean);
@@ -75101,13 +73142,12 @@ router22.post(
       return;
     }
     try {
-      const uploadURL = await objectStorageService2.getObjectEntityUploadURL(resolveUploadExtension(name, content_type));
+      const uploadURL = await objectStorageService2.getObjectEntityUploadURL();
       const objectPath = objectStorageService2.normalizeObjectEntityPath(uploadURL);
       res.json({ upload_url: uploadURL, object_path: objectPath });
     } catch (error40) {
       req.log?.error?.({ err: error40 }, "Error generating upload URL");
-      const message = error40 instanceof Error ? error40.message : "Failed to generate upload URL";
-      res.status(message === "Unsupported upload file type" ? 400 : 500).json({ error: message });
+      res.status(500).json({ error: "Failed to generate upload URL" });
     }
   }
 );
@@ -75346,17 +73386,6 @@ router24.get("/security/login-history", async (req, res) => {
   });
 });
 var security_default = router24;
-var { createProductBulkRouter } = require("./product-bulk.cjs");
-var product_bulk_default = createProductBulkRouter({
-  Router: import_express25.Router,
-  pool,
-  logAudit,
-  makeBarcode,
-  requireRole,
-  resolveWriteBranchId,
-  detectProductCategorySuggestion,
-  ensureCategoryId
-});
 
 // artifacts/api-server/src/routes/index.ts
 var router25 = (0, import_express25.Router)();
@@ -75369,13 +73398,12 @@ router25.use("/expenses", requireRole("administrator"));
 router25.use("/audit-log", requireRole("administrator"));
 router25.use("/security", requireRole("administrator"));
 router25.use("/reports", requireRole("administrator", "manager"));
-router25.use("/documents", requireRole("administrator", "manager", "sales_cashier", "storekeeper", "accountant"));
-router25.use("/products", requireRole("administrator", "manager", "storekeeper", "sales_cashier"));
+router25.use("/products", requireRole("administrator", "manager", "storekeeper"));
 router25.use("/inventory", requireRole("administrator", "manager", "storekeeper"));
 router25.use("/purchases", requireRole("administrator", "manager", "storekeeper"));
 router25.use("/suppliers", requireRole("administrator", "manager", "storekeeper"));
-router25.use("/brands", requireRole("administrator", "manager", "storekeeper", "sales_cashier"));
-router25.use("/categories", requireRole("administrator", "manager", "storekeeper", "sales_cashier"));
+router25.use("/brands", requireRole("administrator", "manager", "storekeeper"));
+router25.use("/categories", requireRole("administrator", "manager", "storekeeper"));
 router25.use("/customers", requireRole("administrator", "manager", "sales_cashier"));
 router25.use("/quotations", requireRole("administrator", "manager", "sales_cashier"));
 router25.use("/invoices", requireRole("administrator", "manager", "sales_cashier"));
@@ -75388,7 +73416,6 @@ router25.use(backups_default);
 router25.use(dashboard_default);
 router25.use(categories_default);
 router25.use(brands_default);
-router25.use(product_bulk_default);
 router25.use(products_default);
 router25.use(inventory_default);
 router25.use(purchases_default);
@@ -75400,7 +73427,6 @@ router25.use(expenses_default);
 router25.use(pos_default);
 router25.use(users_default);
 router25.use(settings_default);
-router25.use(documents_default);
 router25.use(reports_default);
 router25.use(branches_default);
 router25.use(security_default);
@@ -75428,11 +73454,7 @@ app.use(
   })
 );
 app.use((0, import_cors.default)());
-var _jsonParser = import_express26.default.json();
-app.use((req, _res, next) => {
-  if (/^multipart\//i.test(req.headers["content-type"] || "")) return next();
-  return _jsonParser(req, _res, next);
-});
+app.use(import_express26.default.json());
 app.use(import_express26.default.urlencoded({ extended: true }));
 app.use((req, _res, next) => {
   if (req.url === "/api/api" || req.url.startsWith("/api/api/") || req.url.startsWith("/api/api?")) {
@@ -75452,7 +73474,7 @@ if (clientDir) {
     res.sendFile(import_path.default.join(absClientDir, "index.html"));
   });
 }
-var PUBLIC_PATHS = ["/api/auth/login", "/api/auth/logout", "/api/auth/forgot-password", "/api/auth/reset-password", "/api/health", "/api/healthz", "/api/storage/objects", "/api/storage/public-objects", "/api/storage/upload/"];
+var PUBLIC_PATHS = ["/api/auth/login", "/api/auth/logout", "/api/auth/forgot-password", "/api/auth/reset-password", "/api/health", "/api/storage/objects", "/api/storage/public-objects", "/api/storage/upload/"];
 var PUBLIC_GET_PATHS = ["/api/settings/branding"];
 function conditionalAuth(req, res, next) {
   const isPublic = PUBLIC_PATHS.some((p) => req.path === p || req.path.startsWith(p)) || req.method === "GET" && PUBLIC_GET_PATHS.includes(req.path);
@@ -75510,6 +73532,48 @@ async function runStartupMigrations() {
     await client.query(`ALTER TABLE business_settings ADD COLUMN IF NOT EXISTS backup_success_notify BOOLEAN NOT NULL DEFAULT FALSE`);
     await client.query(`ALTER TABLE business_settings ADD COLUMN IF NOT EXISTS security_alert_enabled BOOLEAN NOT NULL DEFAULT TRUE`);
     await client.query(`ALTER TABLE business_settings ADD COLUMN IF NOT EXISTS alert_rules JSONB`);
+    await client.query(`ALTER TYPE movement_type ADD VALUE IF NOT EXISTS 'opening'`);
+    await client.query(`ALTER TYPE movement_type ADD VALUE IF NOT EXISTS 'return'`);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS party_payments (
+        id          SERIAL PRIMARY KEY,
+        party_type  TEXT NOT NULL CHECK (party_type IN ('customer','supplier')),
+        party_id    INTEGER NOT NULL,
+        branch_id   INTEGER,
+        amount      NUMERIC(15,2) NOT NULL,
+        method      TEXT NOT NULL DEFAULT 'cash',
+        reference   TEXT,
+        notes       TEXT,
+        created_by  TEXT,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS party_payments_party_idx ON party_payments (party_type, party_id)`);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sale_returns (
+        id            SERIAL PRIMARY KEY,
+        return_number TEXT NOT NULL UNIQUE,
+        sale_id       INTEGER NOT NULL,
+        branch_id     INTEGER NOT NULL,
+        total         NUMERIC(15,2) NOT NULL DEFAULT 0,
+        refund_method TEXT NOT NULL DEFAULT 'cash',
+        reason        TEXT,
+        created_by    TEXT,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sale_return_items (
+        id           SERIAL PRIMARY KEY,
+        return_id    INTEGER NOT NULL,
+        sale_item_id INTEGER NOT NULL,
+        product_id   INTEGER NOT NULL,
+        quantity     INTEGER NOT NULL,
+        unit_price   NUMERIC(15,2) NOT NULL,
+        total        NUMERIC(15,2) NOT NULL
+      )
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS sale_returns_sale_idx ON sale_returns (sale_id)`);
     await client.query(`ALTER TABLE business_settings ADD COLUMN IF NOT EXISTS mpesa_paybill TEXT`);
     await client.query(`ALTER TABLE business_settings ADD COLUMN IF NOT EXISTS mpesa_paybill_account TEXT`);
     await client.query(`ALTER TABLE business_settings ADD COLUMN IF NOT EXISTS mpesa_till TEXT`);
@@ -77377,8 +75441,6 @@ async function getNotificationSettings() {
 }
 function resolveAppUrl2() {
   if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
-  const domain2 = process.env.REPLIT_DEV_DOMAIN;
-  if (domain2) return `https://${domain2}`;
   return "http://localhost:3000";
 }
 function startScheduler() {
@@ -77451,54 +75513,19 @@ var port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
-var listenHost = process.env.HOST || "0.0.0.0";
-app_default.listen(port, listenHost, (err) => {
-  if (err) {
-    logger.error({ err, port, host: listenHost }, "Error listening on port");
-    process.exit(1);
-  }
-  startScheduler();
-  logger.info({ port, host: listenHost }, "Server listening");
-});
-if (process.env.UNIQUEPOS_SKIP_STARTUP_DB_ABORT === "1") {
-  const originalRunStartupMigrations = runStartupMigrations;
-  runStartupMigrations = async () => {
-    try {
-      await originalRunStartupMigrations();
-    } catch (err) {
-      const dbCode = err && typeof err === "object" ? err.code : void 0;
-      if (dbCode === "ECONNREFUSED" || dbCode === "ENOTFOUND") {
-        console.warn(
-          "Skipping startup database connection for local run because DATABASE_URL is not configured."
-        );
-        return;
-      }
-      throw err;
-    }
-  };
-}
-var abortOnMigrationFailure = process.env.UNIQUEPOS_ABORT_ON_MIGRATION_FAILURE === "1";
-var startupMigrationRetryMsRaw = Number(process.env.UNIQUEPOS_STARTUP_MIGRATION_RETRY_MS || "30000");
-var startupMigrationRetryMs = Number.isFinite(startupMigrationRetryMsRaw) && startupMigrationRetryMsRaw > 0 ? startupMigrationRetryMsRaw : 3e4;
-var disableInternalStartupMigrations = process.env.UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS === "1";
-function startMigrationsWithRetry() {
-  runStartupMigrations().then(() => {
-    logger.info("Startup migrations complete");
-  }).catch((err) => {
-    if (abortOnMigrationFailure) {
-      logger.error({ err }, "Startup migrations failed \u2014 aborting");
+runStartupMigrations().then(() => {
+  app_default.listen(port, (err) => {
+    if (err) {
+      logger.error({ err }, "Error listening on port");
       process.exit(1);
-      return;
     }
-    logger.error({ err, retryMs: startupMigrationRetryMs }, "Startup migrations failed \u2014 keeping server alive and retrying");
-    setTimeout(startMigrationsWithRetry, startupMigrationRetryMs);
+    startScheduler();
+    logger.info({ port }, "Server listening");
   });
-}
-if (disableInternalStartupMigrations) {
-  logger.info("Skipping bundled startup migrations; external bootstrap already completed.");
-} else {
-  startMigrationsWithRetry();
-}
+}).catch((err) => {
+  logger.error({ err }, "Startup migrations failed \u2014 aborting");
+  process.exit(1);
+});
 /*! Bundled license information:
 
 depd/index.js:
