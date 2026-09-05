@@ -10,6 +10,43 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      /* Normalize a legacy generated-client defect before the application bundle loads.
+         Some compiled screens prepend /api to paths that already begin with /api. */
+      (function () {
+        const nativeFetch = window.fetch.bind(window);
+        function normalizeUrl(input) {
+          if (typeof input === 'string') return input.replace(/(^|:\/\/[^/]+)\/api\/api\//, '$1/api/');
+          if (input instanceof URL) {
+            input = new URL(input.toString());
+            input.pathname = input.pathname.replace(/^\/api\/api\//, '/api/');
+            return input;
+          }
+          if (input instanceof Request) {
+            const url = new URL(input.url);
+            if (!url.pathname.startsWith('/api/api/')) return input;
+            url.pathname = url.pathname.replace(/^\/api\/api\//, '/api/');
+            return new Request(url.toString(), input);
+          }
+          return input;
+        }
+        window.fetch = function (input, init) {
+          return nativeFetch(normalizeUrl(input), init);
+        };
+
+        /* A branding upload can point to an object that no longer exists after a
+           clean deployment. Keep the POS usable while the correct logo is saved. */
+        document.addEventListener('error', function (event) {
+          const image = event.target;
+          if (!(image instanceof HTMLImageElement)) return;
+          if (image.dataset.brandFallbackApplied === '1') return;
+          const src = image.getAttribute('src') || '';
+          if (!src.includes('/storage/objects/uploads/')) return;
+          image.dataset.brandFallbackApplied = '1';
+          image.src = '/logo.jpg';
+        }, true);
+      })();
+    </script>
     <script type="module" crossorigin src="/assets/index-u_5HbI_w.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-DvGT-pLb.css">
     <style>
