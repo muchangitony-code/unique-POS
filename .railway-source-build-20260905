@@ -1,0 +1,3 @@
+Fresh source-build trigger for Railway.
+Repository head verified without railpack-plan.json.
+Intended Railway commands: build=node scripts/build.cjs; start=node index.runtime.cjs.
