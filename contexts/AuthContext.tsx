@@ -1,8 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { setAuthTokenGetter, setBaseUrl } from '@workspace/api-client-react';
 
-// Configure base URL for the API server
-setBaseUrl(import.meta.env.VITE_API_BASE_URL ?? '/api');
+// The generated API client already includes /api from the OpenAPI server URL.
+// Only override the base when an explicit deployment URL is supplied.
+const configuredApiBase = import.meta.env.VITE_API_BASE_URL;
+if (configuredApiBase) setBaseUrl(configuredApiBase.replace(/\/$/, ''));
 
 interface User {
   id: number;
@@ -34,7 +36,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'));
 
-  // Keep the API client's token getter in sync
+  // Keep the generated client's authorization source synchronized across
+  // page reloads and login/logout transitions.
   useEffect(() => {
     setAuthTokenGetter(token ? () => token : null);
   }, [token]);
