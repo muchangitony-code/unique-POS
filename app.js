@@ -35,6 +35,9 @@ if (!process.env.PORT) process.env.PORT = "8080";
 
 async function start() {
   try {
+    // PDF generation now uses PDFKit's built-in Helvetica fonts. There is no
+    // filesystem font directory to inspect; assertFonts() remains a compatibility
+    // check for older callers and intentionally performs no TTF validation.
     assertFonts();
     console.log("[startup] PDF fonts: PDFKit built-in Helvetica / Helvetica-Bold");
     validateStartupEnv();
