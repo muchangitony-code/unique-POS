@@ -1,9 +1,9 @@
 'use strict';
 
 const BRAND = Object.freeze({
-  legalName: 'Uniques Solar & General Supplies Limited',
+  legalName: 'Unique Solar & General Supplies Limited',
   tagline: 'Solar Energy & General Supplies',
-  website: 'https://uniquesolarltd.co.ke',
+  website: 'https://uniquesolarkenya.co.ke',
   address: 'Kamakis Corner Square, Ruiru, Kenya',
   phone: '0733 573 089',
   colors: Object.freeze({

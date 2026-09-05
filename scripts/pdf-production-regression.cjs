@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { renderPdfBuffer } = require('../server/pdf/index.cjs');
 const { adaptDocumentPayload, detectDocumentType } = require('../server/pdf/document-adapter.cjs');
-const BRAND = require('../document-branding.cjs');
+const BRAND = require('../server/document-branding.cjs');
 
 const base = {
   customer: { name: 'Production Regression Customer', address: 'Nairobi', phone: '0712345678' },
