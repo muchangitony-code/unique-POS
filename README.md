@@ -1,131 +1,67 @@
-# UniquePOS Deployment Guide (Railway + PostgreSQL)
+# UniquePOS — Standalone Deployment
 
-This repository is a standalone Node.js POS backend+frontend bundle.
+A self-contained build of UniquePOS (ERP + POS) for ordinary Node.js hosting
+such as cPanel/Truehost. The Node app serves both the API and the web frontend.
 
-## Stack
+## Requirements
 
-- Runtime: Node.js 22+
-- Server: Express (bundled in `index.cjs`)
-- Database: PostgreSQL via `DATABASE_URL`
-- ORM/query layer: Drizzle ORM (bundled)
-- Frontend: static files from `public/`
+- Node.js 22 (set in the cPanel "Setup Node.js App" tool).
+- A PostgreSQL database. Your host offers MySQL only, so use a free/managed
+  PostgreSQL such as Neon (neon.tech), Supabase or Railway and point
+  `DATABASE_URL` at it.
+- `psql` command-line tool to load the database (from your PC is fine).
+- For in-app backup/restore to work on the server, `pg_dump`/`psql` must be on
+  the server PATH. If they are not available, use your managed provider's own
+  backups instead — the rest of the app works without them.
 
-## Startup process
+## 1. Create the database
 
-- Entrypoint: `app.js`
-- Start command: `npm start`
-- Health check endpoint: `/api/healthz`
+Create an empty PostgreSQL database with your managed provider and copy its
+connection string.
 
-Startup order:
-
-1. Load `.env` (if present).
-2. Apply runtime defaults (storage paths, `PORT` fallback).
-3. Validate required startup environment variables.
-4. Run DB bootstrap (`scripts/bootstrap-db.cjs`).
-5. Start API/server (`index.cjs`).
-
-## Railway deployment
-
-1. Push repo to GitHub.
-2. In Railway, create a project from the repo.
-3. Add PostgreSQL in the same Railway project (or use external PostgreSQL).
-4. Set required environment variables.
-5. Deploy.
-
-Railway config is already provided in `railway.json`.
-
-## Environment variables
-
-### Required
-
-- `DATABASE_URL` — PostgreSQL connection string.
-- `SESSION_SECRET` — deployment-specific random secret of at least 16 characters.
-
-### Recommended
-
-- `APP_URL` — public app URL.
-- `NODE_ENV=production`.
-
-### Bootstrap controls
-
-- `UNIQUEPOS_BOOTSTRAP_ADMIN` — default `1`; set `0` to disable bootstrap account management.
-- `UNIQUEPOS_BOOTSTRAP_ADMIN_USERNAME` — production admin username.
-- `UNIQUEPOS_BOOTSTRAP_ADMIN_EMAIL` — production admin email.
-- `UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD` — **required in production** and must be a unique strong password.
-- `UNIQUEPOS_BOOTSTRAP_ADMIN_ROTATE_PASSWORD` — default `0`; set `1` only when deliberately rotating the bootstrap password.
-
-The repository no longer documents a usable default production administrator password. Set the real credentials only in the deployment environment.
-
-### Optional runtime settings
-
-- `SMTP_PASSWORD`
-- `SERVE_CLIENT_DIR` (default `./public` if folder exists)
-- `BACKUP_DIR` (default `./backups`)
-- `LOCAL_STORAGE_DIR` (default `./storage`)
-
-## Database initialization
-
-- Migrations are tracked in `schema_migrations` and guarded by a PostgreSQL advisory lock.
-- Fresh databases are initialized from `migrations/*.sql`.
-- Existing databases only run unapplied migrations.
-- Startup verifies the required schema before accepting traffic.
-
-Useful commands:
+Load the included dump (schema + starter data, including the admin login):
 
 ```bash
-npm run db:migrate
-npm run db:verify
-npm run db:audit
-npm run startup:validate
-npm run build
+psql "YOUR_DATABASE_URL" -f db/database.sql
 ```
 
-## Clean-start document reset
-
-The production reset utility is deliberately guarded because it is destructive.
-
-### Remove only clearly identifiable test/demo quotations and invoices
+The seed data ships **without** admin password hashes (they are set to
+`REPLACE_WITH_BCRYPT_HASH`). Before first login, generate a bcrypt hash for
+your chosen admin password and set it on the `users` rows:
 
 ```bash
-RESET_SCOPE=test RESET_CONFIRM=DELETE_TEST_DOCUMENTS npm run db:reset-documents
+node -e "require('bcryptjs').hash('YourNewPassword', 10).then(console.log)"
+psql "YOUR_DATABASE_URL" -c "UPDATE users SET password_hash='<paste hash>' WHERE email='admin@uniquepos.com';"
 ```
 
-### Remove all quotations and invoices for a deliberate clean start
+## 2. Configure environment
 
-This is destructive and should only be used when the database contains no real customer documents:
+Copy `.env.example` to `.env` and fill in `DATABASE_URL` and `SESSION_SECRET`.
+On cPanel you can instead set these as environment variables in the
+"Setup Node.js App" screen.
+
+## 3. Install & start
 
 ```bash
-NODE_ENV=production ALLOW_PRODUCTION_RESET=YES RESET_SCOPE=all RESET_CONFIRM=DELETE_ALL_DOCUMENTS npm run db:reset-documents
+npm install --omit=dev
+npm start
 ```
 
-The reset preserves master data such as products, customers, branches and users. PostgreSQL `CASCADE` removes dependent document rows such as invoice/quotation line items and payment records. Document sequences for invoices/quotations are reset so the first real documents can start cleanly.
+On cPanel: upload this folder, set the Application Root to it and the
+Application Startup File to `app.js`, add the environment variables, then click
+"Run NPM Install" followed by "Restart".
 
-**Always run `npm run db:audit` after the reset and before opening the POS for real sales.**
+## Layout
 
-## Regression testing
+- `app.js` — startup file (loads .env, boots the server).
+- `server/` — bundled API + app logic (single file, no build step needed).
+- `public/` — built web frontend, served by the Node app.
+- `db/database.sql` — database dump to restore.
+- `backups/` — local database backups created by the in-app backup feature.
+- `storage/` — uploaded branding images (logo/stamp/signature).
 
-Destructive regression tests create temporary records. Do not point them at a production database.
+## Notes
 
-## PDF/document QA
-
-```bash
-npm run pdf:qa
-```
-
-## Health check
-
-```bash
-curl "$APP_URL/api/healthz"
-```
-
-## Files relevant to deployment
-
-- `app.js` - runtime entrypoint and pre-start bootstrap
-- `index.cjs` - bundled API/server
-- `scripts/bootstrap-db.cjs` - automated PostgreSQL initialization and admin bootstrap
-- `scripts/run-migrations.cjs` - tracked SQL migration runner with advisory locking
-- `scripts/production-audit.cjs` - production database readiness audit
-- `scripts/production-reset.cjs` - guarded clean-start document reset
-- `database.sql` - legacy schema export retained for compatibility/reference
-- `.env.example` - environment variable template
-- `railway.json` - Railway deployment configuration
+- All API routes are served under `/api`; the frontend is served from `/`.
+- File uploads and backups are stored on local disk (see folders above). Make
+  sure those folders are writable and included in your own off-site backups.
