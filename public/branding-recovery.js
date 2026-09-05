@@ -1,50 +1,46 @@
 (function () {
   'use strict';
-  const marker = 'data-branding-recovery';
-  function token() { return localStorage.getItem('token') || ''; }
-  async function getBranding() {
-    const r = await fetch('/api/settings/branding', { credentials: 'same-origin' });
-    if (!r.ok) throw new Error('Unable to load company branding');
-    return r.json();
+  const ROOT_ID = 'branding-recovery-root';
+  function authHeaders(extra) {
+    const t = localStorage.getItem('token') || '';
+    return Object.assign({}, extra || {}, t ? { Authorization: 'Bearer ' + t } : {});
   }
-  function activePanel() {
-    const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
-    const tab = tabs.find(t => (t.getAttribute('aria-selected') === 'true') && /branding/i.test(t.textContent || ''));
-    if (!tab) return null;
-    const id = tab.getAttribute('aria-controls');
-    return id ? document.getElementById(id) : null;
-  }
-  function field(label, name, value, type) {
-    return '<label style="display:block;margin:0 0 14px;font-weight:600;color:#172033">' + label +
-      '<input type="' + (type || 'text') + '" name="' + name + '" value="' + String(value || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;') + '" style="display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#172033;font:inherit" /></label>';
-  }
-  async function install() {
-    const panel = activePanel();
-    if (!panel || panel.querySelector('[' + marker + ']')) return;
-    if ((panel.textContent || '').trim().length > 40) return;
-    panel.innerHTML = '<div ' + marker + ' style="max-width:900px;padding:24px;border:1px solid #dbe3ee;border-radius:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.06)"><h2 style="margin:0 0 8px;color:#172033">Company Branding</h2><p style="margin:0 0 22px;color:#64748b">Manage logo references, colours, typography and document identity.</p><div id="brandingRecoveryStatus" style="margin-bottom:16px;color:#64748b">Loading branding settings…</div><form id="brandingRecoveryForm"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:0 18px" id="brandingRecoveryFields"></div><label style="display:block;margin:0 0 14px;font-weight:600;color:#172033">Document Footer<textarea name="document_footer" style="display:block;width:100%;min-height:80px;box-sizing:border-box;margin-top:6px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#172033;font:inherit"></textarea></label><button type="submit" style="padding:11px 18px;border:0;border-radius:7px;background:#1b4da5;color:#fff;font-weight:700;cursor:pointer">Save Company Branding</button></form></div>';
-    const status = panel.querySelector('#brandingRecoveryStatus');
-    const fields = panel.querySelector('#brandingRecoveryFields');
-    try {
-      const b = await getBranding();
-      fields.innerHTML = field('Tagline','tagline',b.tagline) + field('Website','website',b.website) + field('VAT Number','vat_number',b.vat_number) + field('Alternative Phone','business_phone2',b.business_phone2) + field('Primary Colour','primary_color',b.primary_color || '#1B4DA5','color') + field('Secondary Colour','secondary_color',b.secondary_color || '#F5A500','color') + field('Body Font','body_font',b.body_font || 'Inter') + field('Heading Font','heading_font',b.heading_font || 'Inter') + field('Logo URL','logo_url',b.logo_url) + field('Company Stamp URL','stamp_url',b.stamp_url) + field('Signature URL','signature_url',b.signature_url);
-      panel.querySelector('[name="document_footer"]').value = b.document_footer || '';
-      status.textContent = 'Branding settings loaded.';
-    } catch (e) { status.textContent = e.message || 'Unable to load branding settings.'; status.style.color = '#b42318'; }
-    panel.querySelector('#brandingRecoveryForm').addEventListener('submit', async function (ev) {
-      ev.preventDefault();
-      const fd = new FormData(ev.currentTarget), data = {};
-      fd.forEach((v,k) => data[k] = v);
-      status.textContent = 'Saving…'; status.style.color = '#64748b';
-      try {
-        const r = await fetch('/api/settings/branding', { method:'PATCH', credentials:'same-origin', headers:{'Content-Type':'application/json','Authorization':'Bearer ' + token()}, body:JSON.stringify(data) });
-        if (!r.ok) throw new Error('Save failed (' + r.status + ')');
-        status.textContent = 'Company branding saved successfully.'; status.style.color = '#15803d';
-      } catch (e) { status.textContent = e.message || 'Unable to save company branding.'; status.style.color = '#b42318'; }
+  function esc(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function isBrandingRoute() { return new URL(location.href).searchParams.get('tab') === 'branding'; }
+  function host() {
+    const root = document.getElementById('root');
+    if (!root) return null;
+    let box = document.getElementById(ROOT_ID);
+    if (box) return box;
+    const panel = Array.from(document.querySelectorAll('[role="tabpanel"],main,section,div')).find(function (el) {
+      const text = (el.textContent || '').trim();
+      return /company branding/i.test(text) && el.children.length < 12;
     });
+    box = document.createElement('div'); box.id = ROOT_ID;
+    if (panel) panel.replaceChildren(box); else root.replaceChildren(box);
+    return box;
   }
-  document.addEventListener('click', function () { setTimeout(install, 250); }, true);
-  const observer = new MutationObserver(function () { setTimeout(install, 100); });
-  observer.observe(document.documentElement, { childList:true, subtree:true });
-  setTimeout(install, 800);
+  function renderLoading(box) { box.innerHTML = '<div style="min-height:100vh;padding:32px;box-sizing:border-box;background:#f8fafc;color:#172033;font-family:Inter,Arial,sans-serif"><div style="max-width:1050px;margin:0 auto;background:#fff;border:1px solid #dbe3ee;border-radius:14px;padding:28px"><h1 style="margin:0 0 8px">Company Branding</h1><p style="color:#64748b">Loading company branding settings…</p></div></div>'; }
+  function input(label,name,value,type) { return '<label style="display:block;margin-bottom:16px;font-weight:600">'+esc(label)+'<input name="'+esc(name)+'" type="'+(type||'text')+'" value="'+esc(value)+'" style="display:block;width:100%;box-sizing:border-box;margin-top:7px;padding:11px 12px;border:1px solid #94a3b8;border-radius:7px;background:#fff;color:#172033;font:inherit"></label>'; }
+  async function install() {
+    if (!isBrandingRoute()) { const stale=document.getElementById(ROOT_ID); if (stale) stale.remove(); return; }
+    const box = host(); if (!box || box.dataset.loaded === '1') return;
+    box.dataset.loaded = '1'; renderLoading(box);
+    try {
+      const r = await fetch('/api/settings/branding', { credentials:'same-origin', headers:authHeaders() });
+      if (!r.ok) throw new Error('Unable to load company branding (' + r.status + ')');
+      const b = await r.json();
+      box.innerHTML = '<div style="min-height:100vh;padding:32px;box-sizing:border-box;background:#f8fafc;color:#172033;font-family:Inter,Arial,sans-serif"><div style="max-width:1050px;margin:0 auto;background:#fff;border:1px solid #dbe3ee;border-radius:14px;padding:28px"><h1 style="margin:0 0 8px">Company Branding</h1><p style="margin:0 0 24px;color:#64748b">Manage your logo, stamp, signature, colours, typography and document identity.</p><div id="brandingStatus" style="margin-bottom:14px;color:#64748b"></div><form id="brandingForm"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 20px">'+input('Tagline','tagline',b.tagline)+input('Website','website',b.website)+input('VAT Number','vat_number',b.vat_number)+input('Alternative Phone','business_phone2',b.business_phone2)+input('Primary Colour','primary_color',b.primary_color || '#1B4DA5','color')+input('Secondary Colour','secondary_color',b.secondary_color || '#F5A500','color')+input('Body Font','body_font',b.body_font || 'Inter')+input('Heading Font','heading_font',b.heading_font || 'Inter')+input('Logo URL','logo_url',b.logo_url || '/logo.jpg')+input('Company Stamp URL','stamp_url',b.stamp_url)+input('Signature URL','signature_url',b.signature_url)+'</div><label style="display:block;margin-bottom:16px;font-weight:600">Document Footer<textarea name="document_footer" style="display:block;width:100%;min-height:90px;box-sizing:border-box;margin-top:7px;padding:11px 12px;border:1px solid #94a3b8;border-radius:7px;background:#fff;color:#172033;font:inherit">'+esc(b.document_footer)+'</textarea></label><button type="submit" style="padding:12px 20px;border:0;border-radius:7px;background:#1B4DA5;color:#fff;font-weight:700;cursor:pointer">Save Company Branding</button></form></div></div>';
+      box.querySelector('#brandingForm').addEventListener('submit', async function (e) {
+        e.preventDefault(); const status=box.querySelector('#brandingStatus'); const data={}; new FormData(e.currentTarget).forEach((v,k)=>data[k]=v); status.textContent='Saving…';
+        const res=await fetch('/api/settings/branding',{method:'PATCH',credentials:'same-origin',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify(data)});
+        if (!res.ok) { status.textContent='Save failed ('+res.status+').'; status.style.color='#b42318'; return; }
+        status.textContent='Company branding saved successfully.'; status.style.color='#15803d';
+      });
+    } catch (e) { box.innerHTML='<div style="min-height:100vh;padding:32px;background:#f8fafc;color:#172033;font-family:Inter,Arial,sans-serif"><div style="max-width:1050px;margin:0 auto;background:#fff;border:1px solid #fecaca;border-radius:14px;padding:28px"><h1>Company Branding</h1><p style="color:#b42318">'+esc(e.message || 'Unable to load company branding.')+'</p></div></div>'; }
+  }
+  setInterval(install, 400);
+  document.addEventListener('DOMContentLoaded', install);
+  window.addEventListener('popstate', install);
+  install();
 })();
