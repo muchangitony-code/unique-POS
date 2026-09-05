@@ -3,67 +3,29 @@
   const ROOT_ID = 'branding-recovery-root';
   const DEFAULTS = {
     tagline: 'Smart solar solutions for homes, businesses and industry.',
-    website: '',
-    vat_number: '',
-    business_phone2: '',
-    primary_color: '#003060',
-    secondary_color: '#F88000',
-    body_font: 'Inter',
-    heading_font: 'Inter',
+    website: '', vat_number: '', business_phone2: '',
+    primary_color: '#003060', secondary_color: '#F88000',
+    body_font: 'Inter', heading_font: 'Inter',
     logo_url: '/logo.jpg',
-    stamp_url: '',
+    stamp_url: '/company-stamp.jpeg',
     signature_url: '',
     document_footer: 'Unique Solar Kenya | Nairobi, Kenya | Tel: +254 733573089'
   };
-  function authHeaders(extra) {
-    const t = localStorage.getItem('token') || '';
-    return Object.assign({}, extra || {}, t ? { Authorization: 'Bearer ' + t } : {});
-  }
-  function esc(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-  function isBrandingRoute() { return new URL(location.href).searchParams.get('tab') === 'branding'; }
-  function normalise(data) {
-    const b = Object.assign({}, data || {});
-    Object.keys(DEFAULTS).forEach(function (k) {
-      if (b[k] == null) b[k] = DEFAULTS[k];
-    });
-    if (!b.logo_url || /^\/objects\/uploads\//.test(b.logo_url)) b.logo_url = DEFAULTS.logo_url;
-    return b;
-  }
-  function host() {
-    const root = document.getElementById('root'); if (!root) return null;
-    let box = document.getElementById(ROOT_ID); if (box) return box;
-    const panel = Array.from(document.querySelectorAll('[role="tabpanel"],main,section,div')).find(function (el) {
-      const text = (el.textContent || '').trim(); return /company branding/i.test(text) && el.children.length < 12;
-    });
-    box = document.createElement('div'); box.id = ROOT_ID;
-    if (panel) panel.replaceChildren(box); else root.replaceChildren(box);
-    return box;
-  }
-  function renderLoading(box) { box.innerHTML = '<div style="min-height:100vh;padding:32px;box-sizing:border-box;background:#f8fafc;color:#172033;font-family:Inter,Arial,sans-serif"><div style="max-width:1050px;margin:0 auto;background:#fff;border:1px solid #dbe3ee;border-radius:14px;padding:28px"><h1 style="margin:0 0 8px">Company Branding</h1><p style="color:#64748b">Loading company branding settings…</p></div></div>'; }
+  function authHeaders(extra) { const t=localStorage.getItem('token')||''; return Object.assign({},extra||{},t?{Authorization:'Bearer '+t}:{}); }
+  function esc(v) { return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function isBrandingRoute() { return new URL(location.href).searchParams.get('tab')==='branding'; }
+  function stampDate() { return new Intl.DateTimeFormat('en-GB',{day:'2-digit',month:'short',year:'numeric'}).format(new Date()).toUpperCase(); }
+  function normalise(data) { const b=Object.assign({},data||{}); Object.keys(DEFAULTS).forEach(k=>{if(b[k]==null)b[k]=DEFAULTS[k];}); if(!b.logo_url||/^\/objects\/uploads\//.test(b.logo_url))b.logo_url=DEFAULTS.logo_url; if(!b.stamp_url||/^\/objects\/uploads\//.test(b.stamp_url))b.stamp_url=DEFAULTS.stamp_url; return b; }
+  function host() { const root=document.getElementById('root'); if(!root)return null; let box=document.getElementById(ROOT_ID); if(box)return box; const panel=Array.from(document.querySelectorAll('[role="tabpanel"],main,section,div')).find(el=>/company branding/i.test((el.textContent||'').trim())&&el.children.length<12); box=document.createElement('div');box.id=ROOT_ID;if(panel)panel.replaceChildren(box);else root.replaceChildren(box);return box; }
   function input(label,name,value,type) { return '<label style="display:block;margin-bottom:16px;font-weight:600">'+esc(label)+'<input name="'+esc(name)+'" type="'+(type||'text')+'" value="'+esc(value)+'" style="display:block;width:100%;box-sizing:border-box;margin-top:7px;padding:11px 12px;border:1px solid #94a3b8;border-radius:7px;background:#fff;color:#172033;font:inherit"></label>'; }
+  function preview(url,date) { return '<div style="margin:0 0 18px"><div style="font-weight:600;margin-bottom:8px">Company Stamp Preview</div><div style="position:relative;width:250px;max-width:100%;min-height:170px;border:1px solid #dbe3ee;border-radius:8px;background:#fff;overflow:hidden"><img id="stampPreview" src="'+esc(url)+'" alt="Company stamp" style="display:block;width:100%;height:auto;max-height:250px;object-fit:contain"><div id="stampDatePreview" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#b42318;font-weight:700;font-size:18px;letter-spacing:1px;white-space:nowrap;text-shadow:0 0 2px #fff">'+esc(date)+'</div></div><div style="font-size:13px;color:#64748b;margin-top:6px">The date shown here is generated automatically from the current date. The stamp image path remains editable.</div></div>'; }
   function render(box,b) {
-    box.innerHTML = '<div style="min-height:100vh;padding:32px;box-sizing:border-box;background:#f8fafc;color:#172033;font-family:Inter,Arial,sans-serif"><div style="max-width:1050px;margin:0 auto;background:#fff;border:1px solid #dbe3ee;border-radius:14px;padding:28px"><div style="display:flex;justify-content:space-between;gap:16px;align-items:start;flex-wrap:wrap"><div><h1 style="margin:0 0 8px">Company Branding</h1><p style="margin:0 0 24px;color:#64748b">Manage your logo, stamp, signature, colours, typography and document identity.</p></div><img src="'+esc(b.logo_url)+'" alt="Company logo" style="max-width:160px;max-height:100px;object-fit:contain;border:1px solid #e2e8f0;border-radius:8px;padding:6px"></div><div id="brandingStatus" style="margin-bottom:14px;color:#64748b"></div><form id="brandingForm"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 20px">'+input('Tagline','tagline',b.tagline)+input('Website','website',b.website)+input('VAT Number','vat_number',b.vat_number)+input('Alternative Phone','business_phone2',b.business_phone2)+input('Primary Colour','primary_color',b.primary_color,'color')+input('Secondary Colour','secondary_color',b.secondary_color,'color')+input('Body Font','body_font',b.body_font)+input('Heading Font','heading_font',b.heading_font)+input('Logo URL','logo_url',b.logo_url)+input('Company Stamp URL','stamp_url',b.stamp_url)+input('Signature URL','signature_url',b.signature_url)+'</div><label style="display:block;margin-bottom:16px;font-weight:600">Document Footer<textarea name="document_footer" style="display:block;width:100%;min-height:90px;box-sizing:border-box;margin-top:7px;padding:11px 12px;border:1px solid #94a3b8;border-radius:7px;background:#fff;color:#172033;font:inherit">'+esc(b.document_footer)+'</textarea></label><div style="display:flex;gap:12px;flex-wrap:wrap"><button type="submit" style="padding:12px 20px;border:0;border-radius:7px;background:#003060;color:#fff;font-weight:700;cursor:pointer">Save Company Branding</button><button type="button" id="restoreBrandDefaults" style="padding:12px 20px;border:1px solid #003060;border-radius:7px;background:#fff;color:#003060;font-weight:700;cursor:pointer">Restore Recommended Defaults</button></div></form></div></div>';
-    box.querySelector('#restoreBrandDefaults').addEventListener('click', function () {
-      Object.keys(DEFAULTS).forEach(function (k) { const el=box.querySelector('[name="'+k+'"]'); if (el) el.value=DEFAULTS[k]; });
-      const img=box.querySelector('img[alt="Company logo"]'); if (img) img.src=DEFAULTS.logo_url;
-      const status=box.querySelector('#brandingStatus'); status.textContent='Recommended Unique Solar Kenya branding restored. Review or edit any field, then click Save.'; status.style.color='#003060';
-    });
-    box.querySelector('[name="logo_url"]').addEventListener('input', function (e) { const img=box.querySelector('img[alt="Company logo"]'); if (img && e.target.value) img.src=e.target.value; });
-    box.querySelector('#brandingForm').addEventListener('submit', async function (e) {
-      e.preventDefault(); const status=box.querySelector('#brandingStatus'); const data={}; new FormData(e.currentTarget).forEach((v,k)=>data[k]=v); status.textContent='Saving…';
-      const res=await fetch('/api/settings/branding',{method:'PATCH',credentials:'same-origin',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify(data)});
-      if (!res.ok) { status.textContent='Save failed ('+res.status+').'; status.style.color='#b42318'; return; }
-      status.textContent='Company branding saved successfully. You can edit these settings again at any time.'; status.style.color='#15803d';
-    });
+    box.innerHTML='<div style="min-height:100vh;padding:32px;box-sizing:border-box;background:#f8fafc;color:#172033;font-family:Inter,Arial,sans-serif"><div style="max-width:1050px;margin:0 auto;background:#fff;border:1px solid #dbe3ee;border-radius:14px;padding:28px"><div style="display:flex;justify-content:space-between;gap:16px;align-items:start;flex-wrap:wrap"><div><h1 style="margin:0 0 8px">Company Branding</h1><p style="margin:0 0 24px;color:#64748b">Manage your logo, stamp, signature, colours, typography and document identity.</p></div><img src="'+esc(b.logo_url)+'" alt="Company logo" style="max-width:160px;max-height:100px;object-fit:contain;border:1px solid #e2e8f0;border-radius:8px;padding:6px"></div><div id="brandingStatus" style="margin-bottom:14px;color:#64748b"></div><form id="brandingForm"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 20px">'+input('Tagline','tagline',b.tagline)+input('Website','website',b.website)+input('VAT Number','vat_number',b.vat_number)+input('Alternative Phone','business_phone2',b.business_phone2)+input('Primary Colour','primary_color',b.primary_color,'color')+input('Secondary Colour','secondary_color',b.secondary_color,'color')+input('Body Font','body_font',b.body_font)+input('Heading Font','heading_font',b.heading_font)+input('Logo URL','logo_url',b.logo_url)+input('Company Stamp URL','stamp_url',b.stamp_url)+input('Signature URL','signature_url',b.signature_url)+'</div>'+preview(b.stamp_url,stampDate())+'<label style="display:block;margin-bottom:16px;font-weight:600">Document Footer<textarea name="document_footer" style="display:block;width:100%;min-height:90px;box-sizing:border-box;margin-top:7px;padding:11px 12px;border:1px solid #94a3b8;border-radius:7px;background:#fff;color:#172033;font:inherit">'+esc(b.document_footer)+'</textarea></label><div style="display:flex;gap:12px;flex-wrap:wrap"><button type="submit" style="padding:12px 20px;border:0;border-radius:7px;background:#003060;color:#fff;font-weight:700;cursor:pointer">Save Company Branding</button><button type="button" id="restoreBrandDefaults" style="padding:12px 20px;border:1px solid #003060;border-radius:7px;background:#fff;color:#003060;font-weight:700;cursor:pointer">Restore Recommended Defaults</button></div></form></div></div>';
+    box.querySelector('#restoreBrandDefaults').addEventListener('click',function(){Object.keys(DEFAULTS).forEach(k=>{const el=box.querySelector('[name="'+k+'"]');if(el)el.value=DEFAULTS[k];});box.querySelector('img[alt="Company logo"]').src=DEFAULTS.logo_url;box.querySelector('#stampPreview').src=DEFAULTS.stamp_url;box.querySelector('#brandingStatus').textContent='Recommended Unique Solar Kenya branding restored. Review or edit any field, then click Save.';box.querySelector('#brandingStatus').style.color='#003060';});
+    box.querySelector('[name="logo_url"]').addEventListener('input',e=>{const img=box.querySelector('img[alt="Company logo"]');if(e.target.value)img.src=e.target.value;});
+    box.querySelector('[name="stamp_url"]').addEventListener('input',e=>{const img=box.querySelector('#stampPreview');if(e.target.value)img.src=e.target.value;});
+    box.querySelector('#brandingForm').addEventListener('submit',async function(e){e.preventDefault();const status=box.querySelector('#brandingStatus'),data={};new FormData(e.currentTarget).forEach((v,k)=>data[k]=v);status.textContent='Saving…';const res=await fetch('/api/settings/branding',{method:'PATCH',credentials:'same-origin',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify(data)});if(!res.ok){status.textContent='Save failed ('+res.status+').';status.style.color='#b42318';return;}status.textContent='Company branding saved successfully. You can edit these settings again at any time.';status.style.color='#15803d';});
   }
-  async function install() {
-    if (!isBrandingRoute()) { const stale=document.getElementById(ROOT_ID); if (stale) stale.remove(); return; }
-    const box = host(); if (!box || box.dataset.loaded === '1') return; box.dataset.loaded = '1'; renderLoading(box);
-    try {
-      const r = await fetch('/api/settings/branding', { credentials:'same-origin', headers:authHeaders() });
-      if (!r.ok) throw new Error('Unable to load company branding (' + r.status + ')');
-      render(box, normalise(await r.json()));
-    } catch (e) { box.innerHTML='<div style="min-height:100vh;padding:32px;background:#f8fafc;color:#172033;font-family:Inter,Arial,sans-serif"><div style="max-width:1050px;margin:0 auto;background:#fff;border:1px solid #fecaca;border-radius:14px;padding:28px"><h1>Company Branding</h1><p style="color:#b42318">'+esc(e.message || 'Unable to load company branding.')+'</p></div></div>'; }
-  }
-  setInterval(install, 400); document.addEventListener('DOMContentLoaded', install); window.addEventListener('popstate', install); install();
+  async function install(){if(!isBrandingRoute()){const stale=document.getElementById(ROOT_ID);if(stale)stale.remove();return;}const box=host();if(!box||box.dataset.loaded==='1')return;box.dataset.loaded='1';box.innerHTML='<div style="min-height:100vh;padding:32px;background:#f8fafc;color:#172033;font-family:Inter,Arial,sans-serif">Loading company branding settings…</div>';try{const r=await fetch('/api/settings/branding',{credentials:'same-origin',headers:authHeaders()});if(!r.ok)throw new Error('Unable to load company branding ('+r.status+')');render(box,normalise(await r.json()));}catch(e){box.innerHTML='<div style="min-height:100vh;padding:32px;background:#f8fafc;color:#172033;font-family:Inter,Arial,sans-serif;color:#b42318">'+esc(e.message||'Unable to load company branding.')+'</div>';}}
+  setInterval(install,400);document.addEventListener('DOMContentLoaded',install);window.addEventListener('popstate',install);install();
 })();
