@@ -11,6 +11,9 @@
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
   "private": true,
+  "dependencies": {
+    "pdfkit": "^0.17.2"
+  },
   "devDependencies": {
     "@types/node": "catalog:",
     "prettier": "^3.8.4",
