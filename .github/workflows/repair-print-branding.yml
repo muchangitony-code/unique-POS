@@ -1,0 +1,64 @@
+name: Repair print branding
+
+on:
+  push:
+    paths:
+      - '.github/workflows/repair-print-branding.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Apply exact print branding patch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('lib/printDoc.ts')
+          s = p.read_text()
+          old = '''function sigStampMarkup(b: ResolvedBranding): string {
+  if (!b.signatureUrl && !b.stampUrl) return '';
+  const parts: string[] = [];
+  if (b.signatureUrl) parts.push(`<img src=\"${esc(b.signatureUrl)}\" alt=\"Signature\" style=\"max-height:44px;max-width:160px;object-fit:contain;display:block\" />`);
+  if (b.stampUrl) parts.push(`<img src=\"${esc(b.stampUrl)}\" alt=\"Company Stamp\" style=\"max-height:70px;max-width:120px;object-fit:contain;opacity:0.9\" />`);
+  return `<div style=\"display:flex;align-items:flex-end;gap:12px;height:74px\">${parts.join('')}</div>`;
+}'''
+          new = '''function sigStampMarkup(b: ResolvedBranding, documentDate?: string): string {
+  if (!b.signatureUrl && !b.stampUrl) return '';
+  const parts: string[] = [];
+  if (b.signatureUrl) parts.push(`<img src=\"${esc(b.signatureUrl)}\" alt=\"Signature\" style=\"max-height:44px;max-width:160px;object-fit:contain;display:block\" />`);
+  if (b.stampUrl) {
+    const date = documentDate ? fmtDate(documentDate) : '';
+    parts.push(`<div style=\"position:relative;width:120px;height:70px;display:flex;align-items:center;justify-content:center\"><img src=\"${esc(b.stampUrl)}\" alt=\"Company Stamp\" style=\"width:120px;height:70px;object-fit:contain;opacity:0.9\" />${date ? `<span style=\"position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:1;white-space:nowrap;background:rgba(255,255,255,0.88);padding:1px 5px;border-radius:2px;color:#b91c1c;font-size:11px;font-weight:700;letter-spacing:.4px\">${esc(date)}</span>` : ''}</div>`);
+  }
+  return `<div style=\"display:flex;align-items:flex-end;gap:12px;height:74px\">${parts.join('')}</div>`;
+}'''
+          if old not in s:
+              raise SystemExit('Expected sigStampMarkup source was not found; refusing to modify file.')
+          s = s.replace(old, new, 1)
+          old_inv = '<p>Authorized By</p>\n      ${sigStampMarkup(b)}\n      <div class="sig-line"></div>'
+          new_inv = '<p>Authorized By</p>\n      ${sigStampMarkup(b, inv.created_at)}\n      <div class="sig-line"></div>'
+          old_quote = '<p>Prepared By</p>\n      ${sigStampMarkup(b)}\n      <div class="sig-line"></div>'
+          new_quote = '<p>Prepared By</p>\n      ${sigStampMarkup(b, q.created_at)}\n      <div class="sig-line"></div>'
+          if old_inv not in s or old_quote not in s:
+              raise SystemExit('Expected document call sites were not found; refusing to modify file.')
+          s = s.replace(old_inv, new_inv, 1).replace(old_quote, new_quote, 1)
+          if 'sigStampMarkup(b, inv.created_at)' not in s or 'sigStampMarkup(b, q.created_at)' not in s:
+              raise SystemExit('Patch verification failed.')
+          p.write_text(s)
+          PY
+          git diff --check
+          git diff -- lib/printDoc.ts
+      - name: Commit verified repair and remove temporary workflow
+        run: |
+          git config user.name 'GitHub Actions'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/repair-print-branding.yml
+          git add lib/printDoc.ts
+          git commit -m 'Fix dynamic document stamp date rendering'
+          git push origin HEAD:main
