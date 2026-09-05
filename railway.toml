@@ -1,0 +1,8 @@
+[build]
+buildCommand = "node scripts/build.cjs"
+
+[deploy]
+startCommand = "node index.runtime.cjs"
+healthcheckPath = "/api/health"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
