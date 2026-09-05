@@ -1,0 +1,14 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "OTh6s0Cy6kHxFPo3ePXhi"
+uri = "file://uniquepos-standalone.zip"
+type = "unspecified"
+title = "UniquePOS — Truehost deployment package"
+
+[[outputs]]
+id = "jh-co7tzT2or3LnRJrm5B"
+uri = "file://uniquepos-documentation.zip"
+type = "unspecified"
+title = "UniquePOS — Complete Documentation (9 guides)"
