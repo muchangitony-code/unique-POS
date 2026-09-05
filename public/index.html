@@ -4,20 +4,32 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
     <title>UniquePOS ERP</title>
-    <meta name="description" content="UniquePOS ERP — built on Replit. Update this description to reflect the app." />
+    <meta name="description" content="UniquePOS ERP" />
     <meta name="robots" content="index, follow" />
-    <meta property="og:title" content="UniquePOS ERP" />
-    <meta property="og:description" content="UniquePOS ERP — built on Replit. Update this description to reflect the app." />
-    <meta property="og:type" content="website" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="UniquePOS ERP" />
-    <meta name="twitter:description" content="UniquePOS ERP — built on Replit. Update this description to reflect the app." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script type="module" crossorigin src="/assets/index-u_5HbI_w.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-DvGT-pLb.css">
+    <style>
+      /* Production login fallback: keep controls opaque and above decorative layers. */
+      #root input[data-testid="input-email"],
+      #root input[data-testid="input-password"] {
+        background-color: #ffffff !important;
+        color: #172033 !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+        -webkit-text-fill-color: #172033 !important;
+        position: relative !important;
+        z-index: 2 !important;
+      }
+      #root input[data-testid="input-email"]::placeholder,
+      #root input[data-testid="input-password"]::placeholder {
+        color: #64748b !important;
+        opacity: 1 !important;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
