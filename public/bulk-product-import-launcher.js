@@ -3,7 +3,7 @@
 
   const BUTTON_ID = 'button-bulk-add-products';
   const MODAL_ID = 'uniquepos-bulk-import-overlay';
-  const TOKEN_KEYS = ['uniquepos.token', 'auth_token', 'token'];
+  const TOKEN_KEYS = ['token', 'uniquepos.token', 'auth_token'];
 
   // The POS may authenticate with an HttpOnly session cookie. Do not attach the
   // first token found in localStorage before trying that session: a stale Bearer

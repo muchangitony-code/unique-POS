@@ -6,6 +6,7 @@ import dashboardRouter from "./dashboard";
 import categoriesRouter from "./categories";
 import brandsRouter from "./brands";
 import productsRouter from "./products";
+import productsImportRouter from "./products-import";
 import inventoryRouter from "./inventory";
 import purchasesRouter from "./purchases";
 import customersRouter from "./customers";
@@ -74,6 +75,7 @@ router.use(dashboardRouter);
 router.use(categoriesRouter);
 router.use(brandsRouter);
 router.use(productsRouter);
+router.use(productsImportRouter);
 router.use(inventoryRouter);
 router.use(purchasesRouter);
 router.use(customersRouter);
@@ -91,3 +93,4 @@ router.use(branchesRouter);
 router.use(securityRouter);
 
 export default router;
+

@@ -34,7 +34,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   });
 
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'));
+  const [token, setToken] = useState<string | null>(() => {
+    const stored = localStorage.getItem('token');
+    if (!stored) return null;
+    try {
+      // Validate JWT structure: must have exactly 3 dot-separated parts
+      const parts = stored.split('.');
+      if (parts.length !== 3) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        return null;
+      }
+      return stored;
+    } catch {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      return null;
+    }
+  });
+
+  // Verify token freshness on app init by calling /api/auth/me
+  useEffect(() => {
+    if (!token) return;
+    const verifyToken = async () => {
+      try {
+        const response = await fetch('/api/auth/me', {
+          method: 'GET',
+          headers: { 'Authorization': `Bearer ${token}` },
+          credentials: 'include',
+        });
+        if (response.status === 401 || response.status === 403) {
+          // Token is invalid or expired
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          setToken(null);
+          setUser(null);
+          setAuthTokenGetter(null);
+        }
+      } catch (err) {
+        // Network error during verification; don't clear token yet
+      }
+    };
+    verifyToken();
+  }, []);
 
   // Keep the generated client's authorization source synchronized across
   // page reloads and login/logout transitions.
@@ -70,3 +112,4 @@ export const useAuth = () => {
   if (!context) throw new Error("useAuth must be used within an AuthProvider");
   return context;
 };
+
