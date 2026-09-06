@@ -9,13 +9,32 @@ import { ObjectStorageService } from "../lib/objectStorage";
 const router: IRouter = Router();
 const objectStorage = new ObjectStorageService();
 
+/**
+ * Convert every persisted storage representation into the canonical object path
+ * understood by ObjectStorageService. Historical branch rows may contain a raw
+ * `uploads/...` key rather than `/objects/uploads/...`; both are the same object
+ * and must receive the same existence validation before reaching any document UI.
+ */
+function branchLogoObjectPath(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return null;
+  if (/^uploads\//i.test(value)) return `/objects/${value}`;
+  if (/^objects\//i.test(value)) return `/${value}`;
+  if (/^\/objects\//i.test(value)) return value;
+  const m = value.match(/(?:^|\/)api\/storage\/objects\/(.+)$/i)
+    || value.match(/(?:^|\/)storage\/objects\/(.+)$/i);
+  if (m?.[1]) return `/objects/${m[1]}`;
+  const normalized = objectStorage.normalizeObjectEntityPath(value);
+  return normalized.startsWith("/objects/") ? normalized : null;
+}
+
 /** Central branch-branding serializer. Missing persisted logo objects are never returned as usable branding. */
 async function fmt(b: typeof branchesTable.$inferSelect) {
   let logoUrl = b.logoUrl;
   if (logoUrl && !/^https?:\/\//i.test(logoUrl) && !/^data:/i.test(logoUrl)) {
-    const normalized = objectStorage.normalizeObjectEntityPath(logoUrl);
-    if (normalized.startsWith("/objects/")) {
-      try { await objectStorage.getObjectEntityFile(normalized); }
+    const objectPath = branchLogoObjectPath(logoUrl);
+    if (objectPath) {
+      try { await objectStorage.getObjectEntityFile(objectPath); }
       catch { logoUrl = null; }
     }
   }
@@ -32,6 +51,6 @@ router.get("/branches/options", async (_req, res): Promise<void> => { const rows
 router.get("/branches/:id", async (req, res): Promise<void> => { const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10); const scope = getBranchScope(req); const [b] = await db.select().from(branchesTable).where(eq(branchesTable.id, id)); if (!b || (!scope.isSuper && b.id !== scope.userBranchId)) { res.status(404).json({ error: "Branch not found" }); return; } res.json(await fmt(b)); });
 router.post("/branches", requireSuperAdmin, async (req, res): Promise<void> => { const { name, code } = req.body as Record<string, unknown>; if (!name || !code) { res.status(400).json({ error: "name and code required" }); return; } const [existing] = await db.select().from(branchesTable).where(eq(branchesTable.code, String(code))); if (existing) { res.status(409).json({ error: "A branch with this code already exists" }); return; } const values = mapBody(req.body as Record<string, unknown>); const [b] = await db.insert(branchesTable).values(values as typeof branchesTable.$inferInsert).returning(); await logAudit(req, { action: "branch.created", entityType: "branch", entityId: b.id, description: `Created branch "${b.name}" (${b.code})` }); res.status(201).json(await fmt(b)); });
 router.patch("/branches/:id", requireSuperAdmin, async (req, res): Promise<void> => { const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10); const [existing] = await db.select().from(branchesTable).where(eq(branchesTable.id, id)); if (!existing) { res.status(404).json({ error: "Branch not found" }); return; } const body = req.body as Record<string, unknown>; if (body.code !== undefined && body.code !== existing.code) { const [dupe] = await db.select().from(branchesTable).where(eq(branchesTable.code, String(body.code))); if (dupe) { res.status(409).json({ error: "A branch with this code already exists" }); return; } } const values = mapBody(body); const [b] = Object.keys(values).length ? await db.update(branchesTable).set(values).where(eq(branchesTable.id, id)).returning() : [existing]; await logAudit(req, { action: "branch.updated", entityType: "branch", entityId: b.id, description: `Updated branch "${b.name}" (${b.code})` }); res.json(await fmt(b)); });
-router.delete("/branches/:id", requireSuperAdmin, async (req, res): Promise<void> => { const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10); const [existing] = await db.select().from(branchesTable).where(eq(branchesTable.id, id)); if (!existing) { res.status(404).json({ error: "Branch not found" }); return; } const count = async (t: any, col: any): Promise<number> => { const [{ c }] = await db.select({ c: sql<number>`count(*)` }).from(t).where(eq(col, id)); return Number(c); }; const counts: [string, number][] = [["sales", await count(salesTable, salesTable.branchId)], ["invoices", await count(invoicesTable, invoicesTable.branchId)], ["quotations", await count(quotationsTable, quotationsTable.branchId)], ["purchases", await count(purchasesTable, purchasesTable.branchId)], ["expenses", await count(expensesTable, expensesTable.branchId)], ["customers", await count(customersTable, customersTable.branchId)], ["suppliers", await count(suppliersTable, suppliersTable.branchId)], ["stock movements", await count(stockMovementsTable, stockMovementsTable.branchId)], ["product stock", await count(productStockTable, productStockTable.branchId)], ["users", await count(usersTable, usersTable.branchId)], ["audit records", await count(auditLogTable, auditLogTable.branchId)]]; const blocker = counts.find(([, n]) => n > 0); if (blocker) { res.status(409).json({ error: `Cannot delete a branch that has ${blocker[0]}. Deactivate it instead.`, has_records: true }); return; } await db.delete(branchesTable).where(eq(branchesTable.id, id)); await logAudit(req, { action: "branch.deleted", entityType: "branch", entityId: id, description: `Deleted branch "${existing.name}" (${existing.code})` }); res.sendStatus(204); });
+router.delete("/branches/:id", requireSuperAdmin, async (req, res): Promise<void> => { const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10); const [existing] = await db.select().from(branchesTable).where(eq(branchesTable.id, id)); if (!existing) { res.status(404).json({ error: "Branch not found" }); return; } const count = async (t: any, col: any): Promise<number> => { const [{ c }] = await db.select({ c: sql<number>`count(*)` }).from(t).where(eq(col, id)); return Number(c); }; const counts: [string, number][] = [["sales", await count(salesTable, salesTable.branchId)], ["invoices", await count(invoicesTable, invoicesTable.branchId)], ["quotations", await count(quotationsTable, quotationsTable.branchId)], ["purchases", await count(purchasesTable, purchasesTable.branchId)], ["expenses", await count(expensesTable, expensesTable.branchId)], ["customers", await count(customersTable, customersTable.branchId)], ["suppliers", await count(suppliersTable, suppliersTable.branchId)], ["product stock", await count(productStockTable, productStockTable.branchId)], ["users", await count(usersTable, usersTable.branchId)], ["audit records", await count(auditLogTable, auditLogTable.branchId)]]; const blocker = counts.find(([, n]) => n > 0); if (blocker) { res.status(409).json({ error: `Cannot delete a branch that has ${blocker[0]}. Deactivate it instead.`, has_records: true }); return; } await db.delete(branchesTable).where(eq(branchesTable.id, id)); await logAudit(req, { action: "branch.deleted", entityType: "branch", entityId: id, description: `Deleted branch "${existing.name}" (${existing.code})` }); res.sendStatus(204); });
 
 export default router;
