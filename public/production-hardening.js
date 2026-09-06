@@ -25,7 +25,6 @@
     document.querySelectorAll('#modalTitle').forEach(function (el) {
       if (el.textContent.trim() === 'Modal') el.textContent = '';
     });
-
     document.querySelectorAll('*').forEach(function (el) {
       if (el.children.length) return;
       var text = el.textContent.trim();
@@ -39,33 +38,25 @@
   function ensureInventoryBulkAddButton() {
     var route = String(location.hash || '').replace(/^#/, '').split('?')[0];
     if (route !== 'inventory') return;
-
     var root = document.getElementById('viewRoot');
     if (!root) return;
-
     var toolbar = root.querySelector('.module-toolbar');
     if (!toolbar) return;
     if (toolbar.querySelector('[data-action="bulk-add-products"]')) return;
-
     var group = toolbar.querySelector('.inline-group');
     if (!group) {
       group = document.createElement('div');
       group.className = 'inline-group';
       toolbar.prepend(group);
     }
-
     var button = document.createElement('button');
     button.type = 'button';
     button.className = 'btn btn-primary';
     button.setAttribute('data-action', 'bulk-add-products');
     button.innerHTML = '<i class="fa-solid fa-file-import"></i> Bulk Add Products';
-
     var productListButton = group.querySelector('[data-route="products"]');
-    if (productListButton) {
-      group.insertBefore(button, productListButton);
-    } else {
-      group.appendChild(button);
-    }
+    if (productListButton) group.insertBefore(button, productListButton);
+    else group.appendChild(button);
   }
 
   function bindBulkAddAction() {
@@ -75,12 +66,12 @@
       var button = event.target.closest('[data-action="bulk-add-products"]');
       if (!button) return;
       event.preventDefault();
-      location.hash = 'bulk-import';
+      // Invoke the first-class importer in public/app.js through its native action.
+      button.setAttribute('data-action', 'bulk-import-products');
+      button.click();
     });
   }
 
-  // Never allow the dashboard to display the old hard-coded demo KPIs.
-  // A zero is a valid live value; showing fabricated sales/till figures is not.
   function neutralizeDemoDashboard() {
     var route = String(location.hash || '').replace(/^#/, '').split('?')[0];
     if (route !== 'dashboard') return;
