@@ -1,0 +1,72 @@
+name: Repair bulk import
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/repair-bulk-import.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch existing importer without changing schema
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('product-bulk.cjs')
+          s = p.read_text()
+          # Refuse speculative edits: only add helpers if they are absent.
+          if 'function generateImportProductCode' not in s:
+              marker = "const fs = require('fs');"
+              if marker not in s:
+                  raise SystemExit('Expected importer marker not found; refusing patch')
+              helper = r'''
+
+function generateImportProductCode(row, index, usedCodes) {
+  const base = String(row['Product Name'] || row.product_name || 'PRODUCT')
+    .toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 18) || 'PRODUCT';
+  let n = Math.max(1, Number(index) + 1);
+  let code;
+  do { code = `${base}-${String(n).padStart(4, '0')}`; n += 1; } while (usedCodes.has(code));
+  usedCodes.add(code);
+  return code;
+}
+'''
+              s = s.replace(marker, marker + helper)
+          # Auto-fill blank Product Code/SKU while leaving supplied codes untouched.
+          if 'AUTO_CODE_BULK_IMPORT_V1' not in s:
+              anchor = "for (let i = 0; i < rows.length; i++) {"
+              if anchor not in s:
+                  raise SystemExit('Row processing loop not found; refusing patch')
+              replacement = "const usedImportCodes = new Set();\n  // AUTO_CODE_BULK_IMPORT_V1\n  " + anchor + "\n    const rawCode = rows[i]['Product Code'] || rows[i].product_code || rows[i].sku;\n    if (!String(rawCode || '').trim()) {\n      rows[i]['Product Code'] = generateImportProductCode(rows[i], i, usedImportCodes);\n    } else {\n      usedImportCodes.add(String(rawCode).trim().toUpperCase());\n    }"
+              s = s.replace(anchor, replacement, 1)
+          p.write_text(s)
+          PY
+      - name: Verify patch
+        run: |
+          grep -q 'AUTO_CODE_BULK_IMPORT_V1' product-bulk.cjs
+          grep -q 'function generateImportProductCode' product-bulk.cjs
+          git diff --check
+      - name: Commit verified importer repair
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if ! git diff --quiet; then
+            git add product-bulk.cjs
+            git commit -m 'Add automatic product codes to bulk import'
+            git push origin HEAD:main
+          fi
+      - name: Remove one-shot workflow
+        if: always()
+        run: |
+          git rm .github/workflows/repair-bulk-import.yml
+          git commit -m 'Remove one-shot bulk import repair workflow' || exit 0
+          git push origin HEAD:main || exit 0
