@@ -55,14 +55,35 @@ export function setBrandingCache(data: BrandingData | null): void { cache = data
 
 const clean = (v?: string | null): string => (v ?? '').trim();
 
+/**
+ * Convert every supported branding asset reference into an absolute browser URL.
+ * Storage object keys may arrive as /objects/..., objects/..., storage/..., or
+ * already-absolute URLs. Draft previews, print windows and PDF renderers then
+ * consume the exact same resolved URL instead of relying on document-relative paths.
+ */
 export function resolveAssetUrl(path: string | null | undefined): string | null {
-  if (!path) return null;
-  if (/^https?:\/\//i.test(path)) return path;
-  if (path.startsWith('/objects/')) {
-    const rel = `${getApiUrl()}storage${path}`;
-    try { return new URL(rel, window.location.href).href; } catch { return rel; }
+  const value = clean(path);
+  if (!value) return null;
+  if (/^(data:|blob:|https?:\/\/)/i.test(value)) return value;
+
+  const api = getApiUrl();
+  let relative = value;
+  if (value.startsWith('objects/')) relative = `/storage/${value}`;
+  else if (value.startsWith('/objects/')) relative = `storage${value}`;
+  else if (value.startsWith('/storage/')) relative = value.slice(1);
+  else if (value.startsWith('storage/')) relative = value;
+
+  try {
+    // Storage assets belong to the API origin. Other site-relative assets use
+    // the application origin. This keeps the resolver valid in previews,
+    // about:blank print windows and generated PDF/document contexts.
+    const base = /^(?:storage\/|\/storage\/)/.test(relative)
+      ? new URL(api, window.location.href).href
+      : window.location.href;
+    return new URL(relative, base).href;
+  } catch {
+    return relative;
   }
-  try { return new URL(path, window.location.href).href; } catch { return path; }
 }
 
 /** Company-level canonical branding. */
