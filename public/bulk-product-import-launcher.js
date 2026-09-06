@@ -1,26 +1,26 @@
 (() => {
   'use strict';
 
-  // The POS has a first-class bulk-import workflow in public/app.js. This launcher
-  // deliberately does not perform API requests itself: a second API client here
-  // previously bypassed the application's authenticated request path and caused
-  // every row to fail with 401. The Products-page shortcut now hands off to the
-  // native Bulk Import route, which uses the same token, branch scope and API
-  // client as the rest of the POS.
+  // Reuse the POS's native bulk importer. Do not navigate to a synthetic route
+  // and do not create a second API client: the application's existing action
+  // handler preserves authentication, branch scope and import validation.
   function install() {
     const add = document.querySelector('[data-testid="button-add-product"]');
-    if (!add || document.querySelector('[data-testid="button-bulk-add-products"]')) return false;
+    if (!add) return false;
 
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.dataset.testid = 'button-bulk-add-products';
-    button.textContent = 'Bulk Add Products';
-    button.style.cssText = 'height:40px;padding:0 16px;border:1px solid #cbd5e1;border-radius:6px;background:transparent;color:inherit;font-weight:600;cursor:pointer';
-    button.addEventListener('click', () => {
-      location.hash = 'bulk-import';
-    });
+    let button = document.querySelector('[data-testid="button-bulk-add-products"]');
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.testid = 'button-bulk-add-products';
+      button.textContent = 'Bulk Add Products';
+      button.style.cssText = 'height:40px;padding:0 16px;border:1px solid #cbd5e1;border-radius:6px;background:transparent;color:inherit;font-weight:600;cursor:pointer';
+      add.parentElement.insertBefore(button, add);
+    }
 
-    add.parentElement.insertBefore(button, add);
+    // The native delegated handler in public/app.js handles this action.
+    button.dataset.action = 'bulk-import-products';
+    button.removeAttribute('onclick');
     return true;
   }
 
