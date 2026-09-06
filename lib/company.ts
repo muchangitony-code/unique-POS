@@ -56,33 +56,64 @@ export function setBrandingCache(data: BrandingData | null): void { cache = data
 const clean = (v?: string | null): string => (v ?? '').trim();
 
 /**
- * Convert every supported branding asset reference into an absolute browser URL.
- * Storage object keys may arrive as /objects/..., objects/..., storage/..., or
- * already-absolute URLs. Draft previews, print windows and PDF renderers then
- * consume the exact same resolved URL instead of relying on document-relative paths.
+ * Convert every supported branding asset reference into the current public
+ * storage URL. Older saved branding rows may contain /objects/... or
+ * /api/storage/objects/... while current uploads return /storage/objects/....
+ * Normalize all of those forms at this single shared boundary so logo, stamp
+ * and signature consumers cannot drift apart.
  */
 export function resolveAssetUrl(path: string | null | undefined): string | null {
   const value = clean(path);
   if (!value) return null;
-  if (/^(data:|blob:|https?:\/\/)/i.test(value)) return value;
 
-  const api = getApiUrl();
-  let relative = value;
-  if (value.startsWith('objects/')) relative = `/storage/${value}`;
-  else if (value.startsWith('/objects/')) relative = `storage${value}`;
-  else if (value.startsWith('/storage/')) relative = value.slice(1);
-  else if (value.startsWith('storage/')) relative = value;
+  const apiOrigin = new URL(getApiUrl(), window.location.href).origin;
+  const apiBase = new URL(getApiUrl(), window.location.href).href;
 
+  // Absolute data/blob URLs are already directly consumable.
+  if (/^(data:|blob:)/i.test(value)) return value;
+
+  // Absolute HTTP(S) URLs are preserved unless they point at one of the
+  // application's known object-storage paths. This repairs legacy saved URLs
+  // without hijacking legitimate external branding assets.
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const url = new URL(value);
+      const pathname = url.pathname.replace(/^\/+/, '');
+      const objectMatch = pathname.match(/^(?:api\/)?storage\/objects\/(.+)$/i)
+        || pathname.match(/^objects\/(.+)$/i)
+        || pathname.match(/^api\/objects\/(.+)$/i);
+      if (!objectMatch) return value;
+      const objectPath = `storage/objects/${objectMatch[1]}`;
+      return new URL(objectPath, apiBase).href;
+    } catch {
+      return value;
+    }
+  }
+
+  const normalized = value.replace(/^\/+/, '');
+  let storagePath: string | null = null;
+
+  if (/^uploads\//i.test(normalized)) {
+    storagePath = `storage/objects/${normalized}`;
+  } else if (/^objects\/uploads\//i.test(normalized)) {
+    storagePath = `storage/${normalized}`;
+  } else if (/^storage\/objects\/uploads\//i.test(normalized)) {
+    storagePath = normalized;
+  } else {
+    const apiObject = normalized.match(/^api\/storage\/objects\/(.+)$/i)
+      || normalized.match(/^storage\/objects\/(.+)$/i)
+      || normalized.match(/^api\/objects\/(.+)$/i)
+      || normalized.match(/^objects\/(.+)$/i);
+    if (apiObject?.[1]) storagePath = `storage/objects/${apiObject[1]}`;
+  }
+
+  if (storagePath) return new URL(storagePath, apiBase).href;
+
+  // Preserve normal application-relative assets on the app origin.
   try {
-    // Storage assets belong to the API origin. Other site-relative assets use
-    // the application origin. This keeps the resolver valid in previews,
-    // about:blank print windows and generated PDF/document contexts.
-    const base = /^(?:storage\/|\/storage\/)/.test(relative)
-      ? new URL(api, window.location.href).href
-      : window.location.href;
-    return new URL(relative, base).href;
+    return new URL(value, window.location.href).href;
   } catch {
-    return relative;
+    return value;
   }
 }
 
