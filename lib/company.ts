@@ -66,7 +66,6 @@ export function resolveAssetUrl(path: string | null | undefined): string | null 
   const value = clean(path);
   if (!value) return null;
 
-  const apiOrigin = new URL(getApiUrl(), window.location.href).origin;
   const apiBase = new URL(getApiUrl(), window.location.href).href;
 
   // Absolute data/blob URLs are already directly consumable.
