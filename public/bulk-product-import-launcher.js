@@ -5,16 +5,35 @@
   const MODAL_ID = 'uniquepos-bulk-import-overlay';
   const TOKEN_KEYS = ['uniquepos.token', 'auth_token', 'token'];
 
-  function authHeaders(extra) {
-    const headers = Object.assign({}, extra || {});
-    for (const key of TOKEN_KEYS) {
-      const token = localStorage.getItem(key);
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-        break;
-      }
+  // The POS may authenticate with an HttpOnly session cookie. Do not attach the
+  // first token found in localStorage before trying that session: a stale Bearer
+  // token overrides a perfectly valid cookie and produces "Invalid or expired token".
+  function storedTokens() {
+    const seen = new Set();
+    return TOKEN_KEYS.map((key) => localStorage.getItem(key)).filter((token) => {
+      if (!token || seen.has(token)) return false;
+      seen.add(token);
+      return true;
+    });
+  }
+
+  async function authenticatedFetch(url, options) {
+    const base = Object.assign({}, options || {});
+    base.credentials = 'include';
+    base.headers = Object.assign({}, base.headers || {});
+
+    // Prefer the authenticated browser session used by the live POS.
+    let response = await fetch(url, base);
+    if (response.status !== 401) return response;
+
+    // Some deployments use Bearer authentication instead. Retry only after the
+    // cookie/session attempt fails, rather than allowing a stale token to poison it.
+    for (const token of storedTokens()) {
+      const headers = Object.assign({}, base.headers, { Authorization: `Bearer ${token}` });
+      response = await fetch(url, Object.assign({}, base, { headers }));
+      if (response.status !== 401) return response;
     }
-    return headers;
+    return response;
   }
 
   function closeModal() {
@@ -75,16 +94,15 @@
       const form = new FormData();
       form.append('file', file, file.name || 'product-import');
       form.append('source_name', file.name || 'Uploaded file');
-      const upload = await fetch('/api/products/imports/upload-and-parse', { method: 'POST', headers: authHeaders(), credentials: 'include', body: form });
+      const upload = await authenticatedFetch('/api/products/imports/upload-and-parse', { method: 'POST', body: form });
       if (!upload.ok) throw new Error(await readError(upload));
       const job = await upload.json();
       const jobId = job?.id || job?.job?.id || job?.data?.id;
       if (!jobId) throw new Error('The server did not return an import job ID.');
       setStatus('File validated. Importing products…');
-      const start = await fetch(`/api/products/imports/${encodeURIComponent(jobId)}/start`, {
+      const start = await authenticatedFetch(`/api/products/imports/${encodeURIComponent(jobId)}/start`, {
         method: 'POST',
-        headers: authHeaders({ 'Content-Type': 'application/json' }),
-        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ on_duplicate: 'update', recategorize: false })
       });
       if (!start.ok) throw new Error(await readError(start));
