@@ -24,13 +24,13 @@ function BranchSwitcher() {
   if (!canSwitch) return null;
 
   return (
-    <div className="flex items-center gap-2">
-      <Building2 className="h-4 w-4 text-muted-foreground" />
+    <div className="flex items-center gap-2 min-w-0">
+      <Building2 className="hidden sm:block h-4 w-4 shrink-0 text-muted-foreground" />
       <Select
         value={activeBranchId == null ? ALL_BRANCHES : String(activeBranchId)}
         onValueChange={(v) => setActiveBranch(v === ALL_BRANCHES ? null : Number(v))}
       >
-        <SelectTrigger className="h-9 w-[180px]" data-testid="select-branch-view">
+        <SelectTrigger className="h-9 w-[140px] sm:w-[180px]" data-testid="select-branch-view">
           <SelectValue placeholder="All Branches" />
         </SelectTrigger>
         <SelectContent>
@@ -44,23 +44,36 @@ function BranchSwitcher() {
   );
 }
 
-export function TopNav({ title = "Overview" }: { title?: string }) {
+interface TopNavProps {
+  title?: string;
+  onMenuClick?: () => void;
+}
+
+export function TopNav({ title = "Overview", onMenuClick }: TopNavProps) {
   const { theme, setTheme } = useTheme();
   const { user, logout } = useAuth();
 
   return (
-    <header className="flex h-16 shrink-0 items-center justify-between border-b bg-card px-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" className="md:hidden">
+    <header className="flex h-16 shrink-0 items-center justify-between border-b bg-card px-3 sm:px-6 gap-2">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-4">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="md:hidden shrink-0"
+          onClick={onMenuClick}
+          aria-label="Open navigation menu"
+          data-testid="button-mobile-menu"
+        >
           <Menu className="h-5 w-5" />
         </Button>
-        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+        <h1 className="min-w-0 truncate text-xl font-semibold tracking-tight">{title}</h1>
       </div>
-      <div className="flex items-center gap-4">
+      <div className="flex min-w-0 items-center justify-end gap-1 sm:gap-4">
         <BranchSwitcher />
         <Button
           variant="ghost"
           size="icon"
+          className="hidden sm:inline-flex shrink-0"
           onClick={() => setTheme(theme === "light" ? "dark" : "light")}
           data-testid="button-theme-toggle"
         >
@@ -68,11 +81,12 @@ export function TopNav({ title = "Overview" }: { title?: string }) {
           <Moon className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
           <span className="sr-only">Toggle theme</span>
         </Button>
-        <NotificationBell />
-        
+        <div className="hidden sm:block">
+          <NotificationBell />
+        </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="rounded-full h-8 w-8 bg-muted" data-testid="button-user-menu">
+            <Button variant="ghost" size="icon" className="rounded-full h-8 w-8 shrink-0 bg-muted" data-testid="button-user-menu">
               <User className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
