@@ -10,7 +10,7 @@ import { formatCurrency } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Search, Plus, Minus, Trash2, ShoppingCart, User, CreditCard, Barcode, Camera, X } from 'lucide-react';
+import { Search, Plus, Minus, Trash2, ShoppingCart, User, CreditCard, Barcode, Camera, X, Printer } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
@@ -286,6 +286,32 @@ export default function POS() {
     setIsScanningCamera(false);
   };
 
+  const handlePrintReceipt = () => {
+    if (!receiptData) return;
+    printReceipt({
+      receipt_number:  receiptData.receipt_number,
+      cashier_name:    receiptData.cashier_name,
+      customer_name:   receiptData.customer_name,
+      created_at:      receiptData.created_at,
+      payment_method:  receiptData.payment_method,
+      items:           receiptData.items,
+      subtotal:        receiptData.subtotal ?? receiptData.total,
+      discount_amount: receiptData.discount_amount ?? 0,
+      total:           receiptData.total,
+      amount_paid:     receiptData.amount_paid,
+      change:          receiptData.change,
+      payment:         toPaymentDetails(settings),
+    }, branchMap.get(receiptData.branch_id));
+  };
+
+  const handleNewSale = () => {
+    setReceiptData(null);
+    setCart([]);
+    setAmountPaidInput('');
+    setCustomerId('');
+    setPaymentMethod('cash');
+  };
+
   return (
     <div className="flex flex-col md:flex-row h-[calc(100vh-4rem)] overflow-hidden">
       {/* Products Section */}
@@ -551,104 +577,100 @@ export default function POS() {
         </DialogContent>
       </Dialog>
 
-      {/* Receipt Modal */}
-      <Dialog open={!!receiptData} onOpenChange={() => setReceiptData(null)}>
-        <DialogContent className="sm:max-w-[400px]">
+      {/* Receipt Modal — DETERMINISTIC & LOCKED */}
+      <Dialog open={!!receiptData} onOpenChange={() => {}} modal={true}>
+        <DialogContent className="sm:max-w-[500px] fixed" onPointerDownOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
           <DialogHeader>
-            <DialogTitle className="flex items-center justify-between pr-6">
-              <span>Receipt</span>
-              {receiptData && (
-                <button
-                  className="text-xs text-primary hover:underline flex items-center gap-1"
-                  onClick={() =>
-                    printReceipt({
-                      receipt_number:  receiptData.receipt_number,
-                      cashier_name:    receiptData.cashier_name,
-                      customer_name:   receiptData.customer_name,
-                      created_at:      receiptData.created_at,
-                      payment_method:  receiptData.payment_method,
-                      items:           receiptData.items,
-                      subtotal:        receiptData.subtotal ?? receiptData.total,
-                      discount_amount: receiptData.discount_amount ?? 0,
-                      total:           receiptData.total,
-                      amount_paid:     receiptData.amount_paid,
-                      change:          receiptData.change,
-                      payment:         toPaymentDetails(settings),
-                    }, branchMap.get(receiptData.branch_id))
-                  }
-                >
-                  🖨 Print
-                </button>
-              )}
-            </DialogTitle>
+            <DialogTitle className="text-xl font-bold">Sale Complete ✓</DialogTitle>
           </DialogHeader>
           {receiptData && (
-            <div className="space-y-4 font-mono text-sm py-4">
-              {/* Branded header */}
-              <div className="text-center space-y-1 border-b border-dashed pb-4">
-                <img
-                  src={receiptBranding.logoUrl}
-                  alt="Logo"
-                  className="w-12 h-12 object-contain mx-auto rounded"
-                />
-                <p className="font-bold text-base text-primary">{receiptBranding.name}</p>
-                <p className="text-xs text-muted-foreground">{receiptBranding.addressLine}</p>
-                <p className="text-xs text-muted-foreground">{receiptBranding.phone}</p>
-                <div className="pt-2 space-y-0.5">
-                  <p>Receipt #: {receiptData.receipt_number}</p>
-                  <p className="text-muted-foreground">{new Date(receiptData.created_at).toLocaleString('en-KE')}</p>
-                  <p className="text-muted-foreground">Cashier: {receiptData.cashier_name || 'Staff'}</p>
-                </div>
-              </div>
-              
-              <div className="space-y-2 border-b border-dashed pb-4">
-                <div className="flex font-bold border-b border-dashed pb-1">
-                  <span className="flex-1">Item</span>
-                  <span className="w-10 text-right">Qty</span>
-                  <span className="w-20 text-right">Total</span>
-                </div>
-                {receiptData.items.map((item: any, i: number) => (
-                  <div key={i} className="flex">
-                    <span className="flex-1 truncate pr-2">{item.product_name}</span>
-                    <span className="w-10 text-right">{item.quantity}</span>
-                    <span className="w-20 text-right">{formatCurrency(item.total)}</span>
+            <div className="space-y-6">
+              {/* Receipt Display */}
+              <div className="bg-muted/50 rounded-lg p-6 font-mono text-sm max-h-[50vh] overflow-y-auto">
+                {/* Branded header */}
+                <div className="text-center space-y-2 border-b border-dashed pb-4 mb-4">
+                  <img
+                    src={receiptBranding.logoUrl}
+                    alt="Logo"
+                    className="w-16 h-16 object-contain mx-auto rounded"
+                  />
+                  <p className="font-bold text-base text-primary">{receiptBranding.name}</p>
+                  <p className="text-xs text-muted-foreground">{receiptBranding.addressLine}</p>
+                  <p className="text-xs text-muted-foreground">{receiptBranding.phone}</p>
+                  <div className="pt-2 space-y-0.5 text-xs">
+                    <p className="font-semibold">Receipt #: {receiptData.receipt_number}</p>
+                    <p className="text-muted-foreground">{new Date(receiptData.created_at).toLocaleString('en-KE')}</p>
+                    <p className="text-muted-foreground">Cashier: {receiptData.cashier_name || 'Staff'}</p>
                   </div>
-                ))}
+                </div>
+                
+                {/* Items Table */}
+                <div className="space-y-2 border-b border-dashed pb-4 mb-4">
+                  <div className="flex font-bold border-b border-dashed pb-1 text-xs">
+                    <span className="flex-1">Item</span>
+                    <span className="w-10 text-right">Qty</span>
+                    <span className="w-20 text-right">Total</span>
+                  </div>
+                  {receiptData.items.map((item: any, i: number) => (
+                    <div key={i} className="flex text-xs">
+                      <span className="flex-1 truncate pr-2">{item.product_name}</span>
+                      <span className="w-10 text-right">{item.quantity}</span>
+                      <span className="w-20 text-right">{formatCurrency(item.total)}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Totals */}
+                <div className="space-y-2 mb-4">
+                  {(receiptData.discount_amount > 0) && (
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>Discount</span>
+                      <span>- {formatCurrency(receiptData.discount_amount)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between font-bold text-base border-t border-dashed pt-2">
+                    <span>TOTAL</span>
+                    <span>{formatCurrency(receiptData.total)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Paid ({receiptData.payment_method})</span>
+                    <span>{formatCurrency(receiptData.amount_paid)}</span>
+                  </div>
+                  {receiptData.change > 0 && (
+                    <div className="flex justify-between font-semibold text-green-600 text-sm">
+                      <span>Change</span>
+                      <span>{formatCurrency(receiptData.change)}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer */}
+                <div className="text-center pt-4 border-t border-dashed text-xs text-muted-foreground">
+                  <p className="font-medium text-primary mb-1">
+                    {receiptBranding.documentFooter || `Thank you for choosing ${receiptBranding.name}!`}
+                  </p>
+                  <p>KRA PIN: {receiptBranding.kraPin}</p>
+                </div>
               </div>
 
-              <div className="space-y-1">
-                {(receiptData.discount_amount > 0) && (
-                  <div className="flex justify-between text-muted-foreground">
-                    <span>Discount</span>
-                    <span>- {formatCurrency(receiptData.discount_amount)}</span>
-                  </div>
-                )}
-                <div className="flex justify-between font-bold text-base border-t border-dashed pt-2">
-                  <span>TOTAL</span>
-                  <span>{formatCurrency(receiptData.total)}</span>
-                </div>
-                <div className="flex justify-between text-muted-foreground">
-                  <span>Paid ({receiptData.payment_method})</span>
-                  <span>{formatCurrency(receiptData.amount_paid)}</span>
-                </div>
-                {receiptData.change > 0 && (
-                  <div className="flex justify-between font-medium text-green-600">
-                    <span>Change</span>
-                    <span>{formatCurrency(receiptData.change)}</span>
-                  </div>
-                )}
+              {/* Action Buttons — PROMINENT & MANDATORY */}
+              <div className="flex gap-3">
+                <Button 
+                  onClick={handlePrintReceipt}
+                  className="flex-1 h-12 text-base font-bold bg-blue-600 hover:bg-blue-700"
+                  data-testid="button-print-receipt"
+                >
+                  <Printer className="mr-2 h-5 w-5" />
+                  Print Receipt
+                </Button>
+                <Button 
+                  onClick={handleNewSale}
+                  className="flex-1 h-12 text-base font-bold bg-green-600 hover:bg-green-700"
+                  data-testid="button-new-sale"
+                >
+                  New Sale
+                </Button>
               </div>
-
-              <div className="text-center pt-4 border-t border-dashed text-muted-foreground">
-                <p className="font-medium text-primary">
-                  {receiptBranding.documentFooter || `Thank you for choosing ${receiptBranding.name}!`}
-                </p>
-                <p className="text-xs mt-1">KRA PIN: {receiptBranding.kraPin}</p>
-              </div>
-
-              <Button className="w-full mt-2" onClick={() => setReceiptData(null)}>
-                New Sale
-              </Button>
             </div>
           )}
         </DialogContent>
@@ -656,3 +678,4 @@ export default function POS() {
     </div>
   );
 }
+
