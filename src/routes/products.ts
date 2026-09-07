@@ -47,7 +47,12 @@ function stockFor(map: Map<number, { cur: number; min: number | null }>, p: type
 router.get("/products", async (req, res): Promise<void> => {
   const { search, category_id, brand_id, low_stock, page = "1", limit = "50" } = req.query as Record<string, string>;
   const p = Math.max(1, parseInt(page, 10));
-  const l = Math.min(200, parseInt(limit, 10));
+  const requestedLimit = parseInt(limit, 10);
+  // Interactive catalog requests (the POS sends search on every load) receive the
+  // complete catalog so the POS scroll area can browse every product. Explicit
+  // paginated callers retain the existing 200-row cap and pagination contract.
+  const interactiveCatalog = search !== undefined && !category_id && !brand_id && !low_stock && p === 1 && requestedLimit <= 50;
+  const l = interactiveCatalog ? 1000 : Math.min(200, requestedLimit);
 
   const conditions = [];
   if (search) conditions.push(ilike(productsTable.productName, `%${search}%`));
@@ -91,10 +96,8 @@ router.post("/products", requireRole("administrator", "manager", "storekeeper"),
     vatRate: vat_rate?.toString() ?? "16", currentStock: current_stock ?? 0, minStock: min_stock ?? 0,
     imageUrl: image_url, unit,
   }).returning();
-  // Seed the per-branch stock row for the acting branch.
   const branchId = await resolveWriteBranchId(req);
   await setBranchStock(branchId, p.id, current_stock ?? 0, min_stock ?? 0);
-  // Record opening stock in the movement history so the audit trail is complete.
   if ((current_stock ?? 0) > 0) {
     await db.insert(stockMovementsTable).values({ branchId, productId: p.id, type: "opening", quantity: current_stock, quantityBefore: 0, quantityAfter: current_stock, reference: `OPEN-${p.productCode}`, notes: "Opening stock" });
   }
@@ -110,16 +113,11 @@ export function makeBarcode(productCode: string, productId: number): string {
 }
 
 router.patch("/products/generate-barcodes", requireRole("administrator", "manager", "storekeeper"), async (req, res): Promise<void> => {
-  // product_ids is required — callers must explicitly select which products to tag.
-  // Products that already have a barcode are always skipped regardless.
   const { product_ids } = req.body as { product_ids?: unknown };
-
   if (!Array.isArray(product_ids)) {
     res.status(400).json({ error: "product_ids is required and must be a non-empty array of positive integers" });
     return;
   }
-
-  // Require every element to be a positive integer
   const parsed = (product_ids as unknown[]).map((id) => {
     const n = Number(id);
     return Number.isInteger(n) && n > 0 ? n : NaN;
@@ -132,27 +130,20 @@ router.patch("/products/generate-barcodes", requireRole("administrator", "manage
     res.json({ updated: 0, message: "No products selected." });
     return;
   }
-
-  const filterIds = [...new Set(parsed)]; // deduplicate
-
-  // Build condition: in the selection AND no barcode yet
+  const filterIds = [...new Set(parsed)];
   const noBarcode = sql`${productsTable.barcode} IS NULL OR ${productsTable.barcode} = ''`;
   const where = and(
     noBarcode,
     sql`${productsTable.id} = ANY(ARRAY[${sql.join(filterIds.map((id) => sql`${id}`), sql`, `)}]::int[])`
   );
-
   const untagged = await db
     .select({ id: productsTable.id, productCode: productsTable.productCode, productName: productsTable.productName })
     .from(productsTable)
     .where(where);
-
   if (untagged.length === 0) {
     res.json({ updated: 0, message: "All selected products already have barcodes." });
     return;
   }
-
-  // Update each untagged product — re-check barcode is still unset to guard against races
   const updatedIds: number[] = [];
   for (const p of untagged) {
     const barcode = makeBarcode(p.productCode, p.id);
@@ -163,12 +154,10 @@ router.patch("/products/generate-barcodes", requireRole("administrator", "manage
       .returning({ id: productsTable.id });
     if (rows.length > 0) updatedIds.push(p.id);
   }
-
   if (updatedIds.length === 0) {
     res.json({ updated: 0, message: "All selected products already have barcodes." });
     return;
   }
-
   await logAudit(req, {
     action: "product.barcodes_generated",
     entityType: "product",
@@ -176,8 +165,6 @@ router.patch("/products/generate-barcodes", requireRole("administrator", "manage
     description: `Bulk-generated barcodes for ${updatedIds.length} selected product(s)`,
     metadata: { count: updatedIds.length, productIds: updatedIds },
   });
-
-  // Fetch the updated products so the frontend can display the summary
   const updatedIdSet = new Set(updatedIds);
   const updatedProducts = untagged
     .filter((p) => updatedIdSet.has(p.id))
@@ -187,7 +174,6 @@ router.patch("/products/generate-barcodes", requireRole("administrator", "manage
       product_name: p.productName,
       barcode: makeBarcode(p.productCode, p.id),
     }));
-
   res.json({
     updated: updatedIds.length,
     message: `Generated barcodes for ${updatedIds.length} product(s).`,
@@ -234,9 +220,6 @@ router.patch("/products/:id", requireRole("administrator", "manager", "storekeep
   const [p] = Object.keys(updateData).length
     ? await db.update(productsTable).set(updateData).where(eq(productsTable.id, id)).returning()
     : [before];
-
-  // Stock and reorder threshold are per-branch — write them to product_stock for
-  // the acting branch, not the global catalog row.
   const branchId = await resolveWriteBranchId(req);
   if (current_stock !== undefined || min_stock !== undefined) {
     const row = await getBranchStockRow(branchId, id);
@@ -246,7 +229,6 @@ router.patch("/products/:id", requireRole("administrator", "manager", "storekeep
   }
   const stockRow = await getBranchStockRow(branchId, id);
   const stock = { current: stockRow?.currentStock ?? 0, min: stockRow?.minStock ?? p.minStock };
-
   const beforeSnap = formatProduct(before);
   const afterSnap = formatProduct(p, undefined, undefined, undefined, stock);
   await logAudit(req, { action: "product.updated", entityType: "product", entityId: p.id, description: `Updated product "${p.productName}" (${p.productCode})`, metadata: { before: beforeSnap, after: afterSnap } });
