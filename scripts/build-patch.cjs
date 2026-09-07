@@ -11,7 +11,7 @@ if (fs.existsSync(bundledServer)) {
   const original = fs.readFileSync(bundledServer, 'utf8');
   const patched = original
     .replace('"thread-stream-worker": pinoBundlerAbsolutePath("./thread-stream-worker.cjs")', '"thread-stream-worker": require.resolve("thread-stream/lib/worker.js")')
-    .replace('"pino-worker": pinoBundlerAbsolutePath("./pino-worker.cjs")', '"pino-worker": path.join(path.dirname(require.resolve("pino")), "lib", "worker.js")')
+    .replace('"pino-worker": pinoBundlerAbsolutePath("./pino-worker.cjs")', '"pino-worker": require("node:path").join(require("node:path").dirname(require.resolve("pino")), "lib", "worker.js")')
     .replace('"pino/file": pinoBundlerAbsolutePath("./pino-file.cjs")', '"pino/file": require.resolve("pino/file")')
     .replace('"pino-pretty": pinoBundlerAbsolutePath("./pino-pretty.cjs")', '"pino-pretty": require.resolve("pino-pretty")');
   if (patched !== original) {
