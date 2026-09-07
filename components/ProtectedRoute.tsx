@@ -1,5 +1,6 @@
 import React from 'react';
 import { Redirect, useLocation } from 'wouter';
+import { useAuth } from '@/contexts/AuthContext';
 import { getTier, type FunctionalTier } from '@/lib/permissions';
 import { Sidebar } from './layout/Sidebar';
 import { TopNav } from './layout/TopNav';
@@ -59,12 +60,4 @@ export function ProtectedRoute({ children, title, allowedTiers }: ProtectedRoute
       </div>
     </div>
   );
-}
-
-function useAuth() {
-  // Kept as a local import-compatible hook wrapper so the layout remains explicit.
-  // The actual authentication state comes from AuthContext.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { useAuth: authHook } = require('@/contexts/AuthContext') as typeof import('@/contexts/AuthContext');
-  return authHook();
 }
