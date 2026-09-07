@@ -1,0 +1,27 @@
+{
+  "favicon.svg": {
+    "file": "assets/favicon-CE5jotxA.svg",
+    "src": "favicon.svg"
+  },
+  "index.html": {
+    "file": "assets/index-CUUkANbT.js",
+    "name": "index",
+    "src": "index.html",
+    "isEntry": true,
+    "dynamicImports": [
+      "node_modules/@zxing/browser/esm/index.js"
+    ],
+    "css": [
+      "assets/index-5qCbRrKg.css"
+    ],
+    "assets": [
+      "assets/favicon-CE5jotxA.svg"
+    ]
+  },
+  "node_modules/@zxing/browser/esm/index.js": {
+    "file": "assets/index-CJ5sQYvB.js",
+    "name": "index",
+    "src": "node_modules/@zxing/browser/esm/index.js",
+    "isDynamicEntry": true
+  }
+}
