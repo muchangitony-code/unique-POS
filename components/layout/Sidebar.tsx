@@ -18,6 +18,7 @@ import {
   LogOut,
   ScrollText,
   ShieldAlert,
+  X,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getTier, type FunctionalTier } from '@/lib/permissions';
@@ -44,10 +45,10 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/quotations', label: 'Quotations',  icon: FileText,        tiers: ['administrator', 'manager', 'sales_cashier'] },
   { href: '/invoices',   label: 'Invoices',    icon: Receipt,         tiers: ['administrator', 'manager', 'sales_cashier'] },
   { href: '/expenses',   label: 'Expenses',    icon: CreditCard,      tiers: ['administrator'] },
-  { href: '/reports',    label: 'Reports',     icon: BarChart3,       tiers: ['administrator', 'manager'] },
-  { href: '/audit-log',        label: 'Audit Log',      icon: ScrollText,  tiers: ['administrator'] },
+  { href: '/reports',    label: 'Reports',     icon: BarChart3,        tiers: ['administrator', 'manager'] },
+  { href: '/audit-log',        label: 'Audit Log',       icon: ScrollText,  tiers: ['administrator'] },
   { href: '/security-alerts', label: 'Security Alerts', icon: ShieldAlert, tiers: ['administrator'] },
-  { href: '/users',           label: 'Users',           icon: UserCog,     tiers: ['administrator'] },
+  { href: '/users',            label: 'Users',           icon: UserCog,     tiers: ['administrator'] },
   { href: '/settings',   label: 'Settings',    icon: Settings,        tiers: ['administrator'] },
 ];
 
@@ -58,40 +59,63 @@ const TIER_LABEL: Record<FunctionalTier, string> = {
   storekeeper:   'Storekeeper',
 };
 
-export function Sidebar() {
+interface SidebarProps {
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+}
+
+function SidebarContent({ onMobileClose, mobile = false }: { onMobileClose?: () => void; mobile?: boolean }) {
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const { branding } = useBranding();
   const tier = getTier(user?.role);
   const visibleItems = NAV_ITEMS.filter((item) => !!tier && item.tiers.includes(tier));
 
+  const handleLogout = () => {
+    onMobileClose?.();
+    logout();
+  };
+
   return (
-    <div className="hidden md:flex w-64 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
-      {/* Logo / brand header */}
-      <div className="flex h-16 items-center gap-3 px-4 border-b border-sidebar-border">
+    <div className="flex h-full w-full flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+      <div className="flex h-16 shrink-0 items-center gap-3 px-4 border-b border-sidebar-border">
         <img
           src={branding.logoUrl}
           alt={branding.name}
           className="w-9 h-9 object-contain rounded-lg flex-shrink-0"
           style={{ background: 'white', padding: '2px' }}
         />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-bold leading-tight text-white truncate">{branding.name}</p>
           <p className="text-[10px] leading-tight truncate" style={{ color: 'hsl(var(--sidebar-primary))' }}>
             {branding.tagline}
           </p>
         </div>
+        {mobile && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="shrink-0 text-sidebar-foreground hover:bg-sidebar-accent"
+            onClick={onMobileClose}
+            aria-label="Close navigation menu"
+            data-testid="button-mobile-menu-close"
+          >
+            <X className="h-5 w-5" />
+          </Button>
+        )}
       </div>
 
       <ScrollArea className="flex-1 py-4">
-        <nav className="space-y-0.5 px-2">
+        <nav className="space-y-0.5 px-2" aria-label="Main navigation">
           {visibleItems.map((item) => {
             const isActive = location.startsWith(item.href);
             return (
               <Link key={item.href} href={item.href} data-testid={`nav-${item.label.toLowerCase()}`}>
                 <div
+                  onClick={onMobileClose}
                   className={cn(
-                    'flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors cursor-pointer',
+                    'flex items-center gap-3 rounded-md px-3 py-3 text-sm font-medium transition-colors cursor-pointer',
+                    'min-h-[44px] touch-manipulation',
                     isActive
                       ? 'bg-sidebar-accent text-sidebar-primary font-semibold'
                       : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
@@ -108,7 +132,7 @@ export function Sidebar() {
         </nav>
       </ScrollArea>
 
-      <div className="p-4">
+      <div className="shrink-0 p-4">
         <Separator className="mb-4 bg-sidebar-border" />
         <div className="flex items-center gap-2 mb-3 min-w-0">
           <div
@@ -126,8 +150,8 @@ export function Sidebar() {
         </div>
         <Button
           variant="outline"
-          className="w-full justify-start border-sidebar-border bg-transparent text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground text-sm"
-          onClick={logout}
+          className="w-full min-h-[44px] justify-start border-sidebar-border bg-transparent text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground text-sm touch-manipulation"
+          onClick={handleLogout}
           data-testid="button-logout"
         >
           <LogOut className="mr-2 h-4 w-4" />
@@ -135,5 +159,29 @@ export function Sidebar() {
         </Button>
       </div>
     </div>
+  );
+}
+
+export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
+  return (
+    <>
+      <aside className="hidden md:flex w-64 shrink-0 flex-col">
+        <SidebarContent />
+      </aside>
+
+      {mobileOpen && (
+        <div className="md:hidden fixed inset-0 z-[100]" role="dialog" aria-modal="true" aria-label="Navigation menu">
+          <button
+            type="button"
+            className="absolute inset-0 h-full w-full bg-black/50 touch-manipulation"
+            onClick={onMobileClose}
+            aria-label="Close navigation menu"
+          />
+          <aside className="relative z-[101] h-full w-[min(82vw,320px)] shadow-2xl">
+            <SidebarContent mobile onMobileClose={onMobileClose} />
+          </aside>
+        </div>
+      )}
+    </>
   );
 }
