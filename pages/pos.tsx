@@ -10,7 +10,7 @@ import { formatCurrency } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Search, Plus, Minus, Trash2, ShoppingCart, User, CreditCard, Barcode, Camera, X } from 'lucide-react';
+import { Search, Plus, Minus, Trash2, ShoppingCart, User, CreditCard, Barcode, Camera, X, Printer } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
@@ -286,6 +286,28 @@ export default function POS() {
     setIsScanningCamera(false);
   };
 
+  const handlePrintReceipt = () => {
+    if (!receiptData) return;
+    printReceipt({
+      receipt_number:  receiptData.receipt_number,
+      cashier_name:    receiptData.cashier_name,
+      customer_name:   receiptData.customer_name,
+      created_at:      receiptData.created_at,
+      payment_method:  receiptData.payment_method,
+      items:           receiptData.items,
+      subtotal:        receiptData.subtotal ?? receiptData.total,
+      discount_amount: receiptData.discount_amount ?? 0,
+      total:           receiptData.total,
+      amount_paid:     receiptData.amount_paid,
+      change:          receiptData.change,
+      payment:         toPaymentDetails(settings),
+    }, branchMap.get(receiptData.branch_id));
+  };
+
+  const handleNewSale = () => {
+    setReceiptData(null);
+  };
+
   return (
     <div className="flex flex-col md:flex-row h-[calc(100vh-4rem)] overflow-hidden">
       {/* Products Section */}
@@ -551,36 +573,11 @@ export default function POS() {
         </DialogContent>
       </Dialog>
 
-      {/* Receipt Modal */}
-      <Dialog open={!!receiptData} onOpenChange={() => setReceiptData(null)}>
-        <DialogContent className="sm:max-w-[400px]">
+      {/* Receipt Modal — Non-dismissible until user takes action */}
+      <Dialog open={!!receiptData}>
+        <DialogContent className="sm:max-w-[500px]" onPointerDownOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
           <DialogHeader>
-            <DialogTitle className="flex items-center justify-between pr-6">
-              <span>Receipt</span>
-              {receiptData && (
-                <button
-                  className="text-xs text-primary hover:underline flex items-center gap-1"
-                  onClick={() =>
-                    printReceipt({
-                      receipt_number:  receiptData.receipt_number,
-                      cashier_name:    receiptData.cashier_name,
-                      customer_name:   receiptData.customer_name,
-                      created_at:      receiptData.created_at,
-                      payment_method:  receiptData.payment_method,
-                      items:           receiptData.items,
-                      subtotal:        receiptData.subtotal ?? receiptData.total,
-                      discount_amount: receiptData.discount_amount ?? 0,
-                      total:           receiptData.total,
-                      amount_paid:     receiptData.amount_paid,
-                      change:          receiptData.change,
-                      payment:         toPaymentDetails(settings),
-                    }, branchMap.get(receiptData.branch_id))
-                  }
-                >
-                  🖨 Print
-                </button>
-              )}
-            </DialogTitle>
+            <DialogTitle>Sale Complete - Receipt Confirmation</DialogTitle>
           </DialogHeader>
           {receiptData && (
             <div className="space-y-4 font-mono text-sm py-4">
@@ -646,9 +643,25 @@ export default function POS() {
                 <p className="text-xs mt-1">KRA PIN: {receiptBranding.kraPin}</p>
               </div>
 
-              <Button className="w-full mt-2" onClick={() => setReceiptData(null)}>
-                New Sale
-              </Button>
+              {/* Action Buttons — Prominent and Required */}
+              <div className="space-y-2 pt-4">
+                <Button 
+                  className="w-full h-12 text-base font-bold gap-2" 
+                  onClick={handlePrintReceipt}
+                  data-testid="button-print-receipt"
+                >
+                  <Printer className="h-5 w-5" />
+                  Print Receipt
+                </Button>
+                <Button 
+                  variant="secondary"
+                  className="w-full h-10 text-base font-semibold" 
+                  onClick={handleNewSale}
+                  data-testid="button-new-sale"
+                >
+                  New Sale
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>
@@ -656,3 +669,4 @@ export default function POS() {
     </div>
   );
 }
+
