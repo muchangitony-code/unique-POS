@@ -8,6 +8,18 @@ for(const file of required){const full=path.join(root,file);if(!fs.existsSync(fu
 for(const stale of ['public/bulk-import-v2.js','public/bulk-import-v2-launcher.js','server/bulk-import-v2.cjs','server/bulk-import-v2-router.cjs'])if(fs.existsSync(path.join(root,stale)))throw new Error(`Build: legacy component remains: ${stale}`);
 const patch=spawnSync(process.execPath,[path.join(__dirname,'build-runtime-patch.cjs')],{stdio:'inherit'});
 if(patch.status!==0)process.exit(patch.status||1);
+
+// Apply the canonical admin user-management routes to the actual production
+// Express bundle. The route patch script is source-controlled but must be run
+// during every build; otherwise /api/admin/users exists only in the patch file
+// and is never present in server/index.cjs at runtime.
+const userManagementPatch=require(path.join(__dirname,'user-management-server.cjs'));
+const bundledServer=path.join(root,'server','index.cjs');
+const bundledSource=fs.readFileSync(bundledServer,'utf8');
+const patchedUserManagementSource=userManagementPatch.patchUserManagementRoutes(bundledSource);
+fs.writeFileSync(bundledServer,patchedUserManagementSource,'utf8');
+console.log('[build] admin user-management routes verified/injected into server/index.cjs');
+
 const runtime=path.join(root,'index.runtime.cjs');fs.writeFileSync(runtime,fs.readFileSync(path.join(root,'index.cjs'),'utf8'),'utf8');
 for(const file of ['app.js','index.cjs','index.runtime.cjs','server/index.cjs','server/inventory-v3.cjs','server/quotations-v2.cjs','server/quotations-v2-ui.cjs','server/pdf/bundle-loader.cjs','server/pdf/index.cjs','server/pdf/a4-renderer.cjs','server/pdf/professional-a4-renderer.cjs','server/pdf/receipt.cjs','server/pdf/document-adapter.cjs']){const r=spawnSync(process.execPath,['--check',path.join(root,file)],{stdio:'inherit'});if(r.status!==0)process.exit(r.status||1);}
 const pdf=require(path.join(root,'server/pdf/index.cjs'));if(typeof pdf.renderPdfBuffer!=='function')throw new Error('Build: PDF renderer is unavailable');
