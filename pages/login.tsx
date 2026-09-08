@@ -118,13 +118,14 @@ export default function Login() {
                 name="email"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Email Address</FormLabel>
+                    <FormLabel className="text-slate-700">Email Address</FormLabel>
                     <FormControl>
                       <Input
                         placeholder="you@uniquesolarkenya.co.ke"
                         type="email"
                         autoComplete="email"
                         data-testid="input-email"
+                        className="text-slate-900 placeholder:text-slate-400 bg-white"
                         {...field}
                       />
                     </FormControl>
@@ -139,7 +140,7 @@ export default function Login() {
                 render={({ field }) => (
                   <FormItem>
                     <div className="flex items-center justify-between">
-                      <FormLabel>Password</FormLabel>
+                      <FormLabel className="text-slate-700">Password</FormLabel>
                       <Link href="/forgot-password">
                         <span
                           className="text-sm font-medium text-primary hover:underline cursor-pointer"
@@ -155,6 +156,7 @@ export default function Login() {
                         type="password"
                         autoComplete="current-password"
                         data-testid="input-password"
+                        className="text-slate-900 placeholder:text-slate-400 bg-white"
                         {...field}
                       />
                     </FormControl>
