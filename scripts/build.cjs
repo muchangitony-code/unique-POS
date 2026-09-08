@@ -19,6 +19,9 @@ if(!match)throw new Error('Build: frontend bundle is not referenced by public/in
 const assetsDir=path.join(root,'public/assets');
 const bundlePath=path.join(assetsDir,match[1]);
 if(!fs.existsSync(bundlePath))throw new Error(`Build: referenced frontend bundle missing: ${match[1]}`);
+// Vite is configured with emptyOutDir=false because public/ also contains runtime/static assets.
+// Remove only superseded Vite entry chunks so an old frontend cannot survive in the served image.
+for(const entry of fs.readdirSync(assetsDir,{withFileTypes:true})){if(!entry.isFile())continue;if(/^index-[^/]+\.(?:js|css)$/.test(entry.name)&&entry.name!==match[1])fs.rmSync(path.join(assetsDir,entry.name),{force:true});}
 const jsFiles=fs.readdirSync(assetsDir,{withFileTypes:true}).filter(e=>e.isFile()&&e.name.endsWith('.js'));
 if(jsFiles.length===0)throw new Error('Build: no frontend JavaScript assets were produced');
 const jsSource=jsFiles.map(e=>fs.readFileSync(path.join(assetsDir,e.name),'utf8')).join('\n');
