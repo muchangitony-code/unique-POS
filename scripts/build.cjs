@@ -16,5 +16,16 @@ console.log('[build] quotation runtime syntax verified');
 const html=fs.readFileSync(path.join(root,'public/index.html'),'utf8');
 const match=html.match(/\/assets\/(index-[^"']+\.js)/);
 if(!match)throw new Error('Build: frontend bundle is not referenced by public/index.html');
-if(!fs.existsSync(path.join(root,'public/assets',match[1])))throw new Error(`Build: referenced frontend bundle missing: ${match[1]}`);
+const assetsDir=path.join(root,'public/assets');
+const bundlePath=path.join(assetsDir,match[1]);
+if(!fs.existsSync(bundlePath))throw new Error(`Build: referenced frontend bundle missing: ${match[1]}`);
+// Vite is configured with emptyOutDir=false because public/ also contains runtime/static assets.
+// Remove only superseded Vite entry chunks so an old frontend cannot survive in the served image.
+for(const entry of fs.readdirSync(assetsDir,{withFileTypes:true})){if(!entry.isFile())continue;if(/^index-[^/]+\.(?:js|css)$/.test(entry.name)&&entry.name!==match[1])fs.rmSync(path.join(assetsDir,entry.name),{force:true});}
+const jsFiles=fs.readdirSync(assetsDir,{withFileTypes:true}).filter(e=>e.isFile()&&e.name.endsWith('.js'));
+if(jsFiles.length===0)throw new Error('Build: no frontend JavaScript assets were produced');
+const jsSource=jsFiles.map(e=>fs.readFileSync(path.join(assetsDir,e.name),'utf8')).join('\n');
+if(!jsSource.includes('/api/pos/sale'))throw new Error('Build: generated frontend bundle does not contain the live sale endpoint /api/pos/sale');
+if(jsSource.includes('/api/sales'))throw new Error('Build: stale frontend sale endpoint /api/sales remains in generated assets');
+console.log(`[build] frontend sale endpoint verified in generated assets: /api/pos/sale (${jsFiles.length} JS files scanned)`);
 console.log(`[build] prebuilt frontend bundle verified: ${match[1]}`);
