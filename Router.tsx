@@ -19,6 +19,7 @@ import Expenses from '@/pages/expenses';
 import Reports from '@/pages/reports';
 import AuditLog from '@/pages/audit-log';
 import SecurityAlerts from '@/pages/security-alerts';
+import TransactionCleanup from '@/pages/transaction-cleanup';
 
 function RootRedirect() {
   const [, setLocation] = useLocation();
@@ -128,6 +129,11 @@ export function AppRouter() {
       <Route path="/security-alerts">
         <ProtectedRoute title="Security Alerts" allowedTiers={['administrator']}>
           <SecurityAlerts />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/transaction-cleanup">
+        <ProtectedRoute title="Test Transaction Cleanup" allowedTiers={['administrator']}>
+          <TransactionCleanup />
         </ProtectedRoute>
       </Route>
 
