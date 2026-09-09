@@ -30,11 +30,6 @@ function validRefs(value: unknown): TransactionRef[] {
     .filter(v => ["sale", "invoice", "quotation"].includes(v.type) && Number.isInteger(v.id) && v.id > 0);
 }
 
-/**
- * GET /api/admin/test-transactions
- * Lists sales, invoices and quotations so an administrator can explicitly
- * mark test records before they become eligible for deletion.
- */
 router.get("/admin/test-transactions", async (req: Request, res: Response): Promise<void> => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "administrator role required" });
@@ -60,7 +55,6 @@ router.get("/admin/test-transactions", async (req: Request, res: Response): Prom
   }
 });
 
-/** Mark records as test data. Marking never deletes anything. */
 router.post("/admin/test-transactions/mark", async (req: Request, res: Response): Promise<void> => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "administrator role required" });
@@ -95,15 +89,30 @@ async function deleteTestRefs(req: Request, refs: TransactionRef[]): Promise<num
   await db.transaction(async tx => {
     for (const ref of refs) {
       if (ref.type === "sale") {
-        const items = await tx.execute(sql`SELECT product_id, quantity, branch_id FROM sale_items WHERE sale_id = ${ref.id}`);
-        for (const item of items.rows as Array<{ product_id: number; quantity: number; branch_id: number }>) {
-          // POS sales deduct on-hand stock. Put the tested quantity back before removing the sale.
+        const sales = await tx.execute(sql`SELECT branch_id, customer_id, total, amount_paid FROM sales WHERE id = ${ref.id} AND is_test = TRUE FOR UPDATE`);
+        const sale = sales.rows[0] as { branch_id: number; customer_id: number | null; total: number; amount_paid: number } | undefined;
+        if (!sale) continue;
+
+        const items = await tx.execute(sql`SELECT product_id, quantity FROM sale_items WHERE sale_id = ${ref.id}`);
+        for (const item of items.rows as Array<{ product_id: number; quantity: number }>) {
+          // A POS sale deducts stock. Restore exactly the quantities consumed by this test sale.
           await tx.execute(sql`
             UPDATE product_stock
             SET current_stock = current_stock + ${Number(item.quantity)}
-            WHERE product_id = ${Number(item.product_id)} AND branch_id = ${Number(item.branch_id)}
+            WHERE product_id = ${Number(item.product_id)} AND branch_id = ${Number(sale.branch_id)}
           `);
         }
+
+        // Reverse any customer receivable created by a credit test sale.
+        const unpaid = Math.max(0, Number(sale.total) - Number(sale.amount_paid));
+        if (sale.customer_id && unpaid > 0) {
+          await tx.execute(sql`
+            UPDATE customers
+            SET balance = GREATEST(0, balance - ${unpaid})
+            WHERE id = ${Number(sale.customer_id)}
+          `);
+        }
+
         await tx.execute(sql`DELETE FROM sale_return_items WHERE sale_return_id IN (SELECT id FROM sale_returns WHERE sale_id = ${ref.id})`);
         await tx.execute(sql`DELETE FROM sale_returns WHERE sale_id = ${ref.id}`);
         await tx.execute(sql`DELETE FROM receipts WHERE sale_id = ${ref.id}`);
@@ -111,12 +120,16 @@ async function deleteTestRefs(req: Request, refs: TransactionRef[]): Promise<num
         const result = await tx.execute(sql`DELETE FROM sales WHERE id = ${ref.id} AND is_test = TRUE`);
         deleted += Number(result.rowCount ?? 0);
       } else if (ref.type === "invoice") {
+        const exists = await tx.execute(sql`SELECT id FROM invoices WHERE id = ${ref.id} AND is_test = TRUE FOR UPDATE`);
+        if (!exists.rows.length) continue;
         await tx.execute(sql`DELETE FROM receipts WHERE invoice_id = ${ref.id}`);
         await tx.execute(sql`DELETE FROM invoice_payments WHERE invoice_id = ${ref.id}`);
         await tx.execute(sql`DELETE FROM invoice_items WHERE invoice_id = ${ref.id}`);
         const result = await tx.execute(sql`DELETE FROM invoices WHERE id = ${ref.id} AND is_test = TRUE`);
         deleted += Number(result.rowCount ?? 0);
       } else {
+        const exists = await tx.execute(sql`SELECT id FROM quotations WHERE id = ${ref.id} AND is_test = TRUE FOR UPDATE`);
+        if (!exists.rows.length) continue;
         await tx.execute(sql`DELETE FROM quotation_items WHERE quotation_id = ${ref.id}`);
         const result = await tx.execute(sql`DELETE FROM quotations WHERE id = ${ref.id} AND is_test = TRUE`);
         deleted += Number(result.rowCount ?? 0);
@@ -126,7 +139,6 @@ async function deleteTestRefs(req: Request, refs: TransactionRef[]): Promise<num
   return deleted;
 }
 
-/** Delete selected records, but only records already marked is_test=true. */
 router.post("/admin/test-transactions/delete", async (req: Request, res: Response): Promise<void> => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: "administrator role required" });
@@ -152,7 +164,6 @@ router.post("/admin/test-transactions/delete", async (req: Request, res: Respons
   }
 });
 
-/** Bulk deletion is Super Admin only and affects marked test data only. */
 router.post("/admin/test-transactions/delete-all", async (req: Request, res: Response): Promise<void> => {
   if (!isSuperAdmin(req)) {
     res.status(403).json({ error: "super_admin role required for bulk deletion" });
