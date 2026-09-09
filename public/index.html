@@ -16,6 +16,52 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      // Branded documents open in a separate print window. Browser print can
+      // fire before remote logo/stamp/signature images finish loading, which
+      // causes those assets to disappear from the printed receipt/invoice/
+      // quotation. Wrap popup print so all images are settled first.
+      (() => {
+        const nativeOpen = window.open;
+        if (!nativeOpen) return;
+        window.open = function (...args) {
+          const child = nativeOpen.apply(this, args);
+          if (!child) return child;
+          try {
+            const nativePrint = child.print.bind(child);
+            let printing = false;
+            child.print = function () {
+              if (printing) return;
+              printing = true;
+              const waitForImages = () => {
+                try {
+                  const images = Array.from(child.document?.images || []);
+                  if (!images.length) {
+                    nativePrint();
+                    return;
+                  }
+                  Promise.all(images.map((img) => {
+                    if (img.complete) return Promise.resolve();
+                    return new Promise((resolve) => {
+                      const done = () => resolve();
+                      img.addEventListener('load', done, { once: true });
+                      img.addEventListener('error', done, { once: true });
+                      setTimeout(done, 5000);
+                    });
+                  })).then(() => setTimeout(nativePrint, 50));
+                } catch {
+                  nativePrint();
+                }
+              };
+              setTimeout(waitForImages, 0);
+            };
+          } catch {
+            // Leave non-document popups untouched if the browser blocks wrapping.
+          }
+          return child;
+        };
+      })();
+    </script>
     <script type="module" crossorigin src="/assets/index-u_5HbI_w.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-DvGT-pLb.css">
   </head>
