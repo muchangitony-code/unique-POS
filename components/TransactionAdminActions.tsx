@@ -26,7 +26,7 @@ export function TransactionAdminActions() {
   const [location] = useLocation();
   const { token, user } = useAuth();
   const [rows, setRows] = React.useState<TransactionRow[]>([]);
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = React.useState(true);
   const [busy, setBusy] = React.useState(false);
 
   const type = Object.entries(ROUTE_TYPE).find(([route]) => location.startsWith(route))?.[1];
@@ -81,44 +81,42 @@ export function TransactionAdminActions() {
   };
 
   return (
-    <>
-      <div className="fixed right-5 bottom-5 z-50 w-[420px] max-w-[calc(100vw-24px)] rounded-xl border bg-background shadow-2xl">
-        <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
-          <div>
-            <div className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-4 w-4 text-primary" /> Test Transaction Controls</div>
-            <p className="text-xs text-muted-foreground">Administrator only · {type}s on this screen</p>
-          </div>
-          <Button size="icon" variant="ghost" onClick={() => setOpen(v => !v)} title={open ? 'Hide controls' : 'Show controls'}>
-            {open ? <X className="h-4 w-4" /> : <TestTube2 className="h-4 w-4" />}
-          </Button>
+    <div className="fixed right-5 bottom-5 z-50 w-[420px] max-w-[calc(100vw-24px)] rounded-xl border bg-background shadow-2xl">
+      <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+        <div>
+          <div className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-4 w-4 text-primary" /> Test Transaction Controls</div>
+          <p className="text-xs text-muted-foreground">Administrator only · {type}s on this screen</p>
         </div>
-
-        {open && (
-          <div className="max-h-80 overflow-y-auto p-3 space-y-2">
-            {!rows.length && <p className="py-4 text-center text-sm text-muted-foreground">No {type}s found.</p>}
-            {rows.map(row => (
-              <div key={`${row.type}:${row.id}`} className="flex items-center gap-3 rounded-lg border p-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate font-medium">{row.reference || `${row.type.toUpperCase()} #${row.id}`}</span>
-                    {row.is_test ? <Badge variant="secondary">TEST</Badge> : <Badge variant="outline">Production / Unmarked</Badge>}
-                  </div>
-                  <p className="text-xs text-muted-foreground">KES {Number(row.total ?? 0).toLocaleString()} · {new Date(row.created_at).toLocaleDateString()}</p>
-                </div>
-                {!row.is_test ? (
-                  <Button size="sm" variant="outline" disabled={busy} onClick={() => markTest(row)}>
-                    <TestTube2 className="mr-1 h-4 w-4" />Mark as TEST
-                  </Button>
-                ) : (
-                  <Button size="sm" variant="destructive" disabled={busy} onClick={() => deleteTest(row)}>
-                    <Trash2 className="mr-1 h-4 w-4" />Delete TEST
-                  </Button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+        <Button size="icon" variant="ghost" onClick={() => setOpen(v => !v)} title={open ? 'Hide controls' : 'Show controls'}>
+          {open ? <X className="h-4 w-4" /> : <TestTube2 className="h-4 w-4" />}
+        </Button>
       </div>
-    </>
+
+      {open && (
+        <div className="max-h-80 overflow-y-auto p-3 space-y-2">
+          {!rows.length && <p className="py-4 text-center text-sm text-muted-foreground">No {type}s found.</p>}
+          {rows.map(row => (
+            <div key={`${row.type}:${row.id}`} className="flex items-center gap-3 rounded-lg border p-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate font-medium">{row.reference || `${row.type.toUpperCase()} #${row.id}`}</span>
+                  {row.is_test ? <Badge variant="secondary">TEST</Badge> : <Badge variant="outline">Production / Unmarked</Badge>}
+                </div>
+                <p className="text-xs text-muted-foreground">KES {Number(row.total ?? 0).toLocaleString()} · {new Date(row.created_at).toLocaleDateString()}</p>
+              </div>
+              {!row.is_test ? (
+                <Button size="sm" variant="outline" disabled={busy} onClick={() => markTest(row)}>
+                  <TestTube2 className="mr-1 h-4 w-4" />Mark as TEST
+                </Button>
+              ) : (
+                <Button size="sm" variant="destructive" disabled={busy} onClick={() => deleteTest(row)}>
+                  <Trash2 className="mr-1 h-4 w-4" />Delete TEST
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
