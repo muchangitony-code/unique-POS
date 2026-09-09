@@ -19,7 +19,8 @@ function validRefs(value: unknown): TransactionRef[] {
     .filter(v => ["sale", "invoice", "quotation"].includes(v.type) && Number.isInteger(v.id) && v.id > 0);
 }
 
-router.get("/admin/test-transactions", async (req: Request, res: Response): Promise<void> => {
+// This router is mounted at /admin in src/routes/index.ts, so its paths must be relative.
+router.get("/test-transactions", async (req: Request, res: Response): Promise<void> => {
   if (!isAdmin(req)) { res.status(403).json({ error: "administrator role required" }); return; }
   try {
     const result = await db.execute(sql`
@@ -34,7 +35,7 @@ router.get("/admin/test-transactions", async (req: Request, res: Response): Prom
   }
 });
 
-router.post("/admin/test-transactions/mark", async (req: Request, res: Response): Promise<void> => {
+router.post("/test-transactions/mark", async (req: Request, res: Response): Promise<void> => {
   if (!isAdmin(req)) { res.status(403).json({ error: "administrator role required" }); return; }
   const refs = validRefs(req.body?.transactions);
   if (!refs.length) { res.status(400).json({ error: "No valid transactions supplied" }); return; }
@@ -59,10 +60,6 @@ async function deleteTestRefs(req: Request, refs: TransactionRef[]): Promise<num
         const sales = await tx.execute(sql`SELECT branch_id, customer_id, total, amount_paid, receipt_number FROM sales WHERE id = ${ref.id} AND is_test = TRUE FOR UPDATE`);
         const sale = sales.rows[0] as { branch_id: number; customer_id: number | null; total: number; amount_paid: number; receipt_number: string } | undefined;
         if (!sale) continue;
-
-        // Restore the net stock consumed by the sale (sold quantity minus any test return),
-        // then remove the corresponding ledger movements. This returns inventory to its
-        // pre-test state without leaving a phantom stock movement behind.
         const items = await tx.execute(sql`
           SELECT si.product_id,
                  SUM(si.quantity)::numeric AS sold_qty,
@@ -79,12 +76,10 @@ async function deleteTestRefs(req: Request, refs: TransactionRef[]): Promise<num
             await tx.execute(sql`UPDATE product_stock SET current_stock = current_stock + ${netSold} WHERE product_id = ${Number(item.product_id)} AND branch_id = ${Number(sale.branch_id)}`);
           }
         }
-
         const unpaid = Math.max(0, Number(sale.total) - Number(sale.amount_paid));
         if (sale.customer_id && unpaid > 0) {
           await tx.execute(sql`UPDATE customers SET balance = GREATEST(0, balance - ${unpaid}) WHERE id = ${Number(sale.customer_id)}`);
         }
-
         await tx.execute(sql`DELETE FROM sale_return_items WHERE sale_return_id IN (SELECT id FROM sale_returns WHERE sale_id = ${ref.id})`);
         await tx.execute(sql`DELETE FROM sale_returns WHERE sale_id = ${ref.id}`);
         await tx.execute(sql`DELETE FROM receipts WHERE sale_id = ${ref.id}`);
@@ -112,7 +107,7 @@ async function deleteTestRefs(req: Request, refs: TransactionRef[]): Promise<num
   return deleted;
 }
 
-router.post("/admin/test-transactions/delete", async (req: Request, res: Response): Promise<void> => {
+router.post("/test-transactions/delete", async (req: Request, res: Response): Promise<void> => {
   if (!isAdmin(req)) { res.status(403).json({ error: "administrator role required" }); return; }
   const refs = validRefs(req.body?.transactions);
   if (!refs.length) { res.status(400).json({ error: "No valid transactions supplied" }); return; }
@@ -125,7 +120,7 @@ router.post("/admin/test-transactions/delete", async (req: Request, res: Respons
   }
 });
 
-router.post("/admin/test-transactions/delete-all", async (req: Request, res: Response): Promise<void> => {
+router.post("/test-transactions/delete-all", async (req: Request, res: Response): Promise<void> => {
   if (!isSuperAdmin(req)) { res.status(403).json({ error: "super_admin role required for bulk deletion" }); return; }
   if (req.body?.confirmation !== "DELETE ALL TEST DATA") { res.status(400).json({ error: "Confirmation phrase required" }); return; }
   try {
