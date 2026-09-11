@@ -17,7 +17,7 @@ async function formatInvoice(invoice: typeof invoicesTable.$inferSelect) {
   const productMap = Object.fromEntries(products.map((p) => [p.id, p.name]));
   let customerName: string | null = null;
   if (invoice.customerId) {
-    const [c] = await db.select({ name: customersTable.name }).from(db.select({ name: customersTable.name }).from(customersTable).where(eq(customersTable.id, invoice.customerId)));
+    const [c] = await db.select({ name: customersTable.name }).from(customersTable).where(eq(customersTable.id, invoice.customerId));
     customerName = c?.name ?? null;
   }
   return {
