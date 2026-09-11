@@ -2,15 +2,15 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 
 const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<'input'>>(
-  ({ className, type, ...props }, ref) => {
-    const isAutoProductCode = props.name === 'product_code' && (props.value === '' || props.value == null);
+  ({ className, type, value, onChange, readOnly, ...rest }, ref) => {
+    const isAutoProductCode = rest.name === 'product_code' && (value === '' || value == null);
 
     React.useEffect(() => {
-      if (!isAutoProductCode || typeof props.onChange !== 'function') return;
-      props.onChange({
+      if (!isAutoProductCode || typeof onChange !== 'function') return;
+      onChange({
         target: { name: 'product_code', value: 'AUTO' },
       } as React.ChangeEvent<HTMLInputElement>);
-    }, [isAutoProductCode, props.onChange]);
+    }, [isAutoProductCode, onChange]);
 
     return (
       <input
@@ -20,9 +20,10 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<'input'>>(
           className,
         )}
         ref={ref}
-        readOnly={isAutoProductCode || props.readOnly}
-        value={isAutoProductCode ? 'AUTO' : props.value}
-        {...props}
+        readOnly={isAutoProductCode || readOnly}
+        value={isAutoProductCode ? 'AUTO' : value}
+        onChange={onChange}
+        {...rest}
       />
     );
   },
