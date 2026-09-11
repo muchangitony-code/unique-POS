@@ -14,7 +14,12 @@ function assertFonts() {
 }
 
 function registerFonts(doc) {
-  if (!doc || typeof doc.font !== 'function') throw new TypeError('PDF document is required');
+  // The authoritative A4 renderer already uses PDFKit's built-in Helvetica
+  // fonts and historically invoked this helper before creating its document.
+  // Keep that call backward-compatible while still wrapping aliases when a
+  // concrete PDFKit document is supplied (as the receipt renderer does).
+  if (!doc) return null;
+  if (typeof doc.font !== 'function') throw new TypeError('PDF document is required');
 
   const originalFont = doc.font.bind(doc);
   doc.font = function stableFont(name, size, options) {
