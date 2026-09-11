@@ -50,3 +50,5 @@ jobs:
           git add components/documents/DocumentWizard.tsx
           git commit -m 'fix: persist quotation non-stock custom item UI'
           git push origin HEAD:main
+
+# Deterministic source-persistence safeguard for the quotation wizard.
