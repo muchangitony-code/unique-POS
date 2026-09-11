@@ -38,7 +38,7 @@ async function main() {
   const rows = await auditMigrationState();
   const freshStartPending = rows.filter((row) => row.status === 'pending' && row.policy === 'fresh_start');
   const destructivePending = rows
-    .filter((row) => row.status === 'pending' && row.policy !== 'fresh_start' && row.destructive)
+    .filter((row) => row.status === 'pending' && row.policy !== 'fresh_start' && row.policy !== 'baseline' && row.policy !== 'retired' && row.destructive)
     .map((row) => row.name);
 
   if (freshStartPending.length) {
