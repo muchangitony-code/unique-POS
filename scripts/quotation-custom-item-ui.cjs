@@ -85,8 +85,8 @@ function ProductsStep({ state, patch, allowNonStock = false }: { state: WizardSt
     if (!code) return;
     setBarcode('');
     try {
-      const res = await fetch(\`${getApiUrl()}products/barcode/\${encodeURIComponent(code)}\`, { credentials: 'include' });
-      if (res.status === 404) { toast.error(\`No product for barcode \${code}\`); return; }
+      const res = await fetch(getApiUrl() + 'products/barcode/' + encodeURIComponent(code), { credentials: 'include' });
+      if (res.status === 404) { toast.error('No product for barcode ' + code); return; }
       if (!res.ok) throw new Error('Barcode lookup failed');
       addProduct(await res.json());
     } catch (err: any) {
@@ -153,7 +153,7 @@ function ProductsStep({ state, patch, allowNonStock = false }: { state: WizardSt
         ) : (
           <div className="space-y-2">
             {state.lines.map((line, index) => (
-              <div key={`${line.product_id ?? 'custom'}-${index}`} className="border rounded-lg p-3 space-y-3">
+              <div key={String(line.product_id ?? 'custom') + '-' + index} className="border rounded-lg p-3 space-y-3">
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
