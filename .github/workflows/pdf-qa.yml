@@ -22,8 +22,11 @@ jobs:
       - name: Build
         run: npm run build
       - name: Document PDF smoke tests
+        run: node tests/pdf-document-smoke.cjs
+      - name: Generate PDF QA fixtures
+        run: node scripts/pdf-fixtures.js
+      - name: Structural and branding PDF tests
         run: |
-          node tests/pdf-document-smoke.cjs
           node tests/pdf-structural.cjs
           node tests/pdf-branding-integrity.cjs
           node tests/pdf-logo-propagation.cjs
