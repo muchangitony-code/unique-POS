@@ -63,6 +63,19 @@ jobs:
           PG_PASS="${{ secrets.POSTGRES_PASSWORD || 'pospassword' }}"
           echo "DATABASE_URL=${SCHEME}://posuser:${PG_PASS}@localhost:5432/posdb" >> "$GITHUB_ENV"
 
+      - name: Seed CI backup marker
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE TABLE IF NOT EXISTS ci_backup_marker (
+            id INTEGER PRIMARY KEY,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            note TEXT NOT NULL
+          );
+          INSERT INTO ci_backup_marker (id, note)
+          VALUES (1, 'Disposable CI migration backup marker')
+          ON CONFLICT (id) DO UPDATE SET created_at = NOW(), note = EXCLUDED.note;
+          SQL
+
       - name: Explicitly deploy database migrations
         run: node scripts/deploy-migrations.cjs
 
