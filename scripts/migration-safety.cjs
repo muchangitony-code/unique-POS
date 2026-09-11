@@ -99,19 +99,23 @@ async function assertMigrationDeploymentSafe(options = {}) {
   if (retiredPending.length) throw new Error(`Migration deployment blocked: retired migration(s) are still pending: ${retiredPending.map((item) => item.name).join(', ')}.`);
 
   const freshStartPending = pending.filter((item) => item.policy === 'fresh_start');
-  const normalPending = pending.filter((item) => item.policy !== 'fresh_start');
+  const baselinePending = pending.filter((item) => item.policy === 'baseline');
+  const normalPending = pending.filter((item) => item.policy !== 'fresh_start' && item.policy !== 'baseline');
   const destructivePending = normalPending.filter((item) => item.destructive);
   if (destructivePending.length) {
     const names = destructivePending.map((item) => item.name);
     requireDestructiveApproval(names);
     const backupFile = requireBackupFile(process.env.MIGRATION_BACKUP_FILE);
-    return { pending, freshStartPending, destructivePending, backupFile };
+    return { pending, freshStartPending, baselinePending, destructivePending, backupFile };
   }
 
   if (freshStartPending.length) {
     console.warn(`[migration-deploy] Explicit fresh-start migration approved: ${freshStartPending.map((item) => item.name).join(', ')}. No backup/archive will be created.`);
   }
-  return { pending, freshStartPending, destructivePending: [], backupFile: null };
+  if (baselinePending.length) {
+    console.warn(`[migration-deploy] Baseline migration history reconciliation pending: ${baselinePending.map((item) => item.name).join(', ')}. SQL will not execute.`);
+  }
+  return { pending, freshStartPending, baselinePending, destructivePending: [], backupFile: null };
 }
 
 async function auditMigrationState(options = {}) {
@@ -127,7 +131,7 @@ module.exports = { CONFIRMATION, DESTRUCTIVE_APPROVAL, scanMigrations, auditMigr
 if (require.main === module) {
   auditMigrationState().then((rows) => {
     console.table(rows.map(({ name, destructive, findings, policy, status }) => ({ name, status, destructive, findings: findings.join(','), policy })));
-    if (rows.some((row) => row.status === 'pending' && row.destructive && row.policy !== 'fresh_start')) process.exitCode = 2;
+    if (rows.some((row) => row.status === 'pending' && row.destructive && row.policy !== 'fresh_start' && row.policy !== 'baseline')) process.exitCode = 2;
   }).catch((error) => {
     console.error('[migration-safety] Failed:', error.message || error);
     process.exitCode = 1;
