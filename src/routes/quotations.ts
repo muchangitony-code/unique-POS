@@ -61,7 +61,7 @@ router.post("/quotations", async (req, res): Promise<void> => {
     notes, validUntil: valid_until || null, deliveryTime: delivery_time ?? null, warranty: warranty ?? null, paymentTerms: payment_terms ?? null,
   }).returning();
   for (const item of processedItems) {
-    await db.insert(quotationItemsTable).values({ quotationId: quotation.id, productId: item.product_id, description: item.description ?? null, unit: item.unit ?? null, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: item.discount.toString(), vatRate: item.vat_rate.toString(), total: item.total.toString() });
+    await db.insert(quotationItemsTable).values({ quotationId: quotation.id, productId: item.product_id as any, description: item.description ?? null, unit: item.unit ?? null, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: item.discount.toString(), vatRate: item.vat_rate.toString(), total: item.total.toString() });
   }
   await logAudit(req, { action: "quotation.created", entityType: "quotation", entityId: quotation.id, description: `Created quotation ${quotationNumber} — KES ${total.toLocaleString()}` });
   res.status(201).json(await formatQuotation(quotation));
@@ -123,7 +123,7 @@ router.post("/quotations/:id/convert", async (req, res): Promise<void> => {
         status: "sent", notes: q.notes,
       }).returning();
       for (const item of qItems) {
-        await tx.insert(invoiceItemsTable).values({ invoiceId: inv.id, productId: item.productId, description: item.description, unit: item.unit, quantity: item.quantity, unitPrice: item.unitPrice, discount: item.discount, vatRate: item.vatRate, total: item.total });
+        await tx.insert(invoiceItemsTable).values({ invoiceId: inv.id, productId: item.productId as any, description: item.description, unit: item.unit, quantity: item.quantity, unitPrice: item.unitPrice, discount: item.discount, vatRate: item.vatRate, total: item.total });
         const d = item.productId == null ? undefined : deducted.find((x) => x.product_id === item.productId);
         if (d) {
           await tx.insert(stockMovementsTable).values({ branchId: q.branchId, productId: item.productId!, type: "sale", quantity: -item.quantity, quantityBefore: d.before, quantityAfter: d.after, reference: invoiceNumber, notes: `Invoice from ${q.quotationNumber}` });
