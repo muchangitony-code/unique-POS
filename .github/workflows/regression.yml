@@ -34,6 +34,11 @@ jobs:
       SESSION_SECRET: ${{ secrets.SESSION_SECRET || 'ci-test-session-secret-32-chars!!' }}
       MIGRATION_DEPLOY_TOKEN: ci-only-not-a-production-secret-32chars
       MIGRATION_CONFIRMATION: APPLY_MIGRATIONS
+      # CI-only approval for the disposable Postgres service. Production still
+      # requires its own explicit migration approval and fresh backup.
+      MIGRATION_ALLOW_DESTRUCTIVE: YES
+      MIGRATION_DESTRUCTIVE_APPROVAL: APPROVE_DESTRUCTIVE_MIGRATION
+      MIGRATION_APPROVED_FILES: 0021_replace_canonical_catalog_with_exact_source.sql,0031_destroy_legacy_inventory_subsystem.sql
       UNIQUEPOS_BOOTSTRAP_ADMIN_USERNAME: admin
       UNIQUEPOS_BOOTSTRAP_ADMIN_EMAIL: admin@test.local
       UNIQUEPOS_BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD || 'TestAdmin123!' }}
