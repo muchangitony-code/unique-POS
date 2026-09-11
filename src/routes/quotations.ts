@@ -12,7 +12,7 @@ const router: IRouter = Router();
 
 async function formatQuotation(quotation: typeof quotationsTable.$inferSelect) {
   const items = await db.select().from(quotationItemsTable).where(eq(quotationItemsTable.quotationId, quotation.id));
-  const productIds = items.map((i) => i.productId);
+  const productIds = items.map((i) => i.productId).filter((id): id is number => id != null);
   const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(inArray(productsTable.id, productIds)) : [];
   const productMap = Object.fromEntries(products.map((p) => [p.id, p.name]));
   let customerName: string | null = null;
@@ -23,7 +23,7 @@ async function formatQuotation(quotation: typeof quotationsTable.$inferSelect) {
   return {
     id: quotation.id, quotation_number: quotation.quotationNumber, branch_id: quotation.branchId,
     customer_id: quotation.customerId, customer_name: customerName,
-    items: items.map((i) => ({ id: i.id, product_id: i.productId, product_name: productMap[i.productId] ?? "Unknown", description: i.description, unit: i.unit, quantity: i.quantity, unit_price: Number(i.unitPrice), discount: Number(i.discount), vat_rate: Number(i.vatRate), total: Number(i.total) })),
+    items: items.map((i) => ({ id: i.id, product_id: i.productId, product_name: i.productId ? (productMap[i.productId] ?? "Unknown") : (i.description ?? "Non-stock item"), description: i.description, unit: i.unit, quantity: i.quantity, unit_price: Number(i.unitPrice), discount: Number(i.discount), vat_rate: Number(i.vatRate), total: Number(i.total) })),
     subtotal: Number(quotation.subtotal), discount_amount: Number(quotation.discountAmount), tax_amount: Number(quotation.taxAmount), total: Number(quotation.total),
     status: quotation.status, notes: quotation.notes,
     delivery_time: quotation.deliveryTime, warranty: quotation.warranty, payment_terms: quotation.paymentTerms,
@@ -109,9 +109,10 @@ router.post("/quotations/:id/convert", async (req, res): Promise<void> => {
         .returning();
       if (!claimed.length) return null;
       const qItems = await tx.select().from(quotationItemsTable).where(eq(quotationItemsTable.quotationId, id));
-      // Verify + atomically deduct stock; the transaction rolls back everything on failure.
+      // Verify + atomically deduct stock only for inventory-linked lines.
       const deducted: { product_id: number; quantity: number; before: number; after: number }[] = [];
       for (const item of qItems) {
+        if (item.productId == null) continue;
         const r = await applyStockDelta(q.branchId, item.productId, -item.quantity, {}, tx);
         if (!r.ok) throw new InsufficientStockError(item.productId, r.before);
         deducted.push({ product_id: item.productId, quantity: item.quantity, before: r.before, after: r.after });
@@ -123,9 +124,9 @@ router.post("/quotations/:id/convert", async (req, res): Promise<void> => {
       }).returning();
       for (const item of qItems) {
         await tx.insert(invoiceItemsTable).values({ invoiceId: inv.id, productId: item.productId, description: item.description, unit: item.unit, quantity: item.quantity, unitPrice: item.unitPrice, discount: item.discount, vatRate: item.vatRate, total: item.total });
-        const d = deducted.find((x) => x.product_id === item.productId);
+        const d = item.productId == null ? undefined : deducted.find((x) => x.product_id === item.productId);
         if (d) {
-          await tx.insert(stockMovementsTable).values({ branchId: q.branchId, productId: item.productId, type: "sale", quantity: -item.quantity, quantityBefore: d.before, quantityAfter: d.after, reference: invoiceNumber, notes: `Invoice from ${q.quotationNumber}` });
+          await tx.insert(stockMovementsTable).values({ branchId: q.branchId, productId: item.productId!, type: "sale", quantity: -item.quantity, quantityBefore: d.before, quantityAfter: d.after, reference: invoiceNumber, notes: `Invoice from ${q.quotationNumber}` });
         }
       }
       // A sent invoice with an outstanding balance increases the customer's balance.
