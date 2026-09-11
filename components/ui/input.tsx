@@ -2,16 +2,7 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 
 const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<'input'>>(
-  ({ className, type, value, onChange, readOnly, ...rest }, ref) => {
-    const isAutoProductCode = rest.name === 'product_code' && (value === '' || value == null);
-
-    React.useEffect(() => {
-      if (!isAutoProductCode || typeof onChange !== 'function') return;
-      onChange({
-        target: { name: 'product_code', value: 'AUTO' },
-      } as React.ChangeEvent<HTMLInputElement>);
-    }, [isAutoProductCode, onChange]);
-
+  ({ className, type, ...props }, ref) => {
     return (
       <input
         type={type}
@@ -20,10 +11,7 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<'input'>>(
           className,
         )}
         ref={ref}
-        readOnly={isAutoProductCode || readOnly}
-        value={isAutoProductCode ? 'AUTO' : value}
-        onChange={onChange}
-        {...rest}
+        {...props}
       />
     );
   },
