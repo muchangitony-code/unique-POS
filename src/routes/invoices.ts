@@ -17,7 +17,7 @@ async function formatInvoice(invoice: typeof invoicesTable.$inferSelect) {
   const productMap = Object.fromEntries(products.map((p) => [p.id, p.name]));
   let customerName: string | null = null;
   if (invoice.customerId) {
-    const [c] = await db.select({ name: customersTable.name }).from(customersTable).where(eq(customersTable.id, invoice.customerId));
+    const [c] = await db.select({ name: customersTable.name }).from(db.select({ name: customersTable.name }).from(customersTable).where(eq(customersTable.id, invoice.customerId)));
     customerName = c?.name ?? null;
   }
   return {
@@ -73,7 +73,7 @@ router.post("/invoices", async (req, res): Promise<void> => {
         status: invStatus, dueDate: due_date || null, notes,
       }).returning();
       for (const item of processedItems) {
-        await tx.insert(invoiceItemsTable).values({ invoiceId: inv.id, productId: item.product_id, description: item.description ?? null, unit: item.unit ?? null, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: item.discount.toString(), vatRate: item.vat_rate.toString(), total: item.total.toString() });
+        await tx.insert(invoiceItemsTable).values({ invoiceId: inv.id, productId: item.product_id as any, description: item.description ?? null, unit: item.unit ?? null, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: item.discount.toString(), vatRate: item.vat_rate.toString(), total: item.total.toString() });
         const d = deducted.find((x) => x.product_id === item.product_id);
         if (d) {
           await tx.insert(stockMovementsTable).values({ branchId, productId: item.product_id, type: "sale", quantity: -item.quantity, quantityBefore: d.before, quantityAfter: d.after, reference: invoiceNumber, notes: "Direct invoice" });
