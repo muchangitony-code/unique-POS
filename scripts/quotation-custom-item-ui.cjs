@@ -85,8 +85,8 @@ function ProductsStep({ state, patch, allowNonStock = false }: { state: WizardSt
     if (!code) return;
     setBarcode('');
     try {
-      const res = await fetch(`${getApiUrl()}products/barcode/${encodeURIComponent(code)}`, { credentials: 'include' });
-      if (res.status === 404) { toast.error(`No product for barcode ${code}`); return; }
+      const res = await fetch(\`${getApiUrl()}products/barcode/\${encodeURIComponent(code)}\`, { credentials: 'include' });
+      if (res.status === 404) { toast.error(\`No product for barcode \${code}\`); return; }
       if (!res.ok) throw new Error('Barcode lookup failed');
       addProduct(await res.json());
     } catch (err: any) {
