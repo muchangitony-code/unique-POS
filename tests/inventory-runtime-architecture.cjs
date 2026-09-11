@@ -6,7 +6,6 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const build = fs.readFileSync(path.join(root, 'scripts', 'build.cjs'), 'utf8');
 const loader = fs.readFileSync(path.join(root, 'server', 'pdf', 'bundle-loader.cjs'), 'utf8');
-const branchRoutes = fs.readFileSync(path.join(root, 'server', 'inventory-v3-branch-routes.cjs'), 'utf8');
 const inventory = fs.readFileSync(path.join(root, 'server', 'inventory-v3.cjs'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
 const patcher = path.join(root, 'scripts', 'inventory-v3-runtime-patch.cjs');
@@ -20,17 +19,17 @@ if (app.includes('inventory-v3-runtime-patch.cjs') || app.includes('patchRuntime
 if (fs.existsSync(patcher)) {
   throw new Error('Inventory architecture regression: inventory-v3-runtime-patch.cjs still exists.');
 }
-if (!loader.includes('UNIQUEPOS_INVENTORY_V3_MOUNT_V3') || !loader.includes('mountInventoryV3BranchRoutes') || !loader.includes('mountInventoryV3')) {
-  throw new Error('Inventory architecture regression: runtime loader does not install both branch-scoped and generic Inventory V3 routes.');
-}
-if (!branchRoutes.includes("app.get('/api/v3/inventory/products'") || !branchRoutes.includes('s.branch_id = $1')) {
-  throw new Error('Inventory architecture regression: branch catalogue is not constrained by branch_id.');
-}
-if (!branchRoutes.includes("app.get('/api/v3/inventory/dashboard'") || !branchRoutes.includes('s.branch_id = $1')) {
-  throw new Error('Inventory architecture regression: branch dashboard is not constrained by branch_id.');
+if (!loader.includes('UNIQUEPOS_RUNTIME_MOUNTS_INVENTORY_V3') || !loader.includes('mountInventoryV3')) {
+  throw new Error('Inventory architecture regression: runtime loader does not install Inventory V3 routes.');
 }
 if (!inventory.includes("app.get('/api/v3/inventory/products'") || !inventory.includes("app.get('/api/v3/inventory/dashboard'")) {
   throw new Error('Inventory architecture regression: Inventory V3 catalogue/dashboard routes are missing.');
 }
+if (!inventory.includes('s.branch_id=$1') && !inventory.includes('s.branch_id = $1')) {
+  throw new Error('Inventory architecture regression: catalogue/dashboard stock queries are not branch-scoped.');
+}
+if (!inventory.includes('req.query.branchId||1') && !inventory.includes('req.query.branchId')) {
+  throw new Error('Inventory architecture regression: branchId is not accepted by Inventory V3 catalogue/dashboard routes.');
+}
 
-console.log('[inventory-architecture] PASS: Inventory V3 is mounted with branch-scoped catalogue/dashboard before generic routes and without the deleted fragile patcher.');
+console.log('[inventory-architecture] PASS: Inventory V3 is mounted through the runtime loader, has catalogue/dashboard routes, and scopes stock by branch.');
