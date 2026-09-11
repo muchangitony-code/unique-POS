@@ -12,7 +12,7 @@ const router: IRouter = Router();
 
 async function formatInvoice(invoice: typeof invoicesTable.$inferSelect) {
   const items = await db.select().from(invoiceItemsTable).where(eq(invoiceItemsTable.invoiceId, invoice.id));
-  const productIds = items.map((i) => i.productId);
+  const productIds = items.map((i) => i.productId).filter((id): id is number => id != null);
   const products = productIds.length ? await db.select({ id: productsTable.id, name: productsTable.productName }).from(productsTable).where(inArray(productsTable.id, productIds)) : [];
   const productMap = Object.fromEntries(products.map((p) => [p.id, p.name]));
   let customerName: string | null = null;
@@ -23,7 +23,7 @@ async function formatInvoice(invoice: typeof invoicesTable.$inferSelect) {
   return {
     id: invoice.id, invoice_number: invoice.invoiceNumber, branch_id: invoice.branchId,
     customer_id: invoice.customerId, customer_name: customerName,
-    items: items.map((i) => ({ id: i.id, product_id: i.productId, product_name: productMap[i.productId] ?? "Unknown", description: i.description, unit: i.unit, quantity: i.quantity, unit_price: Number(i.unitPrice), discount: Number(i.discount), vat_rate: Number(i.vatRate), total: Number(i.total) })),
+    items: items.map((i) => ({ id: i.id, product_id: i.productId, product_name: i.productId ? (productMap[i.productId] ?? "Unknown") : (i.description ?? "Non-stock item"), description: i.description, unit: i.unit, quantity: i.quantity, unit_price: Number(i.unitPrice), discount: Number(i.discount), vat_rate: Number(i.vatRate), total: Number(i.total) })),
     subtotal: Number(invoice.subtotal), discount_amount: Number(invoice.discountAmount), tax_amount: Number(invoice.taxAmount), total: Number(invoice.total),
     amount_paid: Number(invoice.amountPaid), balance_due: Number(invoice.balanceDue),
     status: invoice.status, due_date: invoice.dueDate, notes: invoice.notes, created_at: invoice.createdAt,
