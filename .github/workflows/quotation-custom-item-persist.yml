@@ -1,0 +1,52 @@
+name: Persist quotation custom-item UI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'components/documents/DocumentWizard.tsx'
+      - 'scripts/quotation-custom-item-ui.cjs'
+      - '.github/workflows/quotation-custom-item-persist.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  persist-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Apply quotation custom-item UI
+        run: node scripts/quotation-custom-item-ui.cjs
+
+      - name: Verify persisted UI
+        shell: bash
+        run: |
+          grep -Fq 'allowNonStock={isQuote}' components/documents/DocumentWizard.tsx
+          grep -Fq 'Non-stock / Custom Item' components/documents/DocumentWizard.tsx
+          grep -Fq 'product_id: null' components/documents/DocumentWizard.tsx
+          grep -Fq 'NON-STOCK' components/documents/DocumentWizard.tsx
+
+      - name: Persist transformed source
+        shell: bash
+        run: |
+          if git diff --quiet -- components/documents/DocumentWizard.tsx; then
+            echo 'Quotation custom-item UI is already persisted.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add components/documents/DocumentWizard.tsx
+          git commit -m 'fix: persist quotation non-stock custom item UI'
+          git push origin HEAD:main
