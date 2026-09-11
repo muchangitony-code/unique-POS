@@ -9,7 +9,7 @@ if (!source.includes(anchor)) {
   throw new Error('[product-category-free-entry-ui] product editor anchor not found');
 }
 
-const categoryPattern = /'<label><span>Category<\\/span><select id=\"productCategorySelect\" name=\"category_id\">[\\s\\S]*?<\\/select><\\/label>' \+/;
+const categoryPattern = new RegExp("'<label><span>Category</span><select id=\"productCategorySelect\" name=\"category_id\">[\\s\\S]*?</select></label>' \\\+");
 if (!categoryPattern.test(source)) {
   throw new Error('[product-category-free-entry-ui] catalogue category selector not found');
 }
