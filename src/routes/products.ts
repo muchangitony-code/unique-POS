@@ -56,7 +56,7 @@ function buildProductCode(categoryName: string | null | undefined, productName: 
     .toUpperCase() || "PRODUCT";
   const base = `${catPrefix}-${nameSlug}`;
   let next = 1;
-  const re = new RegExp(`^${base.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}-([0-9]+)$`, "i");
+  const re = new RegExp(`^${base}-([0-9]+)$`, "i");
   for (const code of existingCodes) {
     const match = re.exec(String(code || "").trim());
     if (match) next = Math.max(next, Number(match[1]) + 1);
@@ -68,17 +68,14 @@ router.get("/products", async (req, res): Promise<void> => {
   const { search, category_id, brand_id, low_stock, page = "1", limit = "50" } = req.query as Record<string, string>;
   const p = Math.max(1, parseInt(page, 10));
   const l = Math.min(200, parseInt(limit, 10));
-
   const conditions = [];
   if (search) conditions.push(ilike(productsTable.productName, `%${search}%`));
   if (category_id) conditions.push(eq(productsTable.categoryId, parseInt(category_id, 10)));
   if (brand_id) conditions.push(eq(productsTable.brandId, parseInt(brand_id, 10)));
   const where = conditions.length ? and(...conditions) : undefined;
-
   const allProducts = await db.select().from(productsTable).where(where).orderBy(productsTable.productName);
   const scope = getBranchScope(req);
   const stockMap = await loadStockMap({ branchId: scope.branchId, all: scope.mode === "all" });
-
   const [categories, brands, suppliers] = await Promise.all([
     db.select().from(categoriesTable),
     db.select().from(brandsTable),
@@ -87,12 +84,10 @@ router.get("/products", async (req, res): Promise<void> => {
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c.name]));
   const brandMap = Object.fromEntries(brands.map((b) => [b.id, b.name]));
   const supplierMap = Object.fromEntries(suppliers.map((s) => [s.id, s.name]));
-
   let formatted = allProducts.map((prod) =>
     formatProduct(prod, prod.categoryId ? catMap[prod.categoryId] : null, prod.brandId ? brandMap[prod.brandId] : null, prod.supplierId ? supplierMap[prod.supplierId] : null, stockFor(stockMap, prod))
   );
   if (low_stock === "true") formatted = formatted.filter((r) => r.current_stock <= r.min_stock);
-
   const total = formatted.length;
   const offset = (p - 1) * l;
   res.json({ data: formatted.slice(offset, offset + l), total, page: p, limit: l });
@@ -105,27 +100,25 @@ router.post("/products", requireRole("administrator", "manager", "storekeeper"),
   const [category] = category_id
     ? await db.select({ name: categoriesTable.name }).from(categoriesTable).where(eq(categoriesTable.id, Number(category_id)))
     : [];
-
   const requestedCode = typeof product_code === "string" ? product_code.trim() : "";
-  let finalProductCode = requestedCode;
 
-  // Blank/AUTO is the contract for automatic generation. The UI supplies a preview,
-  // but the server remains authoritative and resolves collisions transactionally.
-  if (!finalProductCode || finalProductCode.toUpperCase() === "AUTO") {
-    finalProductCode = await db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('unique-pos-product-code'))`);
+  const p = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('unique-pos-product-code'))`);
+    let finalProductCode = requestedCode;
+    if (!finalProductCode || finalProductCode.toUpperCase() === "AUTO") {
       const existing = await tx.select({ productCode: productsTable.productCode }).from(productsTable);
-      return buildProductCode(category?.name, product_name, existing.map((row) => row.productCode));
-    });
-  }
+      finalProductCode = buildProductCode(category?.name, product_name, existing.map((row) => row.productCode));
+    }
+    const [inserted] = await tx.insert(productsTable).values({
+      productCode: finalProductCode, barcode, productName: product_name, description,
+      categoryId: category_id, brandId: brand_id, supplierId: supplier_id,
+      costPrice: cost_price?.toString() ?? "0", sellingPrice: selling_price?.toString() ?? "0",
+      vatRate: vat_rate?.toString() ?? "16", currentStock: current_stock ?? 0, minStock: min_stock ?? 0,
+      imageUrl: image_url, unit,
+    }).returning();
+    return inserted;
+  });
 
-  const [p] = await db.insert(productsTable).values({
-    productCode: finalProductCode, barcode, productName: product_name, description,
-    categoryId: category_id, brandId: brand_id, supplierId: supplier_id,
-    costPrice: cost_price?.toString() ?? "0", sellingPrice: selling_price?.toString() ?? "0",
-    vatRate: vat_rate?.toString() ?? "16", currentStock: current_stock ?? 0, minStock: min_stock ?? 0,
-    imageUrl: image_url, unit,
-  }).returning();
   const branchId = await resolveWriteBranchId(req);
   await setBranchStock(branchId, p.id, current_stock ?? 0, min_stock ?? 0);
   if ((current_stock ?? 0) > 0) {
@@ -143,71 +136,26 @@ export function makeBarcode(productCode: string, productId: number): string {
 
 router.patch("/products/generate-barcodes", requireRole("administrator", "manager", "storekeeper"), async (req, res): Promise<void> => {
   const { product_ids } = req.body as { product_ids?: unknown };
-  if (!Array.isArray(product_ids)) {
-    res.status(400).json({ error: "product_ids is required and must be a non-empty array of positive integers" });
-    return;
-  }
-  const parsed = (product_ids as unknown[]).map((id) => {
-    const n = Number(id);
-    return Number.isInteger(n) && n > 0 ? n : NaN;
-  });
-  if (parsed.some(isNaN)) {
-    res.status(400).json({ error: "product_ids must be an array of positive integers" });
-    return;
-  }
-  if (parsed.length === 0) {
-    res.json({ updated: 0, message: "No products selected." });
-    return;
-  }
+  if (!Array.isArray(product_ids)) { res.status(400).json({ error: "product_ids is required and must be a non-empty array of positive integers" }); return; }
+  const parsed = (product_ids as unknown[]).map((id) => { const n = Number(id); return Number.isInteger(n) && n > 0 ? n : NaN; });
+  if (parsed.some(isNaN)) { res.status(400).json({ error: "product_ids must be an array of positive integers" }); return; }
+  if (parsed.length === 0) { res.json({ updated: 0, message: "No products selected." }); return; }
   const filterIds = [...new Set(parsed)];
   const noBarcode = sql`${productsTable.barcode} IS NULL OR ${productsTable.barcode} = ''`;
-  const where = and(
-    noBarcode,
-    sql`${productsTable.id} = ANY(ARRAY[${sql.join(filterIds.map((id) => sql`${id}`), sql`, `)}]::int[])`
-  );
-  const untagged = await db
-    .select({ id: productsTable.id, productCode: productsTable.productCode, productName: productsTable.productName })
-    .from(productsTable)
-    .where(where);
-  if (untagged.length === 0) {
-    res.json({ updated: 0, message: "All selected products already have barcodes." });
-    return;
-  }
+  const where = and(noBarcode, sql`${productsTable.id} = ANY(ARRAY[${sql.join(filterIds.map((id) => sql`${id}`), sql`, `)}]::int[])`);
+  const untagged = await db.select({ id: productsTable.id, productCode: productsTable.productCode, productName: productsTable.productName }).from(productsTable).where(where);
+  if (untagged.length === 0) { res.json({ updated: 0, message: "All selected products already have barcodes." }); return; }
   const updatedIds: number[] = [];
   for (const p of untagged) {
     const barcode = makeBarcode(p.productCode, p.id);
-    const rows = await db
-      .update(productsTable)
-      .set({ barcode })
-      .where(and(eq(productsTable.id, p.id), sql`${productsTable.barcode} IS NULL OR ${productsTable.barcode} = ''`))
-      .returning({ id: productsTable.id });
+    const rows = await db.update(productsTable).set({ barcode }).where(and(eq(productsTable.id, p.id), sql`${productsTable.barcode} IS NULL OR ${productsTable.barcode} = ''`)).returning({ id: productsTable.id });
     if (rows.length > 0) updatedIds.push(p.id);
   }
-  if (updatedIds.length === 0) {
-    res.json({ updated: 0, message: "All selected products already have barcodes." });
-    return;
-  }
-  await logAudit(req, {
-    action: "product.barcodes_generated",
-    entityType: "product",
-    entityId: 0,
-    description: `Bulk-generated barcodes for ${updatedIds.length} selected product(s)`,
-    metadata: { count: updatedIds.length, productIds: updatedIds },
-  });
+  if (updatedIds.length === 0) { res.json({ updated: 0, message: "All selected products already have barcodes." }); return; }
+  await logAudit(req, { action: "product.barcodes_generated", entityType: "product", entityId: 0, description: `Bulk-generated barcodes for ${updatedIds.length} selected product(s)`, metadata: { count: updatedIds.length, productIds: updatedIds } });
   const updatedIdSet = new Set(updatedIds);
-  const updatedProducts = untagged
-    .filter((p) => updatedIdSet.has(p.id))
-    .map((p) => ({
-      id: p.id,
-      product_code: p.productCode,
-      product_name: p.productName,
-      barcode: makeBarcode(p.productCode, p.id),
-    }));
-  res.json({
-    updated: updatedIds.length,
-    message: `Generated barcodes for ${updatedIds.length} product(s).`,
-    products: updatedProducts,
-  });
+  const updatedProducts = untagged.filter((p) => updatedIdSet.has(p.id)).map((p) => ({ id: p.id, product_code: p.productCode, product_name: p.productName, barcode: makeBarcode(p.productCode, p.id) }));
+  res.json({ updated: updatedIds.length, message: `Generated barcodes for ${updatedIds.length} product(s).`, products: updatedProducts });
 });
 
 router.get("/products/barcode/:barcode", async (req, res): Promise<void> => {
@@ -246,9 +194,7 @@ router.patch("/products/:id", requireRole("administrator", "manager", "storekeep
   if (vat_rate !== undefined) updateData.vatRate = vat_rate.toString();
   if (image_url !== undefined) updateData.imageUrl = image_url;
   if (unit !== undefined) updateData.unit = unit;
-  const [p] = Object.keys(updateData).length
-    ? await db.update(productsTable).set(updateData).where(eq(productsTable.id, id)).returning()
-    : [before];
+  const [p] = Object.keys(updateData).length ? await db.update(productsTable).set(updateData).where(eq(productsTable.id, id)).returning() : [before];
   const branchId = await resolveWriteBranchId(req);
   if (current_stock !== undefined || min_stock !== undefined) {
     const row = await getBranchStockRow(branchId, id);
