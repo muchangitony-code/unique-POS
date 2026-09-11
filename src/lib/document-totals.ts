@@ -1,5 +1,5 @@
 export interface LineItemInput {
-  product_id: number;
+  product_id: number | null;
   description?: string | null;
   unit?: string | null;
   quantity: number;
