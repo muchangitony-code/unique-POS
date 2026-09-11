@@ -15,10 +15,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          node-version: 24
+          package-manager-cache: false
       - name: Install dependencies
-        run: npm ci
+        run: npm install
       - name: Build and syntax validation
         run: |
           npm run build
@@ -33,7 +33,7 @@ jobs:
           const bridge = fs.readFileSync('public/pos-auth-bridge.js', 'utf8');
           if (html.indexOf('pos-catalog-compat.js') > html.indexOf('pos-auth-bridge.js')) throw new Error('Counter compatibility layer must load before auth bridge');
           if (html.indexOf('pos-auth-bridge.js') > html.indexOf('app.js')) throw new Error('Auth bridge must load before POS app');
-          if (!app.includes('data-action=\\"add-to-basket\\"')) throw new Error('Counter Add to Basket action missing after deterministic build');
+          if (!app.includes('data-action=\"add-to-basket\"')) throw new Error('Counter Add to Basket action missing after deterministic build');
           if (!app.includes('Cannot sell more than available stock.')) throw new Error('Counter stock guard missing after deterministic build');
           if (!compat.includes('in_stock_only')) throw new Error('Counter compatibility stock fallback missing');
           if (!bridge.includes('Authorization')) throw new Error('Counter auth bridge missing Authorization support');
@@ -45,14 +45,18 @@ jobs:
         run: |
           node - <<'NODE'
           const fs = require('node:fs');
-          const html = fs.readFileSync('public/index.html', 'utf8');
-          const script = fs.readFileSync('public/quotation-custom-items.js', 'utf8');
+          const uiPatch = fs.readFileSync('scripts/quotation-custom-item-ui.cjs', 'utf8');
+          const quotations = fs.readFileSync('src/routes/quotations.ts', 'utf8');
+          const invoices = fs.readFileSync('src/routes/invoices.ts', 'utf8');
           const migration = fs.readFileSync('migrations/0006_quotation_custom_items.sql', 'utf8');
-          if (!html.includes('/quotation-custom-items.js')) throw new Error('Custom quotation script is not loaded by index.html');
-          if (!script.includes('Add Non-Stock Item')) throw new Error('Non-stock quotation action is missing');
-          if (!script.includes('product_id: productId')) throw new Error('Quotation items are not preserving product linkage');
-          if (!script.includes('x-branch-id')) throw new Error('Quotation creation is missing branch scoping');
+          const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          if (!uiPatch.includes('Non-stock / Custom Item')) throw new Error('Non-stock quotation action is missing');
+          if (!uiPatch.includes('product_id: null')) throw new Error('Custom quotation lines are not marked non-stock');
+          if (!uiPatch.includes('allowNonStock')) throw new Error('Quotation-only non-stock mode is missing');
+          if (!quotations.includes('productId == null') || !quotations.includes('productId as any')) throw new Error('Quotation backend does not preserve non-stock lines');
+          if (!invoices.includes('productId == null') || !invoices.includes('product_id as any')) throw new Error('Invoice backend does not preserve non-stock lines');
           if (!migration.includes('ALTER COLUMN product_id DROP NOT NULL')) throw new Error('Quotation migration does not permit non-stock items');
+          if (!packageJson.scripts.build.includes('quotation-custom-item-ui.cjs')) throw new Error('Non-stock quotation UI patch is not part of the production build');
           console.log('Quotation custom-item integration checks passed.');
           NODE
 
@@ -90,10 +94,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          node-version: 24
+          package-manager-cache: false
       - name: Install dependencies
-        run: npm ci
+        run: npm install
       - name: Build
         run: npm run build
       - name: Create staging schema snapshot
