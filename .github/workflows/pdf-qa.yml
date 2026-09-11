@@ -21,11 +21,15 @@ jobs:
         run: npm install
       - name: Build
         run: npm run build
-      - name: Full PDF QA
-        run: npm run pdf:qa
+      - name: Document PDF smoke tests
+        run: |
+          node tests/pdf-document-smoke.cjs
+          node tests/pdf-structural.cjs
+          node tests/pdf-branding-integrity.cjs
+          node tests/pdf-logo-propagation.cjs
       - name: Download-path smoke test
-        run: npm run pdf:download-smoke
-      - name: Rasterize all PDFs
+        run: node scripts/pdf-download-smoke.cjs
+      - name: Rasterize generated PDFs
         run: node tests/pdf-visual-qa.cjs
       - name: Upload rendered pages
         uses: actions/upload-artifact@v4
