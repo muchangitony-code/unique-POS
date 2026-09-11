@@ -257,7 +257,7 @@ export function DocumentWizard({ mode, open, onOpenChange, initial, onCreated }:
 
         <ScrollArea className="flex-1 px-6 py-4 overflow-y-auto">
           {step === 0 && <CustomerStep state={state} patch={patch} />}
-          {step === 1 && <ProductsStep state={state} patch={patch} />}
+          {step === 1 && <ProductsStep state={state} patch={patch} allowNonStock={isQuote} />}
           {step === 2 && <PricingStep state={state} patch={patch} totals={totals} />}
           {step === 3 && (isQuote
             ? <QuotationTermsStep state={state} patch={patch} />
@@ -387,27 +387,63 @@ function CustomerStep({ state, patch }: { state: WizardState; patch: (p: Partial
 }
 
 // ── Step 2: Products ──────────────────────────────────────────────────────────
-function ProductsStep({ state, patch }: { state: WizardState; patch: (p: Partial<WizardState>) => void }) {
+function ProductsStep({ state, patch, allowNonStock = false }: { state: WizardState; patch: (p: Partial<WizardState>) => void; allowNonStock?: boolean }) {
   const [search, setSearch] = useState('');
   const [barcode, setBarcode] = useState('');
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customName, setCustomName] = useState('');
+  const [customDescription, setCustomDescription] = useState('');
+  const [customUnit, setCustomUnit] = useState('');
+  const [customQty, setCustomQty] = useState('1');
+  const [customPrice, setCustomPrice] = useState('0');
+  const [customVat, setCustomVat] = useState('16');
   const { data: productsData, isLoading } = useGetProducts({ search: search || undefined, limit: 30 });
 
   const addProduct = (p: Product) => {
     const existing = state.lines.find((l) => l.product_id === p.id);
     if (existing) {
       patch({ lines: state.lines.map((l) => l.product_id === p.id ? { ...l, quantity: l.quantity + 1 } : l) });
-    } else {
-      patch({ lines: [...state.lines, {
-        product_id: p.id,
-        product_name: p.product_name,
-        description: '',
-        unit: p.unit ?? '',
-        quantity: 1,
-        unit_price: p.selling_price,
-        discount: 0,
-        vat_rate: (p as any).vat_rate ?? 16,
-      }] });
+      return;
     }
+    patch({ lines: [...state.lines, {
+      product_id: p.id,
+      product_name: p.product_name,
+      description: p.description ?? '',
+      unit: p.unit ?? '',
+      quantity: 1,
+      unit_price: Number(p.selling_price ?? 0),
+      discount: 0,
+      vat_rate: Number((p as any).vat_rate ?? 16),
+    }] });
+  };
+
+  const addCustomItem = () => {
+    const name = customName.trim();
+    const quantity = Number(customQty);
+    const price = Number(customPrice);
+    const vat = Number(customVat);
+    if (!name) { toast.error('Enter the custom item name'); return; }
+    if (!Number.isFinite(quantity) || quantity <= 0) { toast.error('Quantity must be greater than zero'); return; }
+    if (!Number.isFinite(price) || price < 0) { toast.error('Unit price cannot be negative'); return; }
+    if (!Number.isFinite(vat) || vat < 0) { toast.error('VAT rate cannot be negative'); return; }
+
+    patch({ lines: [...state.lines, {
+      product_id: null as any,
+      product_name: name,
+      description: customDescription.trim() || name,
+      unit: customUnit.trim(),
+      quantity,
+      unit_price: price,
+      discount: 0,
+      vat_rate: vat,
+    }] });
+    setCustomName('');
+    setCustomDescription('');
+    setCustomUnit('');
+    setCustomQty('1');
+    setCustomPrice('0');
+    setCustomVat('16');
+    setCustomOpen(false);
   };
 
   const handleBarcode = async () => {
@@ -415,109 +451,121 @@ function ProductsStep({ state, patch }: { state: WizardState; patch: (p: Partial
     if (!code) return;
     setBarcode('');
     try {
-      const res = await fetch(`${getApiUrl()}products/barcode/${encodeURIComponent(code)}`, { credentials: 'include' });
-      if (res.status === 404) { toast.error(`No product for barcode ${code}`); return; }
-      if (!res.ok) { toast.error(`Lookup failed (${res.status})`); return; }
-      const product: Product = await res.json();
-      addProduct(product);
-      toast.success(`Added ${product.product_name}`);
-    } catch {
-      toast.error('Network error during barcode lookup');
+      const res = await fetch(getApiUrl() + 'products/barcode/' + encodeURIComponent(code), { credentials: 'include' });
+      if (res.status === 404) { toast.error('No product for barcode ' + code); return; }
+      if (!res.ok) throw new Error('Barcode lookup failed');
+      addProduct(await res.json());
+    } catch (err: any) {
+      toast.error(err?.message || 'Barcode lookup failed');
     }
   };
 
-  const updateLine = (idx: number, p: Partial<DocLine>) =>
-    patch({ lines: state.lines.map((l, i) => i === idx ? { ...l, ...p } : l) });
-  const removeLine = (idx: number) => patch({ lines: state.lines.filter((_, i) => i !== idx) });
+  const updateLine = (index: number, patchLine: Partial<DocLine>) => {
+    patch({ lines: state.lines.map((l, i) => i === index ? { ...l, ...patchLine } : l) });
+  };
+
+  const removeLine = (index: number) => patch({ lines: state.lines.filter((_, i) => i !== index) });
 
   return (
-    <div className="space-y-4">
-      <div className="flex gap-2">
+    <div className="space-y-5">
+      <div className="flex gap-2 items-center">
         <div className="relative flex-1">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Search products by name or code…" className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input placeholder="Search products…" className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <div className="relative w-52">
           <Barcode className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input placeholder="Barcode + Enter" className="pl-9 font-mono" value={barcode}
             onChange={(e) => setBarcode(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleBarcode(); } }} />
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void handleBarcode(); } }} />
         </div>
+        {allowNonStock && (
+          <Button type="button" variant="outline" onClick={() => setCustomOpen(true)}>
+            <Plus className="w-4 h-4 mr-1.5" /> Non-stock / Custom Item
+          </Button>
+        )}
       </div>
 
-      {search && (
-        <div className="border rounded-lg max-h-44 overflow-y-auto divide-y">
-          {isLoading ? <p className="p-3 text-sm text-muted-foreground">Loading…</p>
-          : (productsData?.data ?? []).length === 0 ? <p className="p-3 text-sm text-muted-foreground">No products found.</p>
-          : productsData!.data!.map((p) => (
-            <button key={p.id} type="button" onClick={() => addProduct(p)}
-              className="w-full text-left px-3 py-2 text-sm hover:bg-muted/50 flex items-center justify-between">
-              <div>
-                <p className="font-medium">{p.product_name}</p>
-                <p className="text-xs text-muted-foreground">{p.product_code} · {formatCurrency(p.selling_price)}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Badge variant={p.current_stock > 0 ? 'secondary' : 'destructive'} className="text-[10px]">
-                  {p.current_stock} {p.unit}
-                </Badge>
-                <Plus className="w-4 h-4 text-primary" />
-              </div>
-            </button>
-          ))}
+      {allowNonStock && (
+        <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground bg-muted/20">
+          Need to quote something that is not in inventory? Use <span className="font-medium text-foreground">Non-stock / Custom Item</span>. It appears on the quotation but does not create stock or inventory records.
         </div>
       )}
 
-      {/* Selected lines */}
-      {state.lines.length === 0 ? (
-        <div className="text-center py-10 text-muted-foreground text-sm border border-dashed rounded-lg">
-          No products added yet. Search above or scan a barcode.
+      <div className="border rounded-lg max-h-64 overflow-y-auto divide-y">
+        {isLoading ? <p className="p-3 text-sm text-muted-foreground">Loading…</p>
+          : (productsData?.data ?? []).length === 0 ? <p className="p-3 text-sm text-muted-foreground">No products found.</p>
+          : productsData!.data!.map((p) => (
+            <button key={p.id} type="button" onClick={() => addProduct(p)} className="w-full text-left px-3 py-2.5 hover:bg-muted/50 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-medium truncate">{p.product_name}</p>
+                <p className="text-xs text-muted-foreground">{p.product_code || 'No code'} · Stock: {p.current_stock ?? 0}</p>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="font-medium">{formatCurrency(Number(p.selling_price ?? 0))}</p>
+                <p className="text-xs text-primary">Add</p>
+              </div>
+            </button>
+          ))}
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold">Selected items</h3>
+          <Badge variant="secondary">{state.lines.length} item{state.lines.length === 1 ? '' : 's'}</Badge>
         </div>
-      ) : (
-        <div className="space-y-2">
-          {state.lines.map((line, idx) => (
-            <div key={line.product_id} className="border rounded-lg p-3 space-y-2">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1">
-                  <p className="font-medium text-sm">{line.product_name}</p>
-                  <Input
-                    placeholder="Description (optional)"
-                    className="mt-1 h-7 text-xs"
-                    value={line.description ?? ''}
-                    onChange={(e) => updateLine(idx, { description: e.target.value })}
-                  />
+        {state.lines.length === 0 ? (
+          <div className="p-6 text-center text-sm text-muted-foreground border rounded-lg">No items added yet.</div>
+        ) : (
+          <div className="space-y-2">
+            {state.lines.map((line, index) => (
+              <div key={String(line.product_id ?? 'custom') + '-' + index} className="border rounded-lg p-3 space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium truncate">{line.product_name}</p>
+                      {line.product_id == null && <Badge variant="outline" className="shrink-0">NON-STOCK</Badge>}
+                    </div>
+                    {line.description && <p className="text-xs text-muted-foreground mt-0.5">{line.description}</p>}
+                  </div>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => removeLine(index)} className="text-destructive">
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
                 </div>
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive shrink-0" onClick={() => removeLine(idx)}>
-                  <Trash2 className="w-4 h-4" />
-                </Button>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                  <div><label className="text-xs text-muted-foreground">Quantity</label><Input type="number" min="0.001" step="0.001" value={line.quantity} onChange={(e) => updateLine(index, { quantity: Number(e.target.value) })} /></div>
+                  <div><label className="text-xs text-muted-foreground">Unit</label><Input value={line.unit ?? ''} onChange={(e) => updateLine(index, { unit: e.target.value })} /></div>
+                  <div><label className="text-xs text-muted-foreground">Unit price</label><Input type="number" min="0" step="0.01" value={line.unit_price} onChange={(e) => updateLine(index, { unit_price: Number(e.target.value) })} /></div>
+                  <div><label className="text-xs text-muted-foreground">Discount %</label><Input type="number" min="0" step="0.01" value={line.discount} onChange={(e) => updateLine(index, { discount: Number(e.target.value) })} /></div>
+                  <div><label className="text-xs text-muted-foreground">VAT %</label><Input type="number" min="0" step="0.01" value={line.vat_rate} onChange={(e) => updateLine(index, { vat_rate: Number(e.target.value) })} /></div>
+                </div>
               </div>
-              <div className="grid grid-cols-5 gap-2">
-                <MiniField label="Qty">
-                  <Input type="number" min={1} className="h-8" value={line.quantity}
-                    onChange={(e) => updateLine(idx, { quantity: Math.max(1, parseInt(e.target.value) || 1) })} />
-                </MiniField>
-                <MiniField label="Unit">
-                  <Input className="h-8" value={line.unit ?? ''} onChange={(e) => updateLine(idx, { unit: e.target.value })} />
-                </MiniField>
-                <MiniField label="Price">
-                  <Input type="number" min={0} step="0.01" className="h-8" value={line.unit_price}
-                    onChange={(e) => updateLine(idx, { unit_price: parseFloat(e.target.value) || 0 })} />
-                </MiniField>
-                <MiniField label="Disc %">
-                  <Input type="number" min={0} max={100} className="h-8" value={line.discount}
-                    onChange={(e) => updateLine(idx, { discount: Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)) })} />
-                </MiniField>
-                <MiniField label="VAT %">
-                  <Input type="number" min={0} className="h-8" value={line.vat_rate}
-                    onChange={(e) => updateLine(idx, { vat_rate: Math.max(0, parseFloat(e.target.value) || 0) })} />
-                </MiniField>
-              </div>
-              <div className="text-right text-sm">
-                <span className="text-muted-foreground">Line total: </span>
-                <span className="font-semibold">{formatCurrency(lineTotal(line))}</span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {allowNonStock && (
+        <Dialog open={customOpen} onOpenChange={setCustomOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader><DialogTitle>Add Non-stock / Custom Item</DialogTitle></DialogHeader>
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">This line is only for the quotation. It will not be added to Products, stock, or inventory.</p>
+              <div><label className="text-sm font-medium">Item name *</label><Input autoFocus placeholder="e.g. Custom fabrication" value={customName} onChange={(e) => setCustomName(e.target.value)} /></div>
+              <div><label className="text-sm font-medium">Description</label><Textarea placeholder="Optional description/specification" value={customDescription} onChange={(e) => setCustomDescription(e.target.value)} /></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="text-sm font-medium">Unit</label><Input placeholder="pcs, m, service…" value={customUnit} onChange={(e) => setCustomUnit(e.target.value)} /></div>
+                <div><label className="text-sm font-medium">Quantity *</label><Input type="number" min="0.001" step="0.001" value={customQty} onChange={(e) => setCustomQty(e.target.value)} /></div>
+                <div><label className="text-sm font-medium">Unit price (KES) *</label><Input type="number" min="0" step="0.01" value={customPrice} onChange={(e) => setCustomPrice(e.target.value)} /></div>
+                <div><label className="text-sm font-medium">VAT %</label><Input type="number" min="0" step="0.01" value={customVat} onChange={(e) => setCustomVat(e.target.value)} /></div>
               </div>
             </div>
-          ))}
-        </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCustomOpen(false)}>Cancel</Button>
+              <Button type="button" onClick={addCustomItem}>Add to Quotation</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );
