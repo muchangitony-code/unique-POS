@@ -4,7 +4,7 @@
  * post-line-discount net; the manual discount is an absolute amount off the total.
  */
 export interface DocLine {
-  product_id: number;
+  product_id: number | null;
   product_name: string;
   description?: string;
   unit?: string;
