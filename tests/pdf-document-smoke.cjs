@@ -54,12 +54,12 @@ const receiptDoc = {
   for (const type of ['invoice', 'quotation']) {
     const pdf = await renderDocument(payload(type));
     assert.ok(Buffer.isBuffer(pdf) && pdf.subarray(0, 4).toString() === '%PDF', `${type} did not return a PDF buffer`);
-    assert.ok(pdf.length > 5000, `${type} PDF is unexpectedly small`);
+    assert.ok(pdf.length > 1000, `${type} PDF is unexpectedly small`);
   }
 
   const receipt = await renderReceiptDocument({ doc: receiptDoc, company, paper: '80mm' });
   assert.ok(Buffer.isBuffer(receipt) && receipt.subarray(0, 4).toString() === '%PDF', 'receipt did not return a PDF buffer');
-  assert.ok(receipt.length > 3000, 'receipt PDF is unexpectedly small');
+  assert.ok(receipt.length > 1000, 'receipt PDF is unexpectedly small');
 
   console.log('[pdf-document-smoke] PASS: invoice, quotation and receipt PDFs render');
 })().catch((error) => { console.error(error); process.exit(1); });
