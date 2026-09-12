@@ -23,7 +23,11 @@ async function formatQuotation(quotation: typeof quotationsTable.$inferSelect) {
   return {
     id: quotation.id, quotation_number: quotation.quotationNumber, branch_id: quotation.branchId,
     customer_id: quotation.customerId, customer_name: customerName,
-    items: items.map((i) => ({ id: i.id, product_id: i.productId, product_name: i.productId ? (productMap[i.productId] ?? "Unknown") : (i.description ?? "Non-stock item"), description: i.description, unit: i.unit, quantity: i.quantity, unit_price: Number(i.unitPrice), discount: Number(i.discount), vat_rate: Number(i.vatRate), total: Number(i.total) })),
+    // A quotation item may be non-stock (product_id = null), or may reference
+    // a product that has since been removed from the catalogue. In both cases
+    // the saved description is the authoritative display text; never expose
+    // the internal "Unknown" placeholder to the customer-facing document.
+    items: items.map((i) => ({ id: i.id, product_id: i.productId, product_name: i.productId ? (productMap[i.productId] ?? i.description ?? "Non-stock item") : (i.description ?? "Non-stock item"), description: i.description, unit: i.unit, quantity: i.quantity, unit_price: Number(i.unitPrice), discount: Number(i.discount), vat_rate: Number(i.vatRate), total: Number(i.total) })),
     subtotal: Number(quotation.subtotal), discount_amount: Number(quotation.discountAmount), tax_amount: Number(quotation.taxAmount), total: Number(quotation.total),
     status: quotation.status, notes: quotation.notes,
     delivery_time: quotation.deliveryTime, warranty: quotation.warranty, payment_terms: quotation.paymentTerms,
