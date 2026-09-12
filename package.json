@@ -6,7 +6,7 @@
   "engines": { "node": ">=24" },
   "scripts": {
     "start": "node app.js",
-    "build": "node scripts/auto-product-code-ui.cjs && node scripts/quotation-custom-item-ui.cjs && node scripts/product-category-free-entry-ui.cjs && node scripts/verify-quotation-custom-item-ui.cjs && npm run build:frontend && node scripts/build.cjs",
+    "build": "node scripts/auto-product-code-ui.cjs && node scripts/quotation-custom-item-ui.cjs && node scripts/product-category-free-entry-ui.cjs && node scripts/pdf-custom-item-display.cjs && node scripts/verify-quotation-custom-item-ui.cjs && npm run build:frontend && node scripts/build.cjs",
     "build:frontend": "vite build --config vite.config.mjs"
   },
   "dependencies": {
