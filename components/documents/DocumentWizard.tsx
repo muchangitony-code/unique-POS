@@ -518,12 +518,16 @@ function ProductsStep({ state, patch, allowNonStock = false }: { state: WizardSt
           <div className="p-6 text-center text-sm text-muted-foreground border rounded-lg">No items added yet.</div>
         ) : (
           <div className="space-y-2">
-            {state.lines.map((line, index) => (
+            {state.lines.map((line, index) => {
+              const displayName = line.product_name?.trim() && line.product_name.trim().toLowerCase() !== 'unknown'
+                ? line.product_name
+                : (line.description?.trim() || 'Non-stock item');
+              return (
               <div key={String(line.product_id ?? 'custom') + '-' + index} className="border rounded-lg p-3 space-y-3">
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="font-medium truncate">{line.product_name}</p>
+                      <p className="font-medium truncate">{displayName}</p>
                       {line.product_id == null && <Badge variant="outline" className="shrink-0">NON-STOCK</Badge>}
                     </div>
                     {line.description && <p className="text-xs text-muted-foreground mt-0.5">{line.description}</p>}
@@ -540,7 +544,8 @@ function ProductsStep({ state, patch, allowNonStock = false }: { state: WizardSt
                   <div><label className="text-xs text-muted-foreground">VAT %</label><Input type="number" min="0" step="0.01" value={line.vat_rate} onChange={(e) => updateLine(index, { vat_rate: Number(e.target.value) })} /></div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -709,9 +714,9 @@ function PreviewStep({ mode, state, totals, customerName }: {
         </thead>
         <tbody>
           {state.lines.map((l) => (
-            <tr key={l.product_id} className="border-t">
+            <tr key={String(l.product_id ?? 'custom') + '-' + state.lines.indexOf(l)} className="border-t">
               <td className="px-3 py-2">
-                {l.product_name}
+                {(l.product_name?.trim() && l.product_name.trim().toLowerCase() !== 'unknown') ? l.product_name : (l.description?.trim() || 'Non-stock item')}
                 {l.description ? <span className="block text-muted-foreground">{l.description}</span> : null}
               </td>
               <td className="px-3 py-2 text-right">{l.quantity} {l.unit}</td>
