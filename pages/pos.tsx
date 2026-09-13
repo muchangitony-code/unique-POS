@@ -84,14 +84,12 @@ export default function POS() {
   const change = amountPaid - totals.total;
   const selectedCustomer = customersData?.data?.find(c => c.id.toString() === customerId);
 
-  // First stage: validate the order and open a review. No sale is written here.
   const handleCheckout = () => {
     if (cart.length === 0) { toast.error("Cart is empty"); return; }
     if (amountPaid < totals.total && paymentMethod !== 'credit') { toast.error("Amount paid is less than total"); return; }
     setSalePreviewOpen(true);
   };
 
-  // Second stage: only this action actually creates/records the sale.
   const confirmSale = () => {
     if (cart.length === 0) { toast.error("Cart is empty"); setSalePreviewOpen(false); return; }
     if (amountPaid < totals.total && paymentMethod !== 'credit') { toast.error("Amount paid is less than total"); return; }
@@ -142,11 +140,11 @@ export default function POS() {
     </div>
 
     <Dialog open={salePreviewOpen} onOpenChange={open => { if (!createSale.isPending) setSalePreviewOpen(open); }}>
-      <DialogContent className="sm:max-w-[520px] max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[520px] max-h-[90vh] flex flex-col overflow-hidden p-0">
+        <DialogHeader className="shrink-0 px-6 pt-6 pb-4 border-b">
           <DialogTitle className="flex items-center gap-2 text-lg"><Eye className="h-5 w-5 text-primary" /> Review & Confirm Sale</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
           <div className="rounded-lg border bg-background p-4 font-mono text-sm shadow-sm">
             <div className="text-center border-b border-dashed pb-3 mb-3">
               <p className="font-bold text-base">{getBranding().name}</p>
@@ -155,7 +153,7 @@ export default function POS() {
             <div className="flex justify-between text-xs text-muted-foreground mb-3"><span>Customer</span><span>{selectedCustomer?.name || 'Walk-in Customer'}</span></div>
             <div className="space-y-2 border-b border-dashed pb-3">
               <div className="flex font-bold border-b pb-1"><span className="flex-1">Item</span><span className="w-10 text-right">Qty</span><span className="w-24 text-right">Total</span></div>
-              {cart.map((item, i) => <div key={item.product.id} className="flex items-start"><span className="flex-1 pr-2 break-words">{item.product.product_name}</span><span className="w-10 text-right">{item.quantity}</span><span className="w-24 text-right">{formatCurrency(item.product.selling_price * item.quantity)}</span></div>)}
+              {cart.map((item) => <div key={item.product.id} className="flex items-start"><span className="flex-1 pr-2 break-words">{item.product.product_name}</span><span className="w-10 text-right">{item.quantity}</span><span className="w-24 text-right">{formatCurrency(item.product.selling_price * item.quantity)}</span></div>)}
             </div>
             <div className="space-y-1 pt-3">
               <div className="flex justify-between"><span>Subtotal</span><span>{formatCurrency(totals.subtotal)}</span></div>
@@ -167,7 +165,9 @@ export default function POS() {
             </div>
           </div>
           <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-900 flex items-start gap-2"><CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" /><span>Check the items, quantities, customer, payment method and total. The sale will only be recorded after you press <strong>Confirm & Complete Sale</strong>.</span></div>
-          <div className="grid grid-cols-2 gap-3 pt-1">
+        </div>
+        <div className="shrink-0 border-t bg-background/95 backdrop-blur px-6 py-4 sticky bottom-0 z-10">
+          <div className="grid grid-cols-2 gap-3">
             <Button variant="outline" className="h-11" onClick={() => setSalePreviewOpen(false)} disabled={createSale.isPending} data-testid="button-edit-sale"><X className="mr-2 h-4 w-4" /> Back to Edit</Button>
             <Button className="h-11 font-bold" onClick={confirmSale} disabled={createSale.isPending} data-testid="button-confirm-complete-sale"><CheckCircle2 className="mr-2 h-4 w-4" /> {createSale.isPending ? 'Processing...' : 'Confirm & Complete Sale'}</Button>
           </div>
