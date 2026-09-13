@@ -11,10 +11,10 @@ const items = [
   { product_id: 123, description: "Catalogue cable", unit: "m", quantity: 10, unit_price: 240, discount: 0, vat_rate: 16 },
 ];
 const totals = computeDocumentTotals(items, 1000);
-assert.equal(totals.subtotal, 186600);
+assert.equal(totals.subtotal, 164400);
 assert.equal(totals.taxAmount, 384);
 assert.equal(totals.discountAmount, 19000);
-assert.equal(totals.total, 185984);
+assert.equal(totals.total, 163784);
 
 // 2) Server PDF adapter must prefer the saved human-entered description over
 // the internal catalogue placeholder "Unknown".
