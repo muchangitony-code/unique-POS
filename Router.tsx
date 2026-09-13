@@ -6,7 +6,8 @@ import Login from '@/pages/login';
 import ForgotPassword from '@/pages/forgot-password';
 import Dashboard from '@/pages/dashboard';
 import POS from '@/pages/pos';
-import Products from '@/pages/products';
+import ProductsWithBulk from '@/pages/products-with-bulk';
+import BulkImport from '@/pages/bulk-import';
 import UsersPage from '@/pages/users';
 import Settings from '@/pages/settings';
 import Inventory from '@/pages/inventory';
@@ -44,91 +45,58 @@ export function AppRouter() {
       <Route path="/login" component={Login} />
       <Route path="/forgot-password" component={ForgotPassword} />
 
-      {/* All authenticated users */}
       <Route path="/dashboard">
-        <ProtectedRoute title="Dashboard">
-          <Dashboard />
-        </ProtectedRoute>
+        <ProtectedRoute title="Dashboard"><Dashboard /></ProtectedRoute>
       </Route>
 
-      {/* Administrator + Sales/Cashier */}
       <Route path="/pos">
-        <ProtectedRoute title="Point of Sale" allowedTiers={['administrator', 'sales_cashier']}>
-          <POS />
-        </ProtectedRoute>
+        <ProtectedRoute title="Point of Sale" allowedTiers={['administrator', 'sales_cashier']}><POS /></ProtectedRoute>
       </Route>
 
-      {/* Administrator + Manager + Storekeeper */}
+      <Route path="/products/bulk-import">
+        <ProtectedRoute title="Bulk Add Products" allowedTiers={['administrator', 'manager', 'storekeeper']}><BulkImport /></ProtectedRoute>
+      </Route>
       <Route path="/products">
-        <ProtectedRoute title="Products Database" allowedTiers={['administrator', 'manager', 'storekeeper']}>
-          <Products />
-        </ProtectedRoute>
+        <ProtectedRoute title="Products Database" allowedTiers={['administrator', 'manager', 'storekeeper']}><ProductsWithBulk /></ProtectedRoute>
       </Route>
       <Route path="/inventory">
-        <ProtectedRoute title="Inventory" allowedTiers={['administrator', 'manager', 'storekeeper']}>
-          <Inventory />
-        </ProtectedRoute>
+        <ProtectedRoute title="Inventory" allowedTiers={['administrator', 'manager', 'storekeeper']}><Inventory /></ProtectedRoute>
       </Route>
       <Route path="/purchases">
-        <ProtectedRoute title="Purchases" allowedTiers={['administrator', 'manager', 'storekeeper']}>
-          <Purchases />
-        </ProtectedRoute>
+        <ProtectedRoute title="Purchases" allowedTiers={['administrator', 'manager', 'storekeeper']}><Purchases /></ProtectedRoute>
       </Route>
       <Route path="/suppliers">
-        <ProtectedRoute title="Suppliers" allowedTiers={['administrator', 'manager', 'storekeeper']}>
-          <Suppliers />
-        </ProtectedRoute>
+        <ProtectedRoute title="Suppliers" allowedTiers={['administrator', 'manager', 'storekeeper']}><Suppliers /></ProtectedRoute>
       </Route>
 
-      {/* Administrator + Manager + Sales/Cashier */}
       <Route path="/customers">
-        <ProtectedRoute title="Customers" allowedTiers={['administrator', 'manager', 'sales_cashier']}>
-          <Customers />
-        </ProtectedRoute>
+        <ProtectedRoute title="Customers" allowedTiers={['administrator', 'manager', 'sales_cashier']}><Customers /></ProtectedRoute>
       </Route>
       <Route path="/quotations">
-        <ProtectedRoute title="Quotations" allowedTiers={['administrator', 'manager', 'sales_cashier']}>
-          <Quotations />
-        </ProtectedRoute>
+        <ProtectedRoute title="Quotations" allowedTiers={['administrator', 'manager', 'sales_cashier']}><Quotations /></ProtectedRoute>
       </Route>
       <Route path="/invoices">
-        <ProtectedRoute title="Invoices" allowedTiers={['administrator', 'manager', 'sales_cashier']}>
-          <Invoices />
-        </ProtectedRoute>
+        <ProtectedRoute title="Invoices" allowedTiers={['administrator', 'manager', 'sales_cashier']}><Invoices /></ProtectedRoute>
       </Route>
 
-      {/* Administrator + Manager */}
       <Route path="/reports">
-        <ProtectedRoute title="Reports" allowedTiers={['administrator', 'manager']}>
-          <Reports />
-        </ProtectedRoute>
+        <ProtectedRoute title="Reports" allowedTiers={['administrator', 'manager']}><Reports /></ProtectedRoute>
       </Route>
 
-      {/* Administrator only */}
       <Route path="/expenses">
-        <ProtectedRoute title="Expenses" allowedTiers={['administrator']}>
-          <Expenses />
-        </ProtectedRoute>
+        <ProtectedRoute title="Expenses" allowedTiers={['administrator']}><Expenses /></ProtectedRoute>
       </Route>
       <Route path="/users">
-        <ProtectedRoute title="Users & Staff" allowedTiers={['administrator']}>
-          <UsersPage />
-        </ProtectedRoute>
+        <ProtectedRoute title="Users & Staff" allowedTiers={['administrator']}><UsersPage /></ProtectedRoute>
       </Route>
       <Route path="/settings">
-        <ProtectedRoute title="Settings" allowedTiers={['administrator']}>
-          <Settings />
-        </ProtectedRoute>
+        <ProtectedRoute title="Settings" allowedTiers={['administrator']}><Settings /></ProtectedRoute>
       </Route>
       <Route path="/audit-log">
-        <ProtectedRoute title="Audit Log" allowedTiers={['administrator']}>
-          <AuditLog />
-        </ProtectedRoute>
+        <ProtectedRoute title="Audit Log" allowedTiers={['administrator']}><AuditLog /></ProtectedRoute>
       </Route>
       <Route path="/security-alerts">
-        <ProtectedRoute title="Security Alerts" allowedTiers={['administrator']}>
-          <SecurityAlerts />
-        </ProtectedRoute>
+        <ProtectedRoute title="Security Alerts" allowedTiers={['administrator']}><SecurityAlerts /></ProtectedRoute>
       </Route>
 
       <Route component={NotFound} />
