@@ -27,6 +27,23 @@ import { useBranchLookup } from '@/lib/branchLookup';
 import { DocumentWizard } from '@/components/documents/DocumentWizard';
 import { emailDocumentUrl, whatsappDocumentUrl } from '@/lib/docShare';
 
+/**
+ * The API historically returned the literal "Unknown" for non-stock lines
+ * because they have no product_id. The saved description is the authoritative
+ * customer-facing text for those lines. Never allow the placeholder to reach
+ * the print/preview layer.
+ */
+function quotationItemName(it: any): string {
+  const candidates = [it?.product_name, it?.description, it?.productName, it?.name];
+  for (const value of candidates) {
+    const text = String(value ?? '').trim();
+    if (text && !['unknown', 'undefined', 'null', 'item'].includes(text.toLowerCase())) {
+      return text;
+    }
+  }
+  return 'Non-stock item';
+}
+
 function toPrintQuotation(q: any): PrintQuotation {
   return {
     quotation_number: q.quotation_number,
@@ -36,7 +53,7 @@ function toPrintQuotation(q: any): PrintQuotation {
     status: q.status,
     notes: q.notes,
     items: (q.items ?? []).map((it: any) => ({
-      product_name: it.product_name,
+      product_name: quotationItemName(it),
       quantity: it.quantity,
       unit_price: it.unit_price,
       discount: it.discount ?? 0,
@@ -54,7 +71,7 @@ function toWizardInitial(q: any) {
     customerId: q.customer_id ? String(q.customer_id) : '',
     lines: (q.items ?? []).map((it: any) => ({
       product_id: it.product_id,
-      product_name: it.product_name,
+      product_name: quotationItemName(it),
       description: it.description ?? '',
       unit: it.unit ?? '',
       quantity: it.quantity,
@@ -211,7 +228,7 @@ export default function Quotations() {
           {viewQuotation && <div className="space-y-4 text-sm">
             <div className="flex items-start gap-3 p-4 rounded-lg bg-primary/5 border border-primary/15"><img src={viewBranding.logoUrl} alt="Logo" className="w-12 h-12 object-contain rounded" /><div><p className="font-bold text-primary">{viewBranding.name}</p><p className="text-xs text-muted-foreground">{viewBranding.addressLine}</p><p className="text-xs text-muted-foreground">{viewBranding.phone} · {viewBranding.email}</p></div><div className="ml-auto text-right"><p className="font-bold text-lg text-primary">QUOTATION</p><p className="text-xs text-muted-foreground">{viewQuotation.quotation_number}</p><p className="text-xs text-muted-foreground">{format(new Date(viewQuotation.created_at), 'dd MMM yyyy')}</p></div></div>
             <div className="grid grid-cols-2 gap-4"><div className="p-3 bg-muted/30 rounded-lg"><p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Prepared For</p><p className="font-medium">{viewQuotation.customer_name || 'Valued Customer'}</p></div><div className="p-3 bg-muted/30 rounded-lg"><p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Valid Until</p><p className="font-medium">{viewQuotation.valid_until ? format(new Date(viewQuotation.valid_until), 'dd MMM yyyy') : 'Until further notice'}</p></div></div>
-            <table className="w-full border rounded-lg overflow-hidden text-xs"><thead className="bg-primary text-primary-foreground"><tr><th className="px-3 py-2 text-left">Item</th><th className="px-3 py-2 text-right">Qty</th><th className="px-3 py-2 text-right">Unit Price</th><th className="px-3 py-2 text-right">VAT</th><th className="px-3 py-2 text-right">Total</th></tr></thead><tbody>{(viewQuotation.items ?? []).map((it: any, i: number) => <tr key={i} className="border-t"><td className="px-3 py-2">{it.product_name}</td><td className="px-3 py-2 text-right">{it.quantity}</td><td className="px-3 py-2 text-right">{formatCurrency(it.unit_price)}</td><td className="px-3 py-2 text-right">{it.vat_rate}%</td><td className="px-3 py-2 text-right font-medium">{formatCurrency(it.total)}</td></tr>)}</tbody></table>
+            <table className="w-full border rounded-lg overflow-hidden text-xs"><thead className="bg-primary text-primary-foreground"><tr><th className="px-3 py-2 text-left">Item</th><th className="px-3 py-2 text-right">Qty</th><th className="px-3 py-2 text-right">Unit Price</th><th className="px-3 py-2 text-right">VAT</th><th className="px-3 py-2 text-right">Total</th></tr></thead><tbody>{(viewQuotation.items ?? []).map((it: any, i: number) => <tr key={i} className="border-t"><td className="px-3 py-2">{quotationItemName(it)}</td><td className="px-3 py-2 text-right">{it.quantity}</td><td className="px-3 py-2 text-right">{formatCurrency(it.unit_price)}</td><td className="px-3 py-2 text-right">{it.vat_rate}%</td><td className="px-3 py-2 text-right font-medium">{formatCurrency(it.total)}</td></tr>)}</tbody></table>
             <div className="flex justify-end"><div className="w-56 border rounded-lg overflow-hidden text-sm"><div className="flex justify-between px-4 py-2 bg-muted/30 border-b"><span className="text-muted-foreground">Subtotal</span><span>{formatCurrency(viewQuotation.subtotal)}</span></div><div className="flex justify-between px-4 py-3 bg-primary text-primary-foreground font-bold"><span>Total</span><span>{formatCurrency(viewQuotation.total)}</span></div></div></div>
           </div>}
         </DialogContent>
