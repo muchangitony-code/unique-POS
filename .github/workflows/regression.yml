@@ -34,8 +34,6 @@ jobs:
       SESSION_SECRET: ${{ secrets.SESSION_SECRET || 'ci-test-session-secret-32-chars!!' }}
       MIGRATION_DEPLOY_TOKEN: ci-only-not-a-production-secret-32chars
       MIGRATION_CONFIRMATION: APPLY_MIGRATIONS
-      # CI-only approval for the disposable Postgres service. Production still
-      # requires its own explicit migration approval and fresh backup.
       MIGRATION_ALLOW_DESTRUCTIVE: YES
       MIGRATION_DESTRUCTIVE_APPROVAL: APPROVE_DESTRUCTIVE_MIGRATION
       MIGRATION_APPROVED_FILES: 0021_replace_canonical_catalog_with_exact_source.sql,0031_destroy_legacy_inventory_subsystem.sql
@@ -57,6 +55,9 @@ jobs:
       - name: Build / validate
         run: npm run build
 
+      - name: Non-stock quotation regression
+        run: node scripts/test-quotation-nonstock-regression.cjs
+
       - name: Set DATABASE_URL
         run: |
           SCHEME="postgres"
@@ -75,10 +76,6 @@ jobs:
           VALUES (1, 'Disposable CI migration backup marker')
           ON CONFLICT (id) DO UPDATE SET created_at = NOW(), note = EXCLUDED.note;
 
-          -- The historical 0015/0016 repair migrations operate on the optional
-          -- bulk-import ledger. On a clean database the ledger is empty, but
-          -- its runtime schema is still required for those historical repairs
-          -- to replay safely before the later catalog migrations.
           CREATE TABLE IF NOT EXISTS product_import_jobs (
             id SERIAL PRIMARY KEY,
             source_type TEXT NOT NULL,
