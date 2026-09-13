@@ -10,7 +10,7 @@ export default function ProductsWithBulk() {
   return (
     <div className="relative min-h-full">
       <Products />
-      <div className="absolute top-6 right-44 z-30">
+      <div className="absolute top-20 right-6 sm:top-6 sm:right-44 z-30">
         <Button
           variant="secondary"
           className="shadow-sm"
