@@ -222,5 +222,13 @@ source = source.replace(
   `<tr key={String(l.product_id ?? 'custom') + '-' + state.lines.indexOf(l)} className="border-t">\n              <td className="px-3 py-2">\n                {(l.product_name?.trim() && l.product_name.trim().toLowerCase() !== 'unknown') ? l.product_name : (l.description?.trim() || 'Non-stock item')}`
 );
 
+// Enforce the same non-stock rule at the wizard navigation layer. A malformed
+// custom line must not reach the final preview/submit action even if it was
+// restored from an old draft or injected into wizard state.
+source = source.replace(
+  "if (step === 1) return state.lines.length > 0 && state.lines.every((l) => l.quantity > 0 && l.unit_price >= 0);",
+  "if (step === 1) return state.lines.length > 0 && state.lines.every((l) => l.quantity > 0 && l.unit_price >= 0 && (l.product_id != null || (l.product_name?.trim() && !['unknown', 'undefined', 'null', 'item', 'non-stock item'].includes(l.product_name.trim().toLowerCase()))));"
+);
+
 fs.writeFileSync(file, source, "utf8");
-console.log("[quotation-custom-item-ui] Non-stock/custom quotation lines enabled with safe display-name fallback.");
+console.log("[quotation-custom-item-ui] Non-stock/custom quotation lines enabled with safe display-name fallback and navigation validation.");
