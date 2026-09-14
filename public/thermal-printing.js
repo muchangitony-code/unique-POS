@@ -7,6 +7,8 @@
     if (!text.trim()) throw new Error('Receipt preview is empty.');
     const response = await fetch(`${AGENT}/print`, {
       method: 'POST',
+      mode: 'cors',
+      targetAddressSpace: 'loopback',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, columns: 48 })
     });
