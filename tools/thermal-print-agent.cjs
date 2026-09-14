@@ -13,50 +13,29 @@ const { execFile } = require("node:child_process");
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.UNIQUEPOS_PRINT_PORT || 17890);
-const CONFIG_DIR = process.env.APPDATA
-  ? path.join(process.env.APPDATA, "UniquePOS")
-  : path.join(os.homedir(), ".uniquepos");
+const CONFIG_DIR = process.env.APPDATA ? path.join(process.env.APPDATA, "UniquePOS") : path.join(os.homedir(), ".uniquepos");
 const CONFIG_FILE = path.join(CONFIG_DIR, "thermal-printer.json");
 
-function loadConfig() {
-  try { return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")); } catch { return {}; }
-}
-function saveConfig(config) {
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), "utf8");
-}
+function loadConfig() { try { return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")); } catch { return {}; } }
+function saveConfig(config) { fs.mkdirSync(CONFIG_DIR, { recursive: true }); fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), "utf8"); }
 function json(res, status, body) {
   const data = Buffer.from(JSON.stringify(body));
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": data.length,
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type"
-  });
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": data.length, "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST,OPTIONS", "Access-Control-Allow-Headers": "Content-Type" });
   res.end(data);
 }
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let raw = "";
-    req.on("data", chunk => {
-      raw += chunk;
-      if (raw.length > 1024 * 1024) req.destroy(new Error("Request too large"));
-    });
-    req.on("end", () => {
-      try { resolve(raw ? JSON.parse(raw) : {}); } catch (e) { reject(e); }
-    });
+    req.on("data", chunk => { raw += chunk; if (raw.length > 1024 * 1024) req.destroy(new Error("Request too large")); });
+    req.on("end", () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch (e) { reject(e); } });
     req.on("error", reject);
   });
 }
 
 function escPosInit() { return Buffer.from([0x1b, 0x40]); }
-function escPosAlignCenter() { return Buffer.from([0x1b, 0x61, 0x01]); }
 function escPosAlignLeft() { return Buffer.from([0x1b, 0x61, 0x00]); }
-function escPosBold(on) { return Buffer.from([0x1b, 0x45, on ? 0x01 : 0x00]); }
 function escPosCut() { return Buffer.from([0x1d, 0x56, 0x00]); }
-function text(s) { return Buffer.from(String(s ?? "").replace(/\r/g, "") + "\n", "cp437"); }
-
+function text(s) { return Buffer.from(String(s ?? "").replace(/\r/g, "") + "\n", "latin1"); }
 function wrapLine(value, width) {
   const source = String(value ?? "").replace(/\t/g, " | ").replace(/\s+$/g, "");
   if (!source) return [""];
@@ -71,16 +50,10 @@ function wrapLine(value, width) {
   out.push(rest);
   return out;
 }
-
 function htmlTextToEscPos(receiptText, width = 48) {
-  const lines = String(receiptText || "")
-    .split(/\n+/)
-    .map(line => line.replace(/[\u200B-\u200D\uFEFF]/g, "").trim())
-    .filter(Boolean);
+  const lines = String(receiptText || "").split(/\n+/).map(line => line.replace(/[\u200B-\u200D\uFEFF]/g, "").trim()).filter(Boolean);
   const chunks = [escPosInit(), escPosAlignLeft()];
-  for (const line of lines) {
-    for (const part of wrapLine(line, width)) chunks.push(text(part));
-  }
+  for (const line of lines) for (const part of wrapLine(line, width)) chunks.push(text(part));
   chunks.push(text(""), text(""), escPosCut());
   return Buffer.concat(chunks);
 }
@@ -88,22 +61,18 @@ function htmlTextToEscPos(receiptText, width = 48) {
 function powershell(script, args = []) {
   return new Promise((resolve, reject) => {
     execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script, ...args], { windowsHide: true, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) reject(new Error(stderr || error.message));
-      else resolve(stdout.trim());
+      if (error) reject(new Error(stderr || error.message)); else resolve(stdout.trim());
     });
   });
 }
-
 async function listWindowsPrinters() {
   if (process.platform !== "win32") return [];
-  const script = `Get-CimInstance Win32_Printer | Select-Object Name,Default,WorkOffline,PrinterStatus | ConvertTo-Json -Compress`;
-  const raw = await powershell(script);
+  const raw = await powershell(`Get-CimInstance Win32_Printer | Select-Object Name,Default,WorkOffline,PrinterStatus | ConvertTo-Json -Compress`);
   if (!raw) return [];
   const parsed = JSON.parse(raw);
   const rows = Array.isArray(parsed) ? parsed : [parsed];
   return rows.map(p => ({ name: String(p.Name), isDefault: Boolean(p.Default), offline: Boolean(p.WorkOffline), status: Number(p.PrinterStatus || 0) }));
 }
-
 async function printWindowsRaw(printerName, data) {
   if (process.platform !== "win32") throw new Error("Windows printer output is only available on Windows.");
   const base64 = data.toString("base64");
@@ -135,7 +104,6 @@ public static class UniquePosRawPrinter {
 `;
   await powershell(script, [printerName, base64]);
 }
-
 function printNetwork(host, port, data) {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host, port: Number(port) || 9100 });
@@ -145,7 +113,6 @@ function printNetwork(host, port, data) {
     socket.on("close", hadError => { clearTimeout(timer); hadError ? reject(new Error("Printer connection failed")) : resolve(); });
   });
 }
-
 async function printJob(job) {
   const config = loadConfig();
   const target = job.target || config.target || "windows-default";
@@ -171,23 +138,14 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === "GET" && req.url === "/health") return json(res, 200, { ok: true, service: "UniquePOS Thermal Print Agent", port: PORT });
     if (req.method === "GET" && req.url === "/printers") return json(res, 200, { ok: true, printers: await listWindowsPrinters(), config: loadConfig() });
-    if (req.method === "POST" && req.url === "/print") {
-      const job = await readBody(req);
-      await printJob(job);
-      return json(res, 200, { ok: true, message: "Receipt sent to printer." });
-    }
-    if (req.method === "POST" && req.url === "/config") {
-      const body = await readBody(req);
-      saveConfig({ ...loadConfig(), ...body });
-      return json(res, 200, { ok: true, config: loadConfig() });
-    }
+    if (req.method === "POST" && req.url === "/print") { const job = await readBody(req); await printJob(job); return json(res, 200, { ok: true, message: "Receipt sent to printer." }); }
+    if (req.method === "POST" && req.url === "/config") { const body = await readBody(req); saveConfig({ ...loadConfig(), ...body }); return json(res, 200, { ok: true, config: loadConfig() }); }
     return json(res, 404, { ok: false, error: "Not found" });
   } catch (error) {
     console.error("[thermal-agent]", error);
     return json(res, 500, { ok: false, error: error?.message || String(error) });
   }
 });
-
 server.listen(PORT, HOST, () => {
   console.log(`UniquePOS Thermal Print Agent listening on http://${HOST}:${PORT}`);
   console.log(`Config: ${CONFIG_FILE}`);
