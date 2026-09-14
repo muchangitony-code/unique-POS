@@ -1,9 +1,4 @@
 "use strict";
-
-// UniquePOS local thermal printer agent.
-// Runs on the Windows POS computer and accepts print jobs only from localhost.
-// It supports installed Windows RAW printers and network ESC/POS printers.
-
 const http = require("node:http");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -20,7 +15,7 @@ function loadConfig() { try { return JSON.parse(fs.readFileSync(CONFIG_FILE, "ut
 function saveConfig(config) { fs.mkdirSync(CONFIG_DIR, { recursive: true }); fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), "utf8"); }
 function json(res, status, body) {
   const data = Buffer.from(JSON.stringify(body));
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": data.length, "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST,OPTIONS", "Access-Control-Allow-Headers": "Content-Type" });
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": data.length, "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST,OPTIONS", "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Allow-Private-Network": "true" });
   res.end(data);
 }
 function readBody(req) {
@@ -31,7 +26,6 @@ function readBody(req) {
     req.on("error", reject);
   });
 }
-
 function escPosInit() { return Buffer.from([0x1b, 0x40]); }
 function escPosAlignLeft() { return Buffer.from([0x1b, 0x61, 0x00]); }
 function escPosCut() { return Buffer.from([0x1d, 0x56, 0x00]); }
@@ -57,7 +51,6 @@ function htmlTextToEscPos(receiptText, width = 48) {
   chunks.push(text(""), text(""), escPosCut());
   return Buffer.concat(chunks);
 }
-
 function powershell(script, args = []) {
   return new Promise((resolve, reject) => {
     execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script, ...args], { windowsHide: true, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
@@ -121,7 +114,7 @@ async function printJob(job) {
     if (!job.host) throw new Error("Network printer IP/host is required");
     await printNetwork(job.host, job.port || 9100, data);
     saveConfig({ ...config, target: "network", host: job.host, port: Number(job.port || 9100) });
-    return;
+    return null;
   }
   let printerName = job.printerName || config.printerName;
   if (!printerName) {
@@ -131,6 +124,7 @@ async function printJob(job) {
   if (!printerName) throw new Error("No Windows printer found. Install the thermal printer driver first.");
   await printWindowsRaw(printerName, data);
   saveConfig({ ...config, target: "windows", printerName });
+  return printerName;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -138,7 +132,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === "GET" && req.url === "/health") return json(res, 200, { ok: true, service: "UniquePOS Thermal Print Agent", port: PORT });
     if (req.method === "GET" && req.url === "/printers") return json(res, 200, { ok: true, printers: await listWindowsPrinters(), config: loadConfig() });
-    if (req.method === "POST" && req.url === "/print") { const job = await readBody(req); await printJob(job); return json(res, 200, { ok: true, message: "Receipt sent to printer." }); }
+    if (req.method === "POST" && req.url === "/print") { const job = await readBody(req); const printerName = await printJob(job); return json(res, 200, { ok: true, printerName, message: "Receipt sent to printer." }); }
     if (req.method === "POST" && req.url === "/config") { const body = await readBody(req); saveConfig({ ...loadConfig(), ...body }); return json(res, 200, { ok: true, config: loadConfig() }); }
     return json(res, 404, { ok: false, error: "Not found" });
   } catch (error) {
