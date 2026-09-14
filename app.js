@@ -5,7 +5,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-// Load .env (simple KEY=VALUE parser; no external dependency).
 const envPath = path.join(__dirname, ".env");
 if (fs.existsSync(envPath)) {
   for (const line of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
@@ -25,8 +24,6 @@ process.env.SERVE_CLIENT_DIR = process.env.SERVE_CLIENT_DIR || path.join(__dirna
 process.env.BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups");
 process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dirname, "storage");
 
-// Patch generated runtime at startup so standalone/cPanel deployments get the
-// product-bulk router without requiring a separate build after every update.
 const runtimePath = path.join(__dirname, "server", "index.cjs");
 const runtimeMarker = "UNIQUEPOS_PRODUCT_BULK_RUNTIME_MOUNT_V1";
 if (fs.existsSync(runtimePath)) {
@@ -40,15 +37,17 @@ if (fs.existsSync(runtimePath)) {
   }
 }
 
-// Load the browser bridge that redirects 80mm receipt printing to the local
-// thermal print agent. This changes only the static entry page and is safe to
-// apply repeatedly on cPanel/Passenger restarts.
+// Load the browser bridge before the existing document-print wrapper so that
+// the wrapper's final print call is intercepted for 80mm receipts.
 const indexPath = path.join(process.env.SERVE_CLIENT_DIR, "index.html");
 const printScriptTag = '<script src="/thermal-printing.js"></script>';
+const printWrapperMarker = '<script>\n      // Branded documents open in a separate print window.';
 if (fs.existsSync(indexPath)) {
   let indexHtml = fs.readFileSync(indexPath, "utf8");
   if (!indexHtml.includes(printScriptTag)) {
-    indexHtml = indexHtml.replace("</head>", `    ${printScriptTag}\n  </head>`);
+    const markerAt = indexHtml.indexOf(printWrapperMarker);
+    if (markerAt >= 0) indexHtml = indexHtml.slice(0, markerAt) + `    ${printScriptTag}\n    ` + indexHtml.slice(markerAt);
+    else indexHtml = indexHtml.replace("</head>", `    ${printScriptTag}\n  </head>`);
     fs.writeFileSync(indexPath, indexHtml, "utf8");
   }
 }
