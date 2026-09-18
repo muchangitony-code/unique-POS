@@ -1,6 +1,6 @@
 "use strict";
+
 const http = require("node:http");
-const net = require("node:net");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -11,197 +11,207 @@ const PORT = Number(process.env.UNIQUEPOS_PRINT_PORT || 17890);
 const CONFIG_DIR = process.env.APPDATA ? path.join(process.env.APPDATA, "UniquePOS") : path.join(os.homedir(), ".uniquepos");
 const CONFIG_FILE = path.join(CONFIG_DIR, "thermal-printer.json");
 
-function loadConfig() { try { return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")); } catch { return {}; } }
-function saveConfig(config) { fs.mkdirSync(CONFIG_DIR, { recursive: true }); fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), "utf8"); }
+function loadConfig() {
+  try { return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")); } catch { return {}; }
+}
+function saveConfig(config) {
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), "utf8");
+}
 function json(res, status, body) {
   const data = Buffer.from(JSON.stringify(body));
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": data.length, "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST,OPTIONS", "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Allow-Private-Network": "true" });
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": data.length,
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Private-Network": "true"
+  });
   res.end(data);
 }
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let raw = "";
-    req.on("data", chunk => { raw += chunk; if (raw.length > 1024 * 1024) req.destroy(new Error("Request too large")); });
-    req.on("end", () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch (e) { reject(e); } });
+    req.on("data", chunk => {
+      raw += chunk;
+      if (raw.length > 1024 * 1024) req.destroy(new Error("Request too large"));
+    });
+    req.on("end", () => {
+      try { resolve(raw ? JSON.parse(raw) : {}); } catch (e) { reject(e); }
+    });
     req.on("error", reject);
   });
 }
-function escPosInit() { return Buffer.from([0x1b, 0x40]); }
-function escPosAlignLeft() { return Buffer.from([0x1b, 0x61, 0x00]); }
-function escPosCut() { return Buffer.from([0x1d, 0x56, 0x00]); }
-function text(s) { return Buffer.from(String(s ?? "").replace(/\r/g, "") + "\n", "latin1"); }
-function wrapLine(value, width) {
-  const source = String(value ?? "").replace(/\t/g, " | ").replace(/\s+$/g, "");
-  if (!source) return [""];
-  const out = [];
-  let rest = source;
-  while (rest.length > width) {
-    let cut = rest.lastIndexOf(" ", width);
-    if (cut < Math.floor(width * 0.55)) cut = width;
-    out.push(rest.slice(0, cut).trimEnd());
-    rest = rest.slice(cut).trimStart();
-  }
-  out.push(rest);
-  return out;
-}
-function htmlTextToEscPos(receiptText, width = 48) {
-  const lines = String(receiptText || "").split(/\n+/).map(line => line.replace(/[\u200B-\u200D\uFEFF]/g, "").trim()).filter(Boolean);
-  const chunks = [escPosInit(), escPosAlignLeft()];
-  for (const line of lines) for (const part of wrapLine(line, width)) chunks.push(text(part));
-  chunks.push(text(""), text(""), escPosCut());
-  return Buffer.concat(chunks);
-}
-function powershell(script, args = [], timeout = 10000) {
+
+function powershell(script, timeout = 12000) {
   return new Promise((resolve, reject) => {
-    execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script, ...args], { windowsHide: true, maxBuffer: 1024 * 1024, timeout }, (error, stdout, stderr) => {
-      if (error) {
-        if (error.killed || error.signal === "SIGTERM") reject(new Error(`PowerShell printer operation timed out after ${timeout / 1000}s`));
-        else reject(new Error(stderr || error.message));
-      } else resolve(stdout.trim());
-    });
+    const encoded = Buffer.from(script, "utf16le").toString("base64");
+    execFile("powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
+      { windowsHide: true, maxBuffer: 2 * 1024 * 1024, timeout },
+      (error, stdout, stderr) => {
+        if (error) {
+          if (error.killed || error.signal === "SIGTERM" || error.code === "ETIMEDOUT") {
+            reject(new Error("Windows printer operation timed out after " + Math.round(timeout / 1000) + " seconds."));
+          } else {
+            reject(new Error((stderr || stdout || error.message).trim()));
+          }
+          return;
+        }
+        resolve(String(stdout || "").trim());
+      }
+    );
   });
 }
+
 async function listWindowsPrinters() {
   if (process.platform !== "win32") return [];
-  const raw = await powershell(`Get-Printer | Select-Object Name,Default,PrinterStatus,WorkOffline | ConvertTo-Json -Compress`);
+  const raw = await powershell(`
+$ErrorActionPreference = 'Stop'
+Get-Printer | Select-Object Name,Default,PrinterStatus,WorkOffline,DriverName,PortName | ConvertTo-Json -Compress
+`, 8000);
   if (!raw) return [];
   const parsed = JSON.parse(raw);
   const rows = Array.isArray(parsed) ? parsed : [parsed];
-  return rows.map(p => ({ name: String(p.Name), isDefault: Boolean(p.Default), offline: Boolean(p.WorkOffline), status: Number(p.PrinterStatus || 0) }));
+  return rows.map(p => ({
+    name: String(p.Name || ""),
+    isDefault: Boolean(p.Default),
+    offline: Boolean(p.WorkOffline),
+    status: Number(p.PrinterStatus || 0),
+    driver: String(p.DriverName || ""),
+    port: String(p.PortName || "")
+  }));
 }
-async function printWindowsGdi(printerName, receiptText) {
+
+async function diagnostics(printerName) {
+  if (process.platform !== "win32") return { platform: process.platform };
+  const safe = String(printerName || "").replace(/'/g, "''");
+  const raw = await powershell(`
+$ErrorActionPreference = 'Stop'
+$svc = Get-Service -Name Spooler
+$p = Get-Printer -Name '\${safe}' -ErrorAction SilentlyContinue
+$jobs = @()
+if ($p) { $jobs = @(Get-PrintJob -PrinterName '\${safe}' -ErrorAction SilentlyContinue | Select-Object Id,JobStatus,Submitted,DocumentName) }
+$driver = $null
+$port = $null
+if ($p) {
+  $driver = Get-PrinterDriver -Name $p.DriverName -ErrorAction SilentlyContinue | Select-Object Name,MajorVersion,DriverVersion,InfPath
+  $port = Get-PrinterPort -Name $p.PortName -ErrorAction SilentlyContinue | Select-Object Name,PrinterHostAddress,PortNumber
+}
+[pscustomobject]@{
+  spooler=$svc.Status.ToString()
+  printer=if($p){[pscustomobject]@{Name=$p.Name;Default=$p.Default;PrinterStatus=$p.PrinterStatus;WorkOffline=$p.WorkOffline;DriverName=$p.DriverName;PortName=$p.PortName}}else{$null}
+  driver=$driver
+  port=$port
+  jobs=$jobs
+} | ConvertTo-Json -Depth 6 -Compress
+`, 10000);
+  return raw ? JSON.parse(raw) : {};
+}
+
+async function printWindowsDriver(printerName, receiptText) {
   if (process.platform !== "win32") throw new Error("Windows printer output is only available on Windows.");
-  const safePrinterName = String(printerName).replace(/\x27/g, "\x27\x27");
-  const base64 = Buffer.from(String(receiptText || ""), "utf8").toString("base64");
-  const script = String.raw\`
-$printerName = '__PRINTER__'
-$raw = '__RAW__'
+  const printer64 = Buffer.from(String(printerName || ""), "utf8").toString("base64");
+  const receipt64 = Buffer.from(String(receiptText || ""), "utf8").toString("base64");
+  const script = `
+$ErrorActionPreference = 'Stop'
+$printerName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('\${printer64}'))
+$receipt = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('\${receipt64}'))
+Add-Type -AssemblyName System.Drawing
 Add-Type -TypeDefinition @'
 using System;
 using System.Drawing;
 using System.Drawing.Printing;
-public static class UniquePosGdiPrinter {
+public static class UniquePosDriverPrint {
   public static void Print(string printer, string receipt) {
-    using (var pd = new PrintDocument()) {
-      pd.DocumentName = "UniquePOS Receipt";
-      pd.PrinterSettings.PrinterName = printer;
-      if (!pd.PrinterSettings.IsValid) throw new Exception("Windows reports the printer as invalid: " + printer);
-      pd.PrintController = new StandardPrintController();
-      var lines = receipt.Replace("\\r", "").Split(new[]{'\\n'}, StringSplitOptions.None);
-      int height = Math.Max(500, Math.Min(3000, lines.Length * 24 + 120));
-      pd.DefaultPageSettings.Margins = new Margins(0,0,0,0);
-      pd.DefaultPageSettings.PaperSize = new PaperSize("UniquePOS Receipt", 315, height);
-      pd.PrintPage += delegate(object sender, PrintPageEventArgs e) {
-        using (var font = new Font("Arial", 9.5f, FontStyle.Regular, GraphicsUnit.Point))
-        using (var bold = new Font("Arial", 9.5f, FontStyle.Bold, GraphicsUnit.Point)) {
-          float y = 8;
-          float maxWidth = e.PageBounds.Width - 12;
-          foreach (var line in lines) {
-            var f = line.StartsWith("TOTAL") || line.StartsWith("Receipt:") ? bold : font;
-            var parts = line.Length > 54 ? new[]{ line.Substring(0,54), line.Substring(54) } : new[]{line};
-            foreach (var part in parts) {
-              e.Graphics.DrawString(part, f, Brushes.Black, new RectangleF(6, y, maxWidth, 22));
-              y += 21;
+    using (var doc = new PrintDocument()) {
+      doc.DocumentName = "UniquePOS Receipt";
+      doc.PrinterSettings.PrinterName = printer;
+      if (!doc.PrinterSettings.IsValid) throw new Exception("Windows printer is not valid: " + printer);
+      doc.PrintController = new StandardPrintController();
+      var lines = receipt.Replace("\\r", "").Split(new[] {'\\n'}, StringSplitOptions.None);
+      var paperHeight = Math.Max(500, Math.Min(4000, lines.Length * 22 + 100));
+      doc.DefaultPageSettings.Margins = new Margins(0,0,0,0);
+      doc.DefaultPageSettings.PaperSize = new PaperSize("UniquePOS80mm", 315, paperHeight);
+      doc.PrintPage += delegate(object sender, PrintPageEventArgs e) {
+        using (var normal = new Font("Arial", 9.0f))
+        using (var bold = new Font("Arial", 9.0f, FontStyle.Bold)) {
+          float y = 5;
+          float width = e.PageBounds.Width - 10;
+          foreach (var original in lines) {
+            string line = original ?? "";
+            Font font = (line.StartsWith("TOTAL") || line.StartsWith("Receipt:")) ? bold : normal;
+            while (line.Length > 0) {
+              string part = line.Length > 56 ? line.Substring(0,56) : line;
+              e.Graphics.DrawString(part, font, Brushes.Black, new RectangleF(5,y,width,20));
+              y += 19;
+              line = line.Length > part.Length ? line.Substring(part.Length) : "";
             }
+            if (original.Length == 0) y += 3;
           }
           e.HasMorePages = false;
         }
       };
-      pd.Print();
+      doc.Print();
     }
   }
 }
 '@
-[UniquePosGdiPrinter]::Print($printerName, [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($raw)))
-\`;
-  await powershell(script.replace("__PRINTER__", safePrinterName).replace("__RAW__", base64), [], 20000);
-}
-async function printWindowsRaw(printerName, data) {
-  if (process.platform !== "win32") throw new Error("Windows printer output is only available on Windows.");
-  const safePrinterName = String(printerName).replace(/\x27/g, "\x27\x27");
-  const base64 = data.toString("base64");
-  const script = String.raw\`
-$ErrorActionPreference = 'Stop'
-$printerName = '__PRINTER__'
-$raw = '__RAW__'
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public static class UniquePosRawPrinter {
-  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] public class DOCINFO { public string pDocName; public string pOutputFile; public string pDataType; }
-  [DllImport("winspool.drv", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool OpenPrinter(string pPrinterName, out IntPtr phPrinter, IntPtr pDefault);
-  [DllImport("winspool.drv", SetLastError=true)] public static extern bool ClosePrinter(IntPtr hPrinter);
-  [DllImport("winspool.drv", CharSet=CharSet.Unicode, SetLastError=true)] public static extern int StartDocPrinter(IntPtr hPrinter, int level, [In] DOCINFO di);
-  [DllImport("winspool.drv", SetLastError=true)] public static extern bool EndDocPrinter(IntPtr hPrinter);
-  [DllImport("winspool.drv", SetLastError=true)] public static extern int StartPagePrinter(IntPtr hPrinter);
-  [DllImport("winspool.drv", SetLastError=true)] public static extern bool EndPagePrinter(IntPtr hPrinter);
-  [DllImport("winspool.drv", SetLastError=true)] public static extern bool WritePrinter(IntPtr hPrinter, byte[] pBytes, int dwCount, out int dwWritten);
-  public static void Send(string printer, byte[] bytes) {
-    IntPtr h;
-    if(!OpenPrinter(printer, out h, IntPtr.Zero)) throw new Exception("OpenPrinter failed: " + Marshal.GetLastWin32Error() + " for printer \\"" + printer + "\\"");
-    try {
-      var di = new DOCINFO { pDocName = "UniquePOS Receipt", pDataType = "RAW" };
-      if(StartDocPrinter(h,1,di)==0) throw new Exception("StartDocPrinter failed: " + Marshal.GetLastWin32Error());
-      try {
-        if(StartPagePrinter(h)==0) throw new Exception("StartPagePrinter failed: " + Marshal.GetLastWin32Error());
-        try {
-          int written;
-          if(!WritePrinter(h,bytes,bytes.Length,out written) || written != bytes.Length) throw new Exception("WritePrinter failed: " + Marshal.GetLastWin32Error());
-        } finally { EndPagePrinter(h); }
-      } finally { EndDocPrinter(h); }
-    } finally { ClosePrinter(h); }
-  }
-}
-'@
-[UniquePosRawPrinter]::Send($printerName, [Convert]::FromBase64String($raw))
-\`;
-  await powershell(script.replace("__PRINTER__", safePrinterName).replace("__RAW__", base64), [], 15000);
+[UniquePosDriverPrint]::Print($printerName, $receipt)
+`;
+  await powershell(script, 25000);
 }
 
-function printNetwork(host, port, data) {
-  return new Promise((resolve, reject) => {
-    const socket = net.createConnection({ host, port: Number(port) || 9100 });
-    const timer = setTimeout(() => { socket.destroy(); reject(new Error("Printer connection timed out")); }, 7000);
-    socket.on("connect", () => socket.end(data));
-    socket.on("error", error => { clearTimeout(timer); reject(error); });
-    socket.on("close", hadError => { clearTimeout(timer); hadError ? reject(new Error("Printer connection failed")) : resolve(); });
-  });
-}
 async function printJob(job) {
   const config = loadConfig();
-  const target = job.target || config.target || "windows-default";
-  const data = job.rawBase64 ? Buffer.from(job.rawBase64, "base64") : htmlTextToEscPos(job.text || "", Number(job.columns) || 48);
-  if (target === "network") {
-    if (!job.host) throw new Error("Network printer IP/host is required");
-    await printNetwork(job.host, job.port || 9100, data);
-    saveConfig({ ...config, target: "network", host: job.host, port: Number(job.port || 9100) });
-    return null;
-  }
-  let printerName = job.printerName || config.printerName;
+  let printerName = String(job.printerName || config.printerName || "").trim();
+  const printers = await listWindowsPrinters();
   if (!printerName) {
-    const printers = await listWindowsPrinters();
-    printerName = printers.find(p => p.isDefault)?.name || printers[0]?.name;
+    const physical = printers.filter(p => !/pdf|xps|onenote|fax/i.test(p.name));
+    printerName = physical.find(p => /thermal|receipt|pos|xprinter|rongta|epson|zywell|zjiang|sunmi|bixolon|star|tvs|80mm/i.test(p.name))?.name ||
+      physical.find(p => p.isDefault)?.name || physical[0]?.name || "";
   }
-  if (!printerName) throw new Error("No Windows printer found. Install the thermal printer driver first.");
-  if (job.method === "raw") await printWindowsRaw(printerName, data); else await printWindowsGdi(printerName, job.text || "");
+  if (!printerName) throw new Error("No physical Windows printer found.");
+  const exact = printers.find(p => p.name === printerName);
+  if (!exact) throw new Error("Windows printer not found: " + printerName);
+  if (exact.offline) throw new Error("Windows reports the printer is offline: " + printerName);
+  await printWindowsDriver(printerName, job.text || "");
   saveConfig({ ...config, target: "windows", printerName });
   return printerName;
 }
 
-const server = http.createServer(async (req, res) => {
-  if (req.method === "OPTIONS") return json(res, 204, {});
+const server = http.createServer(async (req,res) => {
+  if (req.method === "OPTIONS") return json(res,204,{});
   try {
-    if (req.method === "GET" && req.url === "/health") return json(res, 200, { ok: true, service: "UniquePOS Thermal Print Agent", port: PORT });
-    if (req.method === "GET" && req.url === "/printers") return json(res, 200, { ok: true, printers: await listWindowsPrinters(), config: loadConfig() });
-    if (req.method === "POST" && req.url === "/print") { const job = await readBody(req); const printerName = await printJob(job); return json(res, 200, { ok: true, printerName, message: "Receipt sent to printer." }); }
-    if (req.method === "POST" && req.url === "/config") { const body = await readBody(req); saveConfig({ ...loadConfig(), ...body }); return json(res, 200, { ok: true, config: loadConfig() }); }
-    return json(res, 404, { ok: false, error: "Not found" });
-  } catch (error) {
-    console.error("[thermal-agent]", error);
-    return json(res, 500, { ok: false, error: error?.message || String(error) });
+    if (req.method === "GET" && req.url === "/health")
+      return json(res,200,{ok:true,service:"UniquePOS Thermal Print Agent",port:PORT});
+    if (req.method === "GET" && req.url === "/printers")
+      return json(res,200,{ok:true,printers:await listWindowsPrinters(),config:loadConfig()});
+    if (req.method === "GET" && req.url === "/diagnostics") {
+      const config=loadConfig();
+      const printers=await listWindowsPrinters();
+      const printerName=config.printerName || printers.find(p=>p.isDefault)?.name || printers[0]?.name || "";
+      return json(res,200,{ok:true,printer:printerName,diagnostics:await diagnostics(printerName)});
+    }
+    if (req.method === "POST" && req.url === "/print") {
+      const job=await readBody(req);
+      const printerName=await printJob(job);
+      return json(res,200,{ok:true,printerName,message:"Receipt sent through the Windows printer driver."});
+    }
+    if (req.method === "POST" && req.url === "/config") {
+      const body=await readBody(req);
+      saveConfig({...loadConfig(),...body});
+      return json(res,200,{ok:true,config:loadConfig()});
+    }
+    return json(res,404,{ok:false,error:"Not found"});
+  } catch(error) {
+    console.error("[thermal-agent]",error);
+    return json(res,500,{ok:false,error:error?.message||String(error)});
   }
 });
-server.listen(PORT, HOST, () => {
-  console.log(`UniquePOS Thermal Print Agent listening on http://${HOST}:${PORT}`);
-  console.log(`Config: ${CONFIG_FILE}`);
+
+server.listen(PORT,HOST,()=> {
+  console.log("UniquePOS Thermal Print Agent listening on http://"+HOST+":"+PORT);
+  console.log("Config: "+CONFIG_FILE);
 });
