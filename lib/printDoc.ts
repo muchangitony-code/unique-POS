@@ -92,17 +92,17 @@ async function sendThermalReceiptDirect(r:PrintReceipt,b:ReturnType<typeof brand
     `KRA PIN: ${line(b.kraPin)}`,line(b.documentFooter||'Thank you for your business!'),''
   ].filter(Boolean).join('\\n');
   const controller=new AbortController();
-  const timer=window.setTimeout(()=>controller.abort(),15000);
+  const timer=window.setTimeout(()=>controller.abort(),30000);
   let response:Response;
   try{
     response=await fetch(`${AGENT}/print`,{
       method:'POST',mode:'cors',targetAddressSpace:'loopback',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({text,columns:48,printerName:PRINTER}),
+      body:JSON.stringify({text,columns:48,printerName:PRINTER,method:"gdi"}),
       signal:controller.signal
     } as RequestInit);
   }catch(error:any){
-    if(error?.name==='AbortError') throw new Error('The thermal print agent did not respond within 15 seconds.');
+    if(error?.name==='AbortError') throw new Error('The Windows printer did not respond within 30 seconds. The POS will not remain stuck.');
     throw error;
   }finally{
     window.clearTimeout(timer);
