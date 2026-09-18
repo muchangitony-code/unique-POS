@@ -9,14 +9,17 @@
   const choosePrinter = async () => {
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem('uniquepos.thermalPrinter') || 'null'); } catch {}
-    if (saved?.printerName) return saved.printerName;
     const result = await request(`${AGENT}/printers`);
     const printers = Array.isArray(result.printers) ? result.printers : [];
-    const thermal = printers.find(p => /thermal|receipt|pos|rongta|xprinter|epson|zywell|zjiang|sunmi|bixolon|star|tvs|80mm/i.test(p.name));
-    const selected = thermal?.name || printers.find(p => p.isDefault && !/pdf|xps|onenote|fax/i.test(p.name))?.name || printers.find(p => !/pdf|xps|onenote|fax/i.test(p.name))?.name;
-    if (!selected) throw new Error('No physical thermal printer was found. Install the printer in Windows first.');
-    localStorage.setItem('uniquepos.thermalPrinter', JSON.stringify({ printerName: selected }));
-    return selected;
+    // Validate cached printer names against the current Windows printer list.
+    try { saved = JSON.parse(localStorage.getItem("uniquepos.thermalPrinter") || "null"); } catch {}
+    if (saved?.printerName && printers.some(p => p.name === saved.printerName)) return saved.printerName;
+    const physical = printers.filter(p => !/pdf|xps|onenote|fax/i.test(p.name));
+    const thermal = physical.find(p => /thermal|receipt|pos|rongta|xprinter|epson|zywell|zjiang|sunmi|bixolon|star|tvs|80mm/i.test(p.name));
+    const selected = thermal?.name || physical.find(p => p.isDefault)?.name || physical[0]?.name;
+    if (!selected) throw new Error("No physical thermal printer was found. Install the printer in Windows first.");
+    localStorage.setItem("uniquepos.thermalPrinter", JSON.stringify({ printerName: selected }));
+    return selected;;
   };
   const directPrint = async (child) => {
     const html = child?.document?.documentElement?.outerHTML || '';
