@@ -8,6 +8,7 @@ const { execFile } = require("node:child_process");
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.UNIQUEPOS_PRINT_PORT || 17890);
+const AGENT_VERSION = "2.0.0-driver";
 const CONFIG_DIR = process.env.APPDATA ? path.join(process.env.APPDATA, "UniquePOS") : path.join(os.homedir(), ".uniquepos");
 const CONFIG_FILE = path.join(CONFIG_DIR, "thermal-printer.json");
 
@@ -185,7 +186,7 @@ const server = http.createServer(async (req,res) => {
   if (req.method === "OPTIONS") return json(res,204,{});
   try {
     if (req.method === "GET" && req.url === "/health")
-      return json(res,200,{ok:true,service:"UniquePOS Thermal Print Agent",port:PORT});
+      return json(res,200,{ok:true,service:"UniquePOS Thermal Print Agent",version:AGENT_VERSION,port:PORT});
     if (req.method === "GET" && req.url === "/printers")
       return json(res,200,{ok:true,printers:await listWindowsPrinters(),config:loadConfig()});
     if (req.method === "GET" && req.url === "/diagnostics") {
