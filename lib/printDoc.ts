@@ -76,8 +76,57 @@ export function printQuotation(q:PrintQuotation,branch?:BranchBranding|null){con
 
 export interface PrintReceipt { receipt_number:string;cashier_name?:string|null;customer_name?:string|null;created_at:string;payment_method:string;items:Array<{product_name:string;quantity:number;unit_price:number;total:number}>;subtotal:number;discount_amount:number;total:number;amount_paid:number;change:number;payment?:PaymentDetails|null; }
 export type ReceiptPrintFormat = 'thermal' | 'a4';
+async function sendThermalReceiptDirect(r:PrintReceipt,b:ReturnType<typeof brandingForBranch>,payment:PaymentDetails|null){
+  const AGENT='http://127.0.0.1:17890';
+  const line=(s:string)=>String(s??'').replace(/[\\r\\n]+/g,' ').trim();
+  const rows=r.items.map(it=>`${line(it.product_name)}  x${it.quantity}  ${KES(it.total)}`).join('\\n');
+  const text=[
+    line(b.name),
+    line(b.addressLine),
+    line(b.phone),
+    '--------------------------------',
+    `Receipt: ${r.receipt_number}`,
+    `Date: ${fmtDate(r.created_at)}`,
+    `Cashier: ${r.cashier_name||'Staff'}`,
+    r.customer_name?`Customer: ${line(r.customer_name)}`:null,
+    '--------------------------------',
+    rows,
+    '--------------------------------',
+    `Subtotal: ${KES(r.subtotal)}`,
+    r.discount_amount>0?`Discount: -${KES(r.discount_amount)}`:null,
+    `TOTAL: ${KES(r.total)}`,
+    `Paid (${r.payment_method}): ${KES(r.amount_paid)}`,
+    r.change>0?`Change: ${KES(r.change)}`:null,
+    '--------------------------------',
+    hasPayment(payment)?receiptPaymentLines(payment).replace(/<[^>]*>/g,' ').replace(/&nbsp;/g,' '):null,
+    `KRA PIN: ${line(b.kraPin)}`,
+    line(b.documentFooter||'Thank you for your business!'),
+    ''
+  ].filter(Boolean).join('\\n');
+  const get=await fetch(`${AGENT}/printers`,{mode:'cors',targetAddressSpace:'loopback'} as RequestInit);
+  const info=await get.json().catch(()=>({}));
+  if(!get.ok||info?.ok===false) throw new Error(info?.error||`Could not contact thermal print agent (${get.status})`);
+  const printers=Array.isArray(info.printers)?info.printers:[];
+  const physical=printers.filter((p:any)=>!(/pdf|xps|onenote|fax/i.test(String(p.name||''))));
+  const thermal=physical.find((p:any)=>/thermal|receipt|pos|rongta|xprinter|epson|zywell|zjiang|sunmi|bixolon|star|tvs|80mm/i.test(String(p.name||'')));
+  const printerName=thermal?.name||physical.find((p:any)=>p.isDefault)?.name||physical[0]?.name;
+  if(!printerName) throw new Error('No physical Windows printer was found.');
+  const response=await fetch(`${AGENT}/print`,{
+    method:'POST',mode:'cors',targetAddressSpace:'loopback',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({text,columns:48,printerName})
+  } as RequestInit);
+  const result=await response.json().catch(()=>({}));
+  if(!response.ok||result?.ok===false) throw new Error(result?.error||`Print agent returned HTTP ${response.status}`);
+}
 export function printReceipt(r:PrintReceipt,branch?:BranchBranding|null,format:ReceiptPrintFormat='thermal'){
   const b=brandingForBranch(getBranding(),branch,'receipt'); const payment=branchPaymentOverride(r.payment,branch); const logo=b.logoUrl;
+  if(format==='thermal'){
+    void sendThermalReceiptDirect(r,b,payment).catch(error=>{
+      alert(`Thermal printer is not ready.\\n\\n${error?.message||error}\\n\\nKeep the UniquePOS Thermal Print Agent running and ensure the Xprinter is installed in Windows.`);
+    });
+    return;
+  }
   const itemRows=r.items.map(it=>`<tr><td>${esc(it.product_name)}</td><td style="text-align:center">${it.quantity}</td><td style="text-align:right">${KES(it.unit_price)}</td><td style="text-align:right;font-weight:600">${KES(it.total)}</td></tr>`).join('');
   const pmLabel:Record<string,string>={cash:'Cash',mpesa:'M-Pesa',card:'Card',bank_transfer:'Bank Transfer',credit:'Credit'}; const pmDisplay=esc(pmLabel[r.payment_method]??r.payment_method); const rcptNum=esc(r.receipt_number);
   if(format==='a4'){
