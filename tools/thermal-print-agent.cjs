@@ -69,18 +69,61 @@ async function listWindowsPrinters() {
   const rows = Array.isArray(parsed) ? parsed : [parsed];
   return rows.map(p => ({ name: String(p.Name), isDefault: Boolean(p.Default), offline: Boolean(p.WorkOffline), status: Number(p.PrinterStatus || 0) }));
 }
+async function printWindowsGdi(printerName, receiptText) {
+  if (process.platform !== "win32") throw new Error("Windows printer output is only available on Windows.");
+  const safePrinterName = String(printerName).replace(/\x27/g, "\x27\x27");
+  const base64 = Buffer.from(String(receiptText || ""), "utf8").toString("base64");
+  const script = String.raw\`
+$printerName = '__PRINTER__'
+$raw = '__RAW__'
+Add-Type -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Drawing.Printing;
+public static class UniquePosGdiPrinter {
+  public static void Print(string printer, string receipt) {
+    using (var pd = new PrintDocument()) {
+      pd.DocumentName = "UniquePOS Receipt";
+      pd.PrinterSettings.PrinterName = printer;
+      if (!pd.PrinterSettings.IsValid) throw new Exception("Windows reports the printer as invalid: " + printer);
+      pd.PrintController = new StandardPrintController();
+      var lines = receipt.Replace("\\r", "").Split(new[]{'\\n'}, StringSplitOptions.None);
+      int height = Math.Max(500, Math.Min(3000, lines.Length * 24 + 120));
+      pd.DefaultPageSettings.Margins = new Margins(0,0,0,0);
+      pd.DefaultPageSettings.PaperSize = new PaperSize("UniquePOS Receipt", 315, height);
+      pd.PrintPage += delegate(object sender, PrintPageEventArgs e) {
+        using (var font = new Font("Arial", 9.5f, FontStyle.Regular, GraphicsUnit.Point))
+        using (var bold = new Font("Arial", 9.5f, FontStyle.Bold, GraphicsUnit.Point)) {
+          float y = 8;
+          float maxWidth = e.PageBounds.Width - 12;
+          foreach (var line in lines) {
+            var f = line.StartsWith("TOTAL") || line.StartsWith("Receipt:") ? bold : font;
+            var parts = line.Length > 54 ? new[]{ line.Substring(0,54), line.Substring(54) } : new[]{line};
+            foreach (var part in parts) {
+              e.Graphics.DrawString(part, f, Brushes.Black, new RectangleF(6, y, maxWidth, 22));
+              y += 21;
+            }
+          }
+          e.HasMorePages = false;
+        }
+      };
+      pd.Print();
+    }
+  }
+}
+'@
+[UniquePosGdiPrinter]::Print($printerName, [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($raw)))
+\`;
+  await powershell(script.replace("__PRINTER__", safePrinterName).replace("__RAW__", base64), [], 20000);
+}
 async function printWindowsRaw(printerName, data) {
   if (process.platform !== "win32") throw new Error("Windows printer output is only available on Windows.");
-  // Pass the resolved Windows printer name directly in the PowerShell script.
-  // This avoids powershell.exe $args mangling that can trigger Win32 error 1801.
-  const canonical = await powershell(`$p = Get-Printer -Name ${JSON.stringify(String(printerName))} -ErrorAction Stop; $p.Name`);
-  const resolvedPrinterName = canonical.trim() || String(printerName);
-  const safePrinterName = resolvedPrinterName.replace(/\x27/g, "\x27\x27");
+  const safePrinterName = String(printerName).replace(/\x27/g, "\x27\x27");
   const base64 = data.toString("base64");
-  const script = `
+  const script = String.raw\`
 $ErrorActionPreference = 'Stop'
-$printerName = '${safePrinterName}'
-$raw = '${base64}'
+$printerName = '__PRINTER__'
+$raw = '__RAW__'
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -95,8 +138,7 @@ public static class UniquePosRawPrinter {
   [DllImport("winspool.drv", SetLastError=true)] public static extern bool WritePrinter(IntPtr hPrinter, byte[] pBytes, int dwCount, out int dwWritten);
   public static void Send(string printer, byte[] bytes) {
     IntPtr h;
-    if(!OpenPrinter(printer, out h, IntPtr.Zero))
-      throw new Exception("OpenPrinter failed: " + Marshal.GetLastWin32Error() + " for printer \"" + printer + "\"");
+    if(!OpenPrinter(printer, out h, IntPtr.Zero)) throw new Exception("OpenPrinter failed: " + Marshal.GetLastWin32Error() + " for printer \\"" + printer + "\\"");
     try {
       var di = new DOCINFO { pDocName = "UniquePOS Receipt", pDataType = "RAW" };
       if(StartDocPrinter(h,1,di)==0) throw new Exception("StartDocPrinter failed: " + Marshal.GetLastWin32Error());
@@ -104,8 +146,7 @@ public static class UniquePosRawPrinter {
         if(StartPagePrinter(h)==0) throw new Exception("StartPagePrinter failed: " + Marshal.GetLastWin32Error());
         try {
           int written;
-          if(!WritePrinter(h,bytes,bytes.Length,out written) || written != bytes.Length)
-            throw new Exception("WritePrinter failed: " + Marshal.GetLastWin32Error());
+          if(!WritePrinter(h,bytes,bytes.Length,out written) || written != bytes.Length) throw new Exception("WritePrinter failed: " + Marshal.GetLastWin32Error());
         } finally { EndPagePrinter(h); }
       } finally { EndDocPrinter(h); }
     } finally { ClosePrinter(h); }
@@ -113,9 +154,10 @@ public static class UniquePosRawPrinter {
 }
 '@
 [UniquePosRawPrinter]::Send($printerName, [Convert]::FromBase64String($raw))
-`;
-  await powershell(script, [], 15000);
+\`;
+  await powershell(script.replace("__PRINTER__", safePrinterName).replace("__RAW__", base64), [], 15000);
 }
+
 function printNetwork(host, port, data) {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host, port: Number(port) || 9100 });
