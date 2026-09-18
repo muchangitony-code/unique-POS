@@ -79,7 +79,6 @@ export interface PrintReceipt { receipt_number:string;cashier_name?:string|null;
 export type ReceiptPrintFormat = 'thermal' | 'a4';
 async function sendThermalReceiptDirect(r:PrintReceipt,b:ReturnType<typeof brandingForBranch>,payment:PaymentDetails|null){
   const AGENT='http://localhost:17890';
-  const PRINTER='Xprinter XP-D2';
   const line=(s:string)=>String(s??'').replace(/[\\r\\n]+/g,' ').trim();
   const rows=r.items.map(it=>`${line(it.product_name)}  x${it.quantity}  ${KES(it.total)}`).join('\\n');
   const text=[
@@ -91,24 +90,41 @@ async function sendThermalReceiptDirect(r:PrintReceipt,b:ReturnType<typeof brand
     '--------------------------------',hasPayment(payment)?receiptPaymentLines(payment).replace(/<[^>]*>/g,' ').replace(/&nbsp;/g,' '):null,
     `KRA PIN: ${line(b.kraPin)}`,line(b.documentFooter||'Thank you for your business!'),''
   ].filter(Boolean).join('\\n');
+
   const controller=new AbortController();
   const timer=window.setTimeout(()=>controller.abort(),30000);
-  let response:Response;
   try{
-    response=await fetch(`${AGENT}/print`,{
+    const health=await fetch(`${AGENT}/health`,{mode:'cors',targetAddressSpace:'loopback',signal:controller.signal} as RequestInit);
+    const healthData=await health.json().catch(()=>({}));
+    if(!health.ok||healthData?.ok!==true) throw new Error('UniquePOS Thermal Print Agent is not responding.');
+    if(healthData?.version!=='2.0.0-driver'){
+      throw new Error('The thermal print agent on this computer is outdated. Close it and run tools\\repair-thermal-agent.bat once.');
+    }
+
+    const listResponse=await fetch(`${AGENT}/printers`,{mode:'cors',targetAddressSpace:'loopback',signal:controller.signal} as RequestInit);
+    const list=await listResponse.json().catch(()=>({}));
+    if(!listResponse.ok||list?.ok===false) throw new Error(list?.error||'Could not read Windows printers.');
+    const printers=Array.isArray(list.printers)?list.printers:[];
+    const physical=printers.filter((p:any)=>!p.offline&&!/pdf|xps|onenote|fax/i.test(String(p.name||'')));
+    const printer=physical.find((p:any)=>/^Xprinter XP-D2$/i.test(String(p.name||''))) ||
+      physical.find((p:any)=>/xprinter.*xp[- ]?d2|thermal|receipt|pos|80mm/i.test(String(p.name||''))) ||
+      physical.find((p:any)=>p.isDefault) || physical[0];
+    if(!printer?.name) throw new Error('Windows has no available physical printer. Check the Xprinter installation.');
+    
+    const response=await fetch(`${AGENT}/print`,{
       method:'POST',mode:'cors',targetAddressSpace:'loopback',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({text,columns:48,printerName:PRINTER,method:"gdi"}),
+      body:JSON.stringify({text,columns:48,printerName:printer.name}),
       signal:controller.signal
     } as RequestInit);
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok||result?.ok===false) throw new Error(result?.error||`Thermal agent returned HTTP ${response.status}`);
   }catch(error:any){
     if(error?.name==='AbortError') throw new Error('The Windows printer did not respond within 30 seconds. The POS will not remain stuck.');
     throw error;
   }finally{
     window.clearTimeout(timer);
   }
-  const result=await response.json().catch(()=>({}));
-  if(!response.ok||result?.ok===false) throw new Error(result?.error||`Print agent returned HTTP ${response.status}`);
 }
 export function printReceipt(r:PrintReceipt,branch?:BranchBranding|null,format:ReceiptPrintFormat='thermal'){
   const b=brandingForBranch(getBranding(),branch,'receipt'); const payment=branchPaymentOverride(r.payment,branch); const logo=b.logoUrl;
