@@ -68,9 +68,14 @@ async function listWindowsPrinters() {
 }
 async function printWindowsRaw(printerName, data) {
   if (process.platform !== "win32") throw new Error("Windows printer output is only available on Windows.");
+  // Pass the resolved Windows printer name directly in the PowerShell script.
+  // This avoids powershell.exe $args mangling that can trigger Win32 error 1801.
+  const safePrinterName = String(printerName).replace(/\x27/g, "\x27\x27");
   const base64 = data.toString("base64");
   const script = `
 $ErrorActionPreference = 'Stop'
+$printerName = '${safePrinterName}'
+$raw = '${base64}'
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -84,18 +89,27 @@ public static class UniquePosRawPrinter {
   [DllImport("winspool.drv", SetLastError=true)] public static extern bool EndPagePrinter(IntPtr hPrinter);
   [DllImport("winspool.drv", SetLastError=true)] public static extern bool WritePrinter(IntPtr hPrinter, byte[] pBytes, int dwCount, out int dwWritten);
   public static void Send(string printer, byte[] bytes) {
-    IntPtr h; if(!OpenPrinter(printer, out h, IntPtr.Zero)) throw new Exception("OpenPrinter failed: " + Marshal.GetLastWin32Error());
+    IntPtr h;
+    if(!OpenPrinter(printer, out h, IntPtr.Zero))
+      throw new Exception("OpenPrinter failed: " + Marshal.GetLastWin32Error() + " for printer \"" + printer + "\"");
     try {
       var di = new DOCINFO { pDocName = "UniquePOS Receipt", pDataType = "RAW" };
       if(StartDocPrinter(h,1,di)==0) throw new Exception("StartDocPrinter failed: " + Marshal.GetLastWin32Error());
-      try { if(StartPagePrinter(h)==0) throw new Exception("StartPagePrinter failed: " + Marshal.GetLastWin32Error()); try { int written; if(!WritePrinter(h,bytes,bytes.Length,out written) || written != bytes.Length) throw new Exception("WritePrinter failed: " + Marshal.GetLastWin32Error()); } finally { EndPagePrinter(h); } } finally { EndDocPrinter(h); }
+      try {
+        if(StartPagePrinter(h)==0) throw new Exception("StartPagePrinter failed: " + Marshal.GetLastWin32Error());
+        try {
+          int written;
+          if(!WritePrinter(h,bytes,bytes.Length,out written) || written != bytes.Length)
+            throw new Exception("WritePrinter failed: " + Marshal.GetLastWin32Error());
+        } finally { EndPagePrinter(h); }
+      } finally { EndDocPrinter(h); }
     } finally { ClosePrinter(h); }
   }
 }
 '@
-[UniquePosRawPrinter]::Send($args[0], [Convert]::FromBase64String($args[1]))
+[UniquePosRawPrinter]::Send($printerName, [Convert]::FromBase64String($raw))
 `;
-  await powershell(script, [printerName, base64]);
+  await powershell(script);
 }
 function printNetwork(host, port, data) {
   return new Promise((resolve, reject) => {
