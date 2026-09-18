@@ -90,9 +90,9 @@ async function diagnostics(printerName) {
   const raw = await powershell(`
 $ErrorActionPreference = 'Stop'
 $svc = Get-Service -Name Spooler
-$p = Get-Printer -Name '\${safe}' -ErrorAction SilentlyContinue
+$p = Get-Printer -Name '${safe}' -ErrorAction SilentlyContinue
 $jobs = @()
-if ($p) { $jobs = @(Get-PrintJob -PrinterName '\${safe}' -ErrorAction SilentlyContinue | Select-Object Id,JobStatus,Submitted,DocumentName) }
+if ($p) { $jobs = @(Get-PrintJob -PrinterName '${safe}' -ErrorAction SilentlyContinue | Select-Object Id,JobStatus,Submitted,DocumentName) }
 $driver = $null
 $port = $null
 if ($p) {
@@ -116,8 +116,8 @@ async function printWindowsDriver(printerName, receiptText) {
   const receipt64 = Buffer.from(String(receiptText || ""), "utf8").toString("base64");
   const script = `
 $ErrorActionPreference = 'Stop'
-$printerName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('\${printer64}'))
-$receipt = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('\${receipt64}'))
+$printerName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${printer64}'))
+$receipt = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${receipt64}'))
 Add-Type -AssemblyName System.Drawing
 Add-Type -TypeDefinition @'
 using System;
