@@ -68,10 +68,13 @@ function powershell(script, timeout = 12000) {
 
 async function listWindowsPrinters() {
   if (process.platform !== "win32") return [];
+  // Win32_Printer is used here instead of Get-Printer because the latter can
+  // block on a misbehaving printer provider/driver even when WMI can enumerate
+  // the actual installed printers normally.
   const raw = await powershell(`
 $ErrorActionPreference = 'Stop'
-Get-Printer | Select-Object Name,Default,PrinterStatus,WorkOffline,DriverName,PortName | ConvertTo-Json -Compress
-`, 8000);
+Get-CimInstance Win32_Printer | Select-Object Name,Default,PrinterStatus,WorkOffline,DriverName,PortName | ConvertTo-Json -Compress
+`, 10000);
   if (!raw) return [];
   const parsed = JSON.parse(raw);
   const rows = Array.isArray(parsed) ? parsed : [parsed];
