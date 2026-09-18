@@ -91,11 +91,22 @@ async function sendThermalReceiptDirect(r:PrintReceipt,b:ReturnType<typeof brand
     '--------------------------------',hasPayment(payment)?receiptPaymentLines(payment).replace(/<[^>]*>/g,' ').replace(/&nbsp;/g,' '):null,
     `KRA PIN: ${line(b.kraPin)}`,line(b.documentFooter||'Thank you for your business!'),''
   ].filter(Boolean).join('\\n');
-  const response=await fetch(`${AGENT}/print`,{
-    method:'POST',mode:'cors',targetAddressSpace:'loopback',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({text,columns:48,printerName:PRINTER})
-  } as RequestInit);
+  const controller=new AbortController();
+  const timer=window.setTimeout(()=>controller.abort(),15000);
+  let response:Response;
+  try{
+    response=await fetch(`${AGENT}/print`,{
+      method:'POST',mode:'cors',targetAddressSpace:'loopback',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text,columns:48,printerName:PRINTER}),
+      signal:controller.signal
+    } as RequestInit);
+  }catch(error:any){
+    if(error?.name==='AbortError') throw new Error('The thermal print agent did not respond within 15 seconds.');
+    throw error;
+  }finally{
+    window.clearTimeout(timer);
+  }
   const result=await response.json().catch(()=>({}));
   if(!response.ok||result?.ok===false) throw new Error(result?.error||`Print agent returned HTTP ${response.status}`);
 }
