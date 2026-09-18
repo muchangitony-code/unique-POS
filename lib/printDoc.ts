@@ -1,4 +1,5 @@
 import { getBranding, brandingForBranch, type ResolvedBranding, type BranchBranding } from './company';
+import { toast } from 'sonner';
 
 const KES = (n: number) => new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES' }).format(n);
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -77,7 +78,7 @@ export function printQuotation(q:PrintQuotation,branch?:BranchBranding|null){con
 export interface PrintReceipt { receipt_number:string;cashier_name?:string|null;customer_name?:string|null;created_at:string;payment_method:string;items:Array<{product_name:string;quantity:number;unit_price:number;total:number}>;subtotal:number;discount_amount:number;total:number;amount_paid:number;change:number;payment?:PaymentDetails|null; }
 export type ReceiptPrintFormat = 'thermal' | 'a4';
 async function sendThermalReceiptDirect(r:PrintReceipt,b:ReturnType<typeof brandingForBranch>,payment:PaymentDetails|null){
-  const AGENT='http://127.0.0.1:17890';
+  const AGENT='http://localhost:17890';
   const line=(s:string)=>String(s??'').replace(/[\\r\\n]+/g,' ').trim();
   const rows=r.items.map(it=>`${line(it.product_name)}  x${it.quantity}  ${KES(it.total)}`).join('\\n');
   const text=[
@@ -122,8 +123,12 @@ async function sendThermalReceiptDirect(r:PrintReceipt,b:ReturnType<typeof brand
 export function printReceipt(r:PrintReceipt,branch?:BranchBranding|null,format:ReceiptPrintFormat='thermal'){
   const b=brandingForBranch(getBranding(),branch,'receipt'); const payment=branchPaymentOverride(r.payment,branch); const logo=b.logoUrl;
   if(format==='thermal'){
-    void sendThermalReceiptDirect(r,b,payment).catch(error=>{
-      alert(`Thermal printer is not ready.\\n\\n${error?.message||error}\\n\\nKeep the UniquePOS Thermal Print Agent running and ensure the Xprinter is installed in Windows.`);
+    const toastId = toast.loading('Sending receipt to Xprinter…');
+    void sendThermalReceiptDirect(r,b,payment).then(()=>{
+      toast.success('Receipt sent to Xprinter XP-D2.', { id: toastId });
+    }).catch(error=>{
+      console.error('[UniquePOS thermal print]', error);
+      toast.error(`Thermal printing failed: ${error?.message||error}`, { id: toastId, duration: 8000 });
     });
     return;
   }
