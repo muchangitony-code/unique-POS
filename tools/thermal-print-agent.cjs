@@ -68,24 +68,40 @@ function powershell(script, timeout = 12000) {
 
 async function listWindowsPrinters() {
   if (process.platform !== "win32") return [];
-  // Win32_Printer is used here instead of Get-Printer because the latter can
-  // block on a misbehaving printer provider/driver even when WMI can enumerate
-  // the actual installed printers normally.
-  const raw = await powershell(`
+  // Query the known physical thermal printer directly. A full Win32_Printer
+  // enumeration can stall when another installed printer/provider misbehaves.
+  const config = loadConfig();
+  const candidates = [config.printerName, "Xprinter XP-D2"].filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i);
+  const rows = [];
+  for (const candidate of candidates) {
+    const safe = String(candidate).replace(/'/g, "''");
+    try {
+      const raw = await powershell(`
 $ErrorActionPreference = 'Stop'
-Get-CimInstance Win32_Printer | Select-Object Name,Default,PrinterStatus,WorkOffline,DriverName,PortName | ConvertTo-Json -Compress
-`, 10000);
-  if (!raw) return [];
-  const parsed = JSON.parse(raw);
-  const rows = Array.isArray(parsed) ? parsed : [parsed];
-  return rows.map(p => ({
-    name: String(p.Name || ""),
-    isDefault: Boolean(p.Default),
-    offline: Boolean(p.WorkOffline),
-    status: Number(p.PrinterStatus || 0),
-    driver: String(p.DriverName || ""),
-    port: String(p.PortName || "")
-  }));
+Get-CimInstance Win32_Printer -Filter "Name='${safe}'" |
+  Select-Object Name,Default,PrinterStatus,WorkOffline,DriverName,PortName |
+  ConvertTo-Json -Compress
+`, 6000);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      const items = Array.isArray(parsed) ? parsed : [parsed];
+      for (const p of items) {
+        if (p && p.Name) rows.push({
+          name: String(p.Name),
+          isDefault: Boolean(p.Default),
+          offline: Boolean(p.WorkOffline),
+          status: Number(p.PrinterStatus || 0),
+          driver: String(p.DriverName || ""),
+          port: String(p.PortName || "")
+        });
+      }
+    } catch (e) {
+      // Try the next candidate; the print operation will report a precise
+      // error if the configured printer cannot be accessed.
+    }
+  }
+  return rows;
 }
 
 async function diagnostics(printerName) {
