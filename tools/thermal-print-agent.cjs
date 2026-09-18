@@ -51,16 +51,19 @@ function htmlTextToEscPos(receiptText, width = 48) {
   chunks.push(text(""), text(""), escPosCut());
   return Buffer.concat(chunks);
 }
-function powershell(script, args = []) {
+function powershell(script, args = [], timeout = 10000) {
   return new Promise((resolve, reject) => {
-    execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script, ...args], { windowsHide: true, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) reject(new Error(stderr || error.message)); else resolve(stdout.trim());
+    execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script, ...args], { windowsHide: true, maxBuffer: 1024 * 1024, timeout }, (error, stdout, stderr) => {
+      if (error) {
+        if (error.killed || error.signal === "SIGTERM") reject(new Error(`PowerShell printer operation timed out after ${timeout / 1000}s`));
+        else reject(new Error(stderr || error.message));
+      } else resolve(stdout.trim());
     });
   });
 }
 async function listWindowsPrinters() {
   if (process.platform !== "win32") return [];
-  const raw = await powershell(`Get-CimInstance Win32_Printer | Select-Object Name,Default,WorkOffline,PrinterStatus | ConvertTo-Json -Compress`);
+  const raw = await powershell(`Get-Printer | Select-Object Name,Default,PrinterStatus,WorkOffline | ConvertTo-Json -Compress`);
   if (!raw) return [];
   const parsed = JSON.parse(raw);
   const rows = Array.isArray(parsed) ? parsed : [parsed];
@@ -70,7 +73,9 @@ async function printWindowsRaw(printerName, data) {
   if (process.platform !== "win32") throw new Error("Windows printer output is only available on Windows.");
   // Pass the resolved Windows printer name directly in the PowerShell script.
   // This avoids powershell.exe $args mangling that can trigger Win32 error 1801.
-  const safePrinterName = String(printerName).replace(/\x27/g, "\x27\x27");
+  const canonical = await powershell(`$p = Get-Printer -Name ${JSON.stringify(String(printerName))} -ErrorAction Stop; $p.Name`);
+  const resolvedPrinterName = canonical.trim() || String(printerName);
+  const safePrinterName = resolvedPrinterName.replace(/\x27/g, "\x27\x27");
   const base64 = data.toString("base64");
   const script = `
 $ErrorActionPreference = 'Stop'
@@ -109,7 +114,7 @@ public static class UniquePosRawPrinter {
 '@
 [UniquePosRawPrinter]::Send($printerName, [Convert]::FromBase64String($raw))
 `;
-  await powershell(script);
+  await powershell(script, [], 15000);
 }
 function printNetwork(host, port, data) {
   return new Promise((resolve, reject) => {
