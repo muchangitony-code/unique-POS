@@ -185,22 +185,24 @@ async function printJob(job) {
 const server = http.createServer(async (req,res) => {
   if (req.method === "OPTIONS") return json(res,204,{});
   try {
-    if (req.method === "GET" && req.url === "/health")
+    // Use only the URL pathname so browser tracking/query parameters cannot break routing.
+    const pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
+    if (req.method === "GET" && pathname === "/health")
       return json(res,200,{ok:true,service:"UniquePOS Thermal Print Agent",version:AGENT_VERSION,port:PORT});
-    if (req.method === "GET" && req.url === "/printers")
+    if (req.method === "GET" && pathname === "/printers")
       return json(res,200,{ok:true,printers:await listWindowsPrinters(),config:loadConfig()});
-    if (req.method === "GET" && req.url === "/diagnostics") {
+    if (req.method === "GET" && pathname === "/diagnostics") {
       const config=loadConfig();
       const printers=await listWindowsPrinters();
       const printerName=config.printerName || printers.find(p=>p.isDefault)?.name || printers[0]?.name || "";
       return json(res,200,{ok:true,printer:printerName,diagnostics:await diagnostics(printerName)});
     }
-    if (req.method === "POST" && req.url === "/print") {
+    if (req.method === "POST" && pathname === "/print") {
       const job=await readBody(req);
       const printerName=await printJob(job);
       return json(res,200,{ok:true,printerName,message:"Receipt sent through the Windows printer driver."});
     }
-    if (req.method === "POST" && req.url === "/config") {
+    if (req.method === "POST" && pathname === "/config") {
       const body=await readBody(req);
       saveConfig({...loadConfig(),...body});
       return json(res,200,{ok:true,config:loadConfig()});
