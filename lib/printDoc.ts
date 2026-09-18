@@ -79,43 +79,22 @@ export interface PrintReceipt { receipt_number:string;cashier_name?:string|null;
 export type ReceiptPrintFormat = 'thermal' | 'a4';
 async function sendThermalReceiptDirect(r:PrintReceipt,b:ReturnType<typeof brandingForBranch>,payment:PaymentDetails|null){
   const AGENT='http://localhost:17890';
+  const PRINTER='Xprinter XP-D2';
   const line=(s:string)=>String(s??'').replace(/[\\r\\n]+/g,' ').trim();
   const rows=r.items.map(it=>`${line(it.product_name)}  x${it.quantity}  ${KES(it.total)}`).join('\\n');
   const text=[
-    line(b.name),
-    line(b.addressLine),
-    line(b.phone),
-    '--------------------------------',
-    `Receipt: ${r.receipt_number}`,
-    `Date: ${fmtDate(r.created_at)}`,
-    `Cashier: ${r.cashier_name||'Staff'}`,
-    r.customer_name?`Customer: ${line(r.customer_name)}`:null,
-    '--------------------------------',
-    rows,
-    '--------------------------------',
-    `Subtotal: ${KES(r.subtotal)}`,
-    r.discount_amount>0?`Discount: -${KES(r.discount_amount)}`:null,
-    `TOTAL: ${KES(r.total)}`,
-    `Paid (${r.payment_method}): ${KES(r.amount_paid)}`,
-    r.change>0?`Change: ${KES(r.change)}`:null,
-    '--------------------------------',
-    hasPayment(payment)?receiptPaymentLines(payment).replace(/<[^>]*>/g,' ').replace(/&nbsp;/g,' '):null,
-    `KRA PIN: ${line(b.kraPin)}`,
-    line(b.documentFooter||'Thank you for your business!'),
-    ''
+    line(b.name),line(b.addressLine),line(b.phone),'--------------------------------',
+    `Receipt: ${r.receipt_number}`,`Date: ${fmtDate(r.created_at)}`,`Cashier: ${r.cashier_name||'Staff'}`,
+    r.customer_name?`Customer: ${line(r.customer_name)}`:null,'--------------------------------',rows,'--------------------------------',
+    `Subtotal: ${KES(r.subtotal)}`,r.discount_amount>0?`Discount: -${KES(r.discount_amount)}`:null,
+    `TOTAL: ${KES(r.total)}`,`Paid (${r.payment_method}): ${KES(r.amount_paid)}`,r.change>0?`Change: ${KES(r.change)}`:null,
+    '--------------------------------',hasPayment(payment)?receiptPaymentLines(payment).replace(/<[^>]*>/g,' ').replace(/&nbsp;/g,' '):null,
+    `KRA PIN: ${line(b.kraPin)}`,line(b.documentFooter||'Thank you for your business!'),''
   ].filter(Boolean).join('\\n');
-  const get=await fetch(`${AGENT}/printers`,{mode:'cors',targetAddressSpace:'loopback'} as RequestInit);
-  const info=await get.json().catch(()=>({}));
-  if(!get.ok||info?.ok===false) throw new Error(info?.error||`Could not contact thermal print agent (${get.status})`);
-  const printers=Array.isArray(info.printers)?info.printers:[];
-  const physical=printers.filter((p:any)=>!(/pdf|xps|onenote|fax/i.test(String(p.name||''))));
-  const thermal=physical.find((p:any)=>/thermal|receipt|pos|rongta|xprinter|epson|zywell|zjiang|sunmi|bixolon|star|tvs|80mm/i.test(String(p.name||'')));
-  const printerName=thermal?.name||physical.find((p:any)=>p.isDefault)?.name||physical[0]?.name;
-  if(!printerName) throw new Error('No physical Windows printer was found.');
   const response=await fetch(`${AGENT}/print`,{
     method:'POST',mode:'cors',targetAddressSpace:'loopback',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({text,columns:48,printerName})
+    body:JSON.stringify({text,columns:48,printerName:PRINTER})
   } as RequestInit);
   const result=await response.json().catch(()=>({}));
   if(!response.ok||result?.ok===false) throw new Error(result?.error||`Print agent returned HTTP ${response.status}`);
