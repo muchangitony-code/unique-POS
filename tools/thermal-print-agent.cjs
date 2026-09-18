@@ -183,7 +183,7 @@ async function printJob(job) {
     printerName = printers.find(p => p.isDefault)?.name || printers[0]?.name;
   }
   if (!printerName) throw new Error("No Windows printer found. Install the thermal printer driver first.");
-  await printWindowsRaw(printerName, data);
+  if (job.method === "raw") await printWindowsRaw(printerName, data); else await printWindowsGdi(printerName, job.text || "");
   saveConfig({ ...config, target: "windows", printerName });
   return printerName;
 }
