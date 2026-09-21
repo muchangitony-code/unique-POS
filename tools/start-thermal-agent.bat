@@ -16,10 +16,10 @@ if errorlevel 1 (
 )
 
 echo Verifying thermal agent version...
-findstr /C:"2.1.0-raw-spooler" "tools\thermal-print-agent.cjs" >nul
+findstr /C:"AGENT_CAPABILITIES = ["raw-spooler"" "tools\thermal-print-agent.cjs" >nul
 if errorlevel 1 (
   echo.
-  echo ERROR: Downloaded agent is NOT version 2.1.0-raw-spooler.
+  echo ERROR: Downloaded agent does not contain the RAW ESC/POS capability.
   echo The old thermal agent will NOT be started.
   pause
   exit /b 1
