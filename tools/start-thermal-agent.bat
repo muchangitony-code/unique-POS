@@ -16,7 +16,7 @@ if errorlevel 1 (
 )
 
 echo Verifying thermal agent version...
-findstr /C:"AGENT_CAPABILITIES = ["raw-spooler"" "tools\thermal-print-agent.cjs" >nul
+findstr /C:"raw-spooler" "tools\thermal-print-agent.cjs" >nul
 if errorlevel 1 (
   echo.
   echo ERROR: Downloaded agent does not contain the RAW ESC/POS capability.
