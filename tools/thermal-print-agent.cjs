@@ -111,57 +111,98 @@ if ($p) {
 
 async function printWindowsDriver(printerName, receiptText) {
   if (process.platform !== "win32") throw new Error("Windows printer output is only available on Windows.");
+
+  // Use the Windows print spooler directly in RAW mode. This avoids the
+  // PrintDocument/GDI path, which can block indefinitely with some thermal drivers.
   const printer64 = Buffer.from(String(printerName || ""), "utf8").toString("base64");
   const receipt64 = Buffer.from(String(receiptText || ""), "utf8").toString("base64");
+
   const script = `
 $ErrorActionPreference = 'Stop'
-$printerName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${printer64}'))
-$receipt = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${receipt64}'))
-Add-Type -AssemblyName System.Drawing
+$printerName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__PRINTER__'))
+$receipt = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__RECEIPT__'))
+
 Add-Type -TypeDefinition @'
 using System;
-using System.Drawing;
-using System.Drawing.Printing;
-public static class UniquePosDriverPrint {
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class UniquePosRawPrint {
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+  public class DOC_INFO_1 {
+    [MarshalAs(UnmanagedType.LPWStr)] public string pDocName;
+    [MarshalAs(UnmanagedType.LPWStr)] public string pOutputFile;
+    [MarshalAs(UnmanagedType.LPWStr)] public string pDataType;
+  }
+
+  [DllImport("winspool.drv", EntryPoint="OpenPrinterW", SetLastError=true, CharSet=CharSet.Unicode)]
+  static extern bool OpenPrinter(string pPrinterName, out IntPtr phPrinter, IntPtr pDefault);
+  [DllImport("winspool.drv", SetLastError=true)] static extern bool ClosePrinter(IntPtr hPrinter);
+  [DllImport("winspool.drv", EntryPoint="StartDocPrinterW", SetLastError=true, CharSet=CharSet.Unicode)]
+  static extern int StartDocPrinter(IntPtr hPrinter, int level, [In] DOC_INFO_1 di);
+  [DllImport("winspool.drv", SetLastError=true)] static extern bool EndDocPrinter(IntPtr hPrinter);
+  [DllImport("winspool.drv", SetLastError=true)] static extern bool StartPagePrinter(IntPtr hPrinter);
+  [DllImport("winspool.drv", SetLastError=true)] static extern bool EndPagePrinter(IntPtr hPrinter);
+  [DllImport("winspool.drv", SetLastError=true)] static extern bool WritePrinter(IntPtr hPrinter, byte[] pBytes, int dwCount, out int dwWritten);
+
+  static void Fail(string stage, string printer) {
+    int code = Marshal.GetLastWin32Error();
+    throw new Exception(stage + " failed for '" + printer + "' (Win32 error " + code + ").");
+  }
+
+  static void Write(IntPtr h, byte[] data, string stage, string printer) {
+    int written;
+    if (!WritePrinter(h, data, data.Length, out written)) Fail("WritePrinter (" + stage + ")", printer);
+    if (written != data.Length)
+      throw new Exception("WritePrinter (" + stage + ") wrote " + written + " of " + data.Length + " bytes.");
+  }
+
   public static void Print(string printer, string receipt) {
-    using (var doc = new PrintDocument()) {
-      doc.DocumentName = "UniquePOS Receipt";
-      doc.PrinterSettings.PrinterName = printer;
-      if (!doc.PrinterSettings.IsValid) throw new Exception("Windows printer is not valid: " + printer);
-      doc.PrintController = new StandardPrintController();
-      var lines = receipt.Replace("\\r", "").Split(new[] {'\\n'}, StringSplitOptions.None);
-      var paperHeight = Math.Max(500, Math.Min(4000, lines.Length * 22 + 100));
-      doc.DefaultPageSettings.Margins = new Margins(0,0,0,0);
-      doc.DefaultPageSettings.PaperSize = new PaperSize("UniquePOS80mm", 315, paperHeight);
-      doc.PrintPage += delegate(object sender, PrintPageEventArgs e) {
-        using (var normal = new Font("Arial", 9.0f))
-        using (var bold = new Font("Arial", 9.0f, FontStyle.Bold)) {
-          float y = 5;
-          float width = e.PageBounds.Width - 10;
-          foreach (var original in lines) {
-            string line = original ?? "";
-            Font font = (line.StartsWith("TOTAL") || line.StartsWith("Receipt:")) ? bold : normal;
-            while (line.Length > 0) {
-              string part = line.Length > 56 ? line.Substring(0,56) : line;
-              e.Graphics.DrawString(part, font, Brushes.Black, new RectangleF(5,y,width,20));
-              y += 19;
-              line = line.Length > part.Length ? line.Substring(part.Length) : "";
-            }
-            if (original.Length == 0) y += 3;
-          }
-          e.HasMorePages = false;
-        }
+    IntPtr h = IntPtr.Zero;
+    bool docStarted = false;
+    bool pageStarted = false;
+    try {
+      if (!OpenPrinter(printer, out h, IntPtr.Zero)) Fail("OpenPrinter", printer);
+
+      var info = new DOC_INFO_1 {
+        pDocName = "UniquePOS Receipt",
+        pOutputFile = null,
+        pDataType = "RAW"
       };
-      doc.Print();
+      if (StartDocPrinter(h, 1, info) == 0) Fail("StartDocPrinter", printer);
+      docStarted = true;
+
+      if (!StartPagePrinter(h)) Fail("StartPagePrinter", printer);
+      pageStarted = true;
+
+      byte[] init = new byte[] { 0x1B, 0x40 };
+      byte[] text = Encoding.UTF8.GetBytes(receipt.Replace("\r", "") + "\n\n");
+      byte[] cut = new byte[] { 0x1D, 0x56, 0x42, 0x00 };
+
+      Write(h, init, "initialization", printer);
+      Write(h, text, "receipt data", printer);
+      Write(h, cut, "paper cut", printer);
+
+      if (!EndPagePrinter(h)) Fail("EndPagePrinter", printer);
+      pageStarted = false;
+      if (!EndDocPrinter(h)) Fail("EndDocPrinter", printer);
+      docStarted = false;
+    } finally {
+      if (pageStarted) EndPagePrinter(h);
+      if (docStarted) EndDocPrinter(h);
+      if (h != IntPtr.Zero) ClosePrinter(h);
     }
   }
 }
 '@
-[UniquePosDriverPrint]::Print($printerName, $receipt)
-`;
-  await powershell(script, 25000);
-}
 
+[UniquePosRawPrint]::Print($printerName, $receipt)
+`;
+  const encodedScript = script
+    .replace("__PRINTER__", printer64)
+    .replace("__RECEIPT__", receipt64);
+  await powershell(encodedScript, 15000);
+}
 async function printJob(job) {
   const config = loadConfig();
   const printerName = String(job.printerName || config.printerName || "Xprinter XP-D2").trim();
