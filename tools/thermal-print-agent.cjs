@@ -8,7 +8,8 @@ const { execFile } = require("node:child_process");
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.UNIQUEPOS_PRINT_PORT || 17890);
-const AGENT_VERSION = "2.1.0-raw-spooler";
+const AGENT_VERSION = "2.0.0-driver";
+const AGENT_CAPABILITIES = ["raw-spooler","esc-pos","xprinter-xp-d2"];
 const DEFAULT_RAW_QUEUE = "xprinter";
 const FALLBACK_QUEUE = "Xprinter XP-D2";
 const CONFIG_DIR = process.env.APPDATA ? path.join(process.env.APPDATA, "UniquePOS") : path.join(os.homedir(), ".uniquepos");
