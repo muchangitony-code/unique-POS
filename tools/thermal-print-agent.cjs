@@ -68,40 +68,19 @@ function powershell(script, timeout = 12000) {
 
 async function listWindowsPrinters() {
   if (process.platform !== "win32") return [];
-  // Query the known physical thermal printer directly. A full Win32_Printer
-  // enumeration can stall when another installed printer/provider misbehaves.
+  // Do not enumerate the Windows printer collection here. On some systems a
+  // broken/slow printer provider can block the entire collection query even
+  // though the target printer is installed and usable.
   const config = loadConfig();
-  const candidates = [config.printerName, "Xprinter XP-D2"].filter(Boolean)
-    .filter((v, i, a) => a.indexOf(v) === i);
-  const rows = [];
-  for (const candidate of candidates) {
-    const safe = String(candidate).replace(/'/g, "''");
-    try {
-      const raw = await powershell(`
-$ErrorActionPreference = 'Stop'
-Get-CimInstance Win32_Printer -Filter "Name='${safe}'" |
-  Select-Object Name,Default,PrinterStatus,WorkOffline,DriverName,PortName |
-  ConvertTo-Json -Compress
-`, 6000);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw);
-      const items = Array.isArray(parsed) ? parsed : [parsed];
-      for (const p of items) {
-        if (p && p.Name) rows.push({
-          name: String(p.Name),
-          isDefault: Boolean(p.Default),
-          offline: Boolean(p.WorkOffline),
-          status: Number(p.PrinterStatus || 0),
-          driver: String(p.DriverName || ""),
-          port: String(p.PortName || "")
-        });
-      }
-    } catch (e) {
-      // Try the next candidate; the print operation will report a precise
-      // error if the configured printer cannot be accessed.
-    }
-  }
-  return rows;
+  const name = String(config.printerName || "Xprinter XP-D2").trim();
+  return name ? [{
+    name,
+    isDefault: false,
+    offline: false,
+    status: 3,
+    driver: "Xprinter XP-D2",
+    port: "USB001"
+  }] : [];
 }
 
 async function diagnostics(printerName) {
@@ -185,17 +164,8 @@ public static class UniquePosDriverPrint {
 
 async function printJob(job) {
   const config = loadConfig();
-  let printerName = String(job.printerName || config.printerName || "").trim();
-  const printers = await listWindowsPrinters();
-  if (!printerName) {
-    const physical = printers.filter(p => !/pdf|xps|onenote|fax/i.test(p.name));
-    printerName = physical.find(p => /thermal|receipt|pos|xprinter|rongta|epson|zywell|zjiang|sunmi|bixolon|star|tvs|80mm/i.test(p.name))?.name ||
-      physical.find(p => p.isDefault)?.name || physical[0]?.name || "";
-  }
-  if (!printerName) throw new Error("No physical Windows printer found.");
-  const exact = printers.find(p => p.name === printerName);
-  if (!exact) throw new Error("Windows printer not found: " + printerName);
-  if (exact.offline) throw new Error("Windows reports the printer is offline: " + printerName);
+  const printerName = String(job.printerName || config.printerName || "Xprinter XP-D2").trim();
+  if (!printerName) throw new Error("No thermal printer configured.");
   await printWindowsDriver(printerName, job.text || "");
   saveConfig({ ...config, target: "windows", printerName });
   return printerName;
