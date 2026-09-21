@@ -1,5 +1,4 @@
 import { getBranding, brandingForBranch, type ResolvedBranding, type BranchBranding } from './company';
-import { toast } from 'sonner';
 
 const KES = (n: number) => new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES' }).format(n);
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -29,43 +28,13 @@ function baseCss(b: ResolvedBranding): string { return `
   ${fontImports(b)} *{box-sizing:border-box;margin:0;padding:0} body{font-family:${b.bodyFontStack};color:#1a202c;background:#fff;font-size:13px;line-height:1.5} h1,h2,h3,h4,h5,h6{font-family:${b.headingFontStack}} :root{--blue:${b.primaryColor};--navy:${b.navyColor};--gold:${b.secondaryColor};--gold-light:#FEF9E7;--gray:#6B7280;--light:#F8FAFC;--border:#E2E8F0} .page{max-width:794px;margin:0 auto;padding:32px 40px;min-height:1123px} .doc-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px}.company-logo{width:80px;height:80px;object-fit:contain}.company-info h2{font-size:16px;font-weight:700;color:var(--navy)}.company-info p{font-size:11.5px;color:var(--gray);margin-top:2px}.doc-type-badge{background:var(--navy);color:white;text-align:right;padding:12px 20px;border-radius:8px}.doc-type-badge h1{font-size:22px;font-weight:700;letter-spacing:1px}.doc-type-badge p{font-size:11.5px;color:rgba(255,255,255,.75);margin-top:2px}.gold-bar{height:4px;background:linear-gradient(90deg,var(--gold),var(--blue));border-radius:2px;margin:20px 0}.meta-row{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:24px}.meta-box{background:var(--light);border:1px solid var(--border);border-radius:8px;padding:14px 16px}.meta-box h3{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--gray);margin-bottom:6px}.meta-box p{font-size:13px;font-weight:500;color:#1a202c}.meta-box p.small{font-size:11.5px;color:var(--gray);font-weight:400} table{width:100%;border-collapse:collapse;margin-bottom:20px}thead tr{background:var(--navy)}thead th{padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:white;font-weight:600}thead th:last-child,thead th:nth-last-child(2),thead th:nth-last-child(3){text-align:right}tbody tr:nth-child(even){background:var(--light)}tbody tr td{padding:10px 12px;font-size:12.5px;border-bottom:1px solid var(--border);vertical-align:top}tbody tr td:last-child,tbody tr td:nth-last-child(2),tbody tr td:nth-last-child(3){text-align:right}.totals-row{display:flex;justify-content:flex-end;margin-bottom:24px}.totals-box{min-width:280px;border:1px solid var(--border);border-radius:8px;overflow:hidden}.totals-line{display:flex;justify-content:space-between;padding:8px 16px;font-size:12.5px;border-bottom:1px solid var(--border)}.totals-line:last-child{border-bottom:none;background:var(--navy);color:white;font-size:14px;font-weight:700;padding:12px 16px}.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}.info-box{border:1px solid var(--border);border-radius:8px;padding:14px 16px}.info-box.gold{border-color:var(--gold);background:var(--gold-light)}.info-box h3{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--gray);margin-bottom:8px;font-weight:600}.info-box.gold h3{color:#92400E}.info-box p{font-size:12.5px;margin-top:3px}.sig-row{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:32px}.sig-block p{font-size:11.5px;color:var(--gray);margin-bottom:6px}.sig-line{border-bottom:1.5px solid #94a3b8;height:36px}.sig-block span{font-size:11px;color:var(--gray)}.doc-footer{text-align:center;margin-top:32px;padding-top:16px;border-top:1px solid var(--border)}.doc-footer p{font-size:11.5px;color:var(--gray)}.doc-footer strong{color:var(--navy)}.notes-box{background:var(--light);border-left:3px solid var(--gold);padding:10px 14px;border-radius:0 6px 6px 0;margin-bottom:20px}.notes-box h3{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--gray);margin-bottom:4px}.notes-box p{font-size:12.5px}.status-badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.5px}.status-paid{background:#D1FAE5;color:#065F46}.status-pending{background:#FEF3C7;color:#92400E}.status-overdue{background:#FEE2E2;color:#991B1B}
   @media print{@page{margin:12mm 12mm;size:A4}body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.no-print{display:none!important}.page{padding:0}}
 `; }
-async function sendThermalFromWindow(pw: Window) {
-  const AGENT = 'http://localhost:17890';
-  await new Promise(resolve => setTimeout(resolve, 150));
-  const text = pw.document?.body?.innerText || '';
-  if (!text.trim()) throw new Error('Receipt preview is empty.');
-  const listResponse = await fetch(`${AGENT}/printers`, { mode: 'cors', targetAddressSpace: 'loopback' } as RequestInit);
-  const list = await listResponse.json();
-  if (!listResponse.ok || list?.ok === false) throw new Error(list?.error || 'Could not read Windows printers.');
-  const printers = Array.isArray(list.printers) ? list.printers : [];
-  const physical = printers.filter((p: any) => !/pdf|xps|onenote|fax/i.test(String(p.name || '')));
-  const thermal = physical.find((p: any) => /thermal|receipt|pos|rongta|xprinter|epson|zywell|zjiang|sunmi|bixolon|star|tvs|80mm/i.test(String(p.name || '')));
-  const printerName = thermal?.name || physical.find((p: any) => p.isDefault)?.name || physical[0]?.name;
-  if (!printerName) throw new Error('No physical Windows printer was found.');
-  const response = await fetch(`${AGENT}/print`, {
-    method: 'POST',
-    mode: 'cors',
-    targetAddressSpace: 'loopback',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, columns: 48, printerName })
-  } as RequestInit);
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok || result?.ok === false) throw new Error(result?.error || `Thermal agent returned ${response.status}`);
-  try { pw.close(); } catch {}
-}
 function openPrintWindow(html:string,title:string,css:string){
   const pw=window.open('','_blank','width=900,height=700');
   if(!pw){alert('Please allow pop-ups to print documents.');return;}
   pw.document.write(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>${title}</title><style>${css}</style></head><body>${html}</body></html>`);
   pw.document.close();
   pw.focus();
-  if(/^Receipt /.test(title)){
-    sendThermalFromWindow(pw).catch(error => {
-      alert(`Thermal printer is not ready.\\n\\n${error?.message || error}\\n\\nMake sure the UniquePOS Thermal Print Agent is running and the Xprinter is installed in Windows.`);
-    });
-    return;
-  }
-  pw.onload=()=>setTimeout(()=>pw.print(),600);
+  pw.onload=()=>setTimeout(()=>{try{pw.print()}catch{}},600);
   setTimeout(()=>{try{pw.print()}catch{}},1200);
 }
 
@@ -77,67 +46,9 @@ export function printQuotation(q:PrintQuotation,branch?:BranchBranding|null){con
 
 export interface PrintReceipt { receipt_number:string;cashier_name?:string|null;customer_name?:string|null;created_at:string;payment_method:string;items:Array<{product_name:string;quantity:number;unit_price:number;total:number}>;subtotal:number;discount_amount:number;total:number;amount_paid:number;change:number;payment?:PaymentDetails|null; }
 export type ReceiptPrintFormat = 'thermal' | 'a4';
-async function sendThermalReceiptDirect(r:PrintReceipt,b:ReturnType<typeof brandingForBranch>,payment:PaymentDetails|null){
-  const AGENT='http://localhost:17890';
-  const line=(s:string)=>String(s??'').replace(/[\\r\\n]+/g,' ').trim();
-  const rows=r.items.map(it=>`${line(it.product_name)}  x${it.quantity}  ${KES(it.total)}`).join('\\n');
-  const text=[
-    line(b.name),line(b.addressLine),line(b.phone),'--------------------------------',
-    `Receipt: ${r.receipt_number}`,`Date: ${fmtDate(r.created_at)}`,`Cashier: ${r.cashier_name||'Staff'}`,
-    r.customer_name?`Customer: ${line(r.customer_name)}`:null,'--------------------------------',rows,'--------------------------------',
-    `Subtotal: ${KES(r.subtotal)}`,r.discount_amount>0?`Discount: -${KES(r.discount_amount)}`:null,
-    `TOTAL: ${KES(r.total)}`,`Paid (${r.payment_method}): ${KES(r.amount_paid)}`,r.change>0?`Change: ${KES(r.change)}`:null,
-    '--------------------------------',hasPayment(payment)?receiptPaymentLines(payment).replace(/<[^>]*>/g,' ').replace(/&nbsp;/g,' '):null,
-    `KRA PIN: ${line(b.kraPin)}`,line(b.documentFooter||'Thank you for your business!'),''
-  ].filter(Boolean).join('\\n');
-
-  const controller=new AbortController();
-  const timer=window.setTimeout(()=>controller.abort(),30000);
-  try{
-    const health=await fetch(`${AGENT}/health`,{mode:'cors',targetAddressSpace:'loopback',signal:controller.signal} as RequestInit);
-    const healthData=await health.json().catch(()=>({}));
-    if(!health.ok||healthData?.ok!==true) throw new Error('UniquePOS Thermal Print Agent is not responding.');
-    if(!(healthData?.capabilities||[]).includes('raw-spooler')){
-      throw new Error('The thermal print agent on this computer does not support RAW ESC/POS printing. Close it and run tools\\repair-thermal-agent.bat once.');
-    }
-
-    const listResponse=await fetch(`${AGENT}/printers`,{mode:'cors',targetAddressSpace:'loopback',signal:controller.signal} as RequestInit);
-    const list=await listResponse.json().catch(()=>({}));
-    if(!listResponse.ok||list?.ok===false) throw new Error(list?.error||'Could not read Windows printers.');
-    const printers=Array.isArray(list.printers)?list.printers:[];
-    const physical=printers.filter((p:any)=>!p.offline&&!/pdf|xps|onenote|fax/i.test(String(p.name||'')));
-    const printer=physical.find((p:any)=>/^Xprinter XP-D2$/i.test(String(p.name||''))) ||
-      physical.find((p:any)=>/xprinter.*xp[- ]?d2|thermal|receipt|pos|80mm/i.test(String(p.name||''))) ||
-      physical.find((p:any)=>p.isDefault) || physical[0];
-    if(!printer?.name) throw new Error('Windows has no available physical printer. Check the Xprinter installation.');
-    
-    const response=await fetch(`${AGENT}/print`,{
-      method:'POST',mode:'cors',targetAddressSpace:'loopback',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({text,columns:48,printerName:printer.name}),
-      signal:controller.signal
-    } as RequestInit);
-    const result=await response.json().catch(()=>({}));
-    if(!response.ok||result?.ok===false) throw new Error(result?.error||`Thermal agent returned HTTP ${response.status}`);
-  }catch(error:any){
-    if(error?.name==='AbortError') throw new Error('The Windows printer did not respond within 30 seconds. The POS will not remain stuck.');
-    throw error;
-  }finally{
-    window.clearTimeout(timer);
-  }
-}
 export function printReceipt(r:PrintReceipt,branch?:BranchBranding|null,format:ReceiptPrintFormat='thermal'){
   const b=brandingForBranch(getBranding(),branch,'receipt'); const payment=branchPaymentOverride(r.payment,branch); const logo=b.logoUrl;
-  if(format==='thermal'){
-    const toastId = toast.loading('Sending receipt to Xprinter…');
-    void sendThermalReceiptDirect(r,b,payment).then(()=>{
-      toast.success('Receipt sent to Xprinter XP-D2.', { id: toastId });
-    }).catch(error=>{
-      console.error('[UniquePOS thermal print]', error);
-      toast.error(`Thermal printing failed: ${error?.message||error}`, { id: toastId, duration: 8000 });
-    });
-    return;
-  }
+  // PRINT BASELINE: standalone browser print pipeline. No local agent.
   const itemRows=r.items.map(it=>`<tr><td>${esc(it.product_name)}</td><td style="text-align:center">${it.quantity}</td><td style="text-align:right">${KES(it.unit_price)}</td><td style="text-align:right;font-weight:600">${KES(it.total)}</td></tr>`).join('');
   const pmLabel:Record<string,string>={cash:'Cash',mpesa:'M-Pesa',card:'Card',bank_transfer:'Bank Transfer',credit:'Credit'}; const pmDisplay=esc(pmLabel[r.payment_method]??r.payment_method); const rcptNum=esc(r.receipt_number);
   if(format==='a4'){
