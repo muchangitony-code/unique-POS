@@ -8,7 +8,9 @@ const { execFile } = require("node:child_process");
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.UNIQUEPOS_PRINT_PORT || 17890);
-const AGENT_VERSION = "2.0.0-driver";
+const AGENT_VERSION = "2.1.0-raw-spooler";
+const DEFAULT_RAW_QUEUE = "xprinter";
+const FALLBACK_QUEUE = "Xprinter XP-D2";
 const CONFIG_DIR = process.env.APPDATA ? path.join(process.env.APPDATA, "UniquePOS") : path.join(os.homedir(), ".uniquepos");
 const CONFIG_FILE = path.join(CONFIG_DIR, "thermal-printer.json");
 
@@ -72,7 +74,7 @@ async function listWindowsPrinters() {
   // broken/slow printer provider can block the entire collection query even
   // though the target printer is installed and usable.
   const config = loadConfig();
-  const name = String(config.printerName || "Xprinter XP-D2").trim();
+  const name = String(config.printerName || DEFAULT_RAW_QUEUE).trim();
   return name ? [{
     name,
     isDefault: false,
@@ -112,11 +114,11 @@ if ($p) {
 async function printWindowsDriver(printerName, receiptText) {
   if (process.platform !== "win32") throw new Error("Windows printer output is only available on Windows.");
 
-  // Use the Windows print spooler directly in RAW mode. This avoids the
-  // PrintDocument/GDI path, which can block indefinitely with some thermal drivers.
   const printer64 = Buffer.from(String(printerName || ""), "utf8").toString("base64");
   const receipt64 = Buffer.from(String(receiptText || ""), "utf8").toString("base64");
 
+  // Direct spooler RAW printing is appropriate for ESC/POS receipt printers.
+  // We deliberately do NOT use PrintDocument/GDI here.
   const script = `
 $ErrorActionPreference = 'Stop'
 $printerName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__PRINTER__'))
@@ -136,14 +138,12 @@ public static class UniquePosRawPrint {
   }
 
   [DllImport("winspool.drv", EntryPoint="OpenPrinterW", SetLastError=true, CharSet=CharSet.Unicode)]
-  static extern bool OpenPrinter(string pPrinterName, out IntPtr phPrinter, IntPtr pDefault);
-  [DllImport("winspool.drv", SetLastError=true)] static extern bool ClosePrinter(IntPtr hPrinter);
+  static extern bool OpenPrinter(string name, out IntPtr handle, IntPtr defaults);
+  [DllImport("winspool.drv", SetLastError=true)] static extern bool ClosePrinter(IntPtr handle);
   [DllImport("winspool.drv", EntryPoint="StartDocPrinterW", SetLastError=true, CharSet=CharSet.Unicode)]
-  static extern int StartDocPrinter(IntPtr hPrinter, int level, [In] DOC_INFO_1 di);
-  [DllImport("winspool.drv", SetLastError=true)] static extern bool EndDocPrinter(IntPtr hPrinter);
-  [DllImport("winspool.drv", SetLastError=true)] static extern bool StartPagePrinter(IntPtr hPrinter);
-  [DllImport("winspool.drv", SetLastError=true)] static extern bool EndPagePrinter(IntPtr hPrinter);
-  [DllImport("winspool.drv", SetLastError=true)] static extern bool WritePrinter(IntPtr hPrinter, byte[] pBytes, int dwCount, out int dwWritten);
+  static extern int StartDocPrinter(IntPtr handle, int level, [In] DOC_INFO_1 info);
+  [DllImport("winspool.drv", SetLastError=true)] static extern bool EndDocPrinter(IntPtr handle);
+  [DllImport("winspool.drv", SetLastError=true)] static extern bool WritePrinter(IntPtr handle, byte[] data, int count, out int written);
 
   static void Fail(string stage, string printer) {
     int code = Marshal.GetLastWin32Error();
@@ -152,43 +152,43 @@ public static class UniquePosRawPrint {
 
   static void Write(IntPtr h, byte[] data, string stage, string printer) {
     int written;
-    if (!WritePrinter(h, data, data.Length, out written)) Fail("WritePrinter (" + stage + ")", printer);
+    if (!WritePrinter(h, data, data.Length, out written))
+      Fail("WritePrinter/" + stage, printer);
     if (written != data.Length)
-      throw new Exception("WritePrinter (" + stage + ") wrote " + written + " of " + data.Length + " bytes.");
+      throw new Exception("WritePrinter/" + stage + " wrote " + written + " of " + data.Length + " bytes.");
   }
 
   public static void Print(string printer, string receipt) {
     IntPtr h = IntPtr.Zero;
     bool docStarted = false;
-    bool pageStarted = false;
     try {
-      if (!OpenPrinter(printer, out h, IntPtr.Zero)) Fail("OpenPrinter", printer);
+      if (!OpenPrinter(printer, out h, IntPtr.Zero))
+        Fail("OpenPrinter", printer);
 
       var info = new DOC_INFO_1 {
         pDocName = "UniquePOS Receipt",
         pOutputFile = null,
         pDataType = "RAW"
       };
-      if (StartDocPrinter(h, 1, info) == 0) Fail("StartDocPrinter", printer);
+
+      if (StartDocPrinter(h, 1, info) == 0)
+        Fail("StartDocPrinter", printer);
       docStarted = true;
 
-      if (!StartPagePrinter(h)) Fail("StartPagePrinter", printer);
-      pageStarted = true;
-
+      // For RAW printer-ready data, StartPagePrinter is not required.
+      // Send ESC/POS bytes directly to the spooler.
       byte[] init = new byte[] { 0x1B, 0x40 };
-      byte[] text = Encoding.UTF8.GetBytes(receipt.Replace("\r", "") + "\n\n");
+      byte[] body = Encoding.GetEncoding(1252).GetBytes(receipt.Replace("\r", "") + "\n\n");
       byte[] cut = new byte[] { 0x1D, 0x56, 0x42, 0x00 };
 
-      Write(h, init, "initialization", printer);
-      Write(h, text, "receipt data", printer);
-      Write(h, cut, "paper cut", printer);
+      Write(h, init, "initialize", printer);
+      Write(h, body, "receipt", printer);
+      Write(h, cut, "cut", printer);
 
-      if (!EndPagePrinter(h)) Fail("EndPagePrinter", printer);
-      pageStarted = false;
-      if (!EndDocPrinter(h)) Fail("EndDocPrinter", printer);
+      if (!EndDocPrinter(h))
+        Fail("EndDocPrinter", printer);
       docStarted = false;
     } finally {
-      if (pageStarted) EndPagePrinter(h);
       if (docStarted) EndDocPrinter(h);
       if (h != IntPtr.Zero) ClosePrinter(h);
     }
@@ -198,14 +198,15 @@ public static class UniquePosRawPrint {
 
 [UniquePosRawPrint]::Print($printerName, $receipt)
 `;
-  const encodedScript = script
-    .replace("__PRINTER__", printer64)
-    .replace("__RECEIPT__", receipt64);
-  await powershell(encodedScript, 15000);
+  const encodedScript = script.replace("__PRINTER__", printer64).replace("__RECEIPT__", receipt64);
+  await powershell(encodedScript, 12000);
 }
 async function printJob(job) {
   const config = loadConfig();
-  const printerName = String(job.printerName || config.printerName || "Xprinter XP-D2").trim();
+  let printerName = String(job.printerName || config.printerName || FALLBACK_QUEUE).trim();
+  // The machine was configured with both the Xprinter vendor queue and a
+  // Generic/Text-Only queue on USB001. RAW ESC/POS belongs on the latter.
+  if (/^xprinter xp[- ]?d2$/i.test(printerName)) printerName = DEFAULT_RAW_QUEUE;
   if (!printerName) throw new Error("No thermal printer configured.");
   await printWindowsDriver(printerName, job.text || "");
   saveConfig({ ...config, target: "windows", printerName });
