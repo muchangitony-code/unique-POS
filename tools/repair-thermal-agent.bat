@@ -28,7 +28,7 @@ echo [3/4] Verifying the downloaded agent...
 findstr /C:"2.1.0-raw-spooler" "tools	hermal-print-agent.cjs" >nul
 if errorlevel 1 (
   echo.
-  echo ERROR: The downloaded thermal agent is not the expected version.
+  echo ERROR: The downloaded thermal agent does not contain RAW ESC/POS capability.
   pause
   exit /b 1
 )
