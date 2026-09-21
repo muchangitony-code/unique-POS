@@ -220,7 +220,7 @@ const server = http.createServer(async (req,res) => {
     // Use only the URL pathname so browser tracking/query parameters cannot break routing.
     const pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
     if (req.method === "GET" && pathname === "/health")
-      return json(res,200,{ok:true,service:"UniquePOS Thermal Print Agent",version:AGENT_VERSION,port:PORT});
+      return json(res,200,{ok:true,service:"UniquePOS Thermal Print Agent",version:AGENT_VERSION,capabilities:AGENT_CAPABILITIES,port:PORT});
     if (req.method === "GET" && pathname === "/printers")
       return json(res,200,{ok:true,printers:await listWindowsPrinters(),config:loadConfig()});
     if (req.method === "GET" && pathname === "/diagnostics") {
