@@ -15,7 +15,7 @@ for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":17890" ^| findstr "LISTENIN
 timeout /t 1 /nobreak >nul
 
 echo [2/4] Downloading the current thermal agent...
-curl.exe -L --fail --silent --show-error -o "tools	hermal-print-agent.cjs" "https://raw.githubusercontent.com/muchangitony-code/unique-POS/main/tools/thermal-print-agent.cjs"
+curl.exe -L --fail --silent --show-error -o "tools	hermal-print-agent.cjs" "https://raw.githubusercontent.com/muchangitony-code/unique-POS/main/tools/thermal-print-agent.cjs?v=2.1.0-raw-spooler"
 if errorlevel 1 (
   echo.
   echo ERROR: Could not download the current thermal agent.
@@ -25,7 +25,7 @@ if errorlevel 1 (
 )
 
 echo [3/4] Verifying the downloaded agent...
-findstr /C:"2.0.0-driver" "tools	hermal-print-agent.cjs" >nul
+findstr /C:"2.1.0-raw-spooler" "tools	hermal-print-agent.cjs" >nul
 if errorlevel 1 (
   echo.
   echo ERROR: The downloaded thermal agent is not the expected version.
