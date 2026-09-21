@@ -97,8 +97,8 @@ async function sendThermalReceiptDirect(r:PrintReceipt,b:ReturnType<typeof brand
     const health=await fetch(`${AGENT}/health`,{mode:'cors',targetAddressSpace:'loopback',signal:controller.signal} as RequestInit);
     const healthData=await health.json().catch(()=>({}));
     if(!health.ok||healthData?.ok!==true) throw new Error('UniquePOS Thermal Print Agent is not responding.');
-    if(healthData?.version!=='2.1.0-raw-spooler'){
-      throw new Error('The thermal print agent on this computer is outdated. Close it and run tools\\repair-thermal-agent.bat once.');
+    if(!(healthData?.capabilities||[]).includes('raw-spooler')){
+      throw new Error('The thermal print agent on this computer does not support RAW ESC/POS printing. Close it and run tools\\repair-thermal-agent.bat once.');
     }
 
     const listResponse=await fetch(`${AGENT}/printers`,{mode:'cors',targetAddressSpace:'loopback',signal:controller.signal} as RequestInit);
