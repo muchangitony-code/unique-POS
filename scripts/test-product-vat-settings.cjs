@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const page = fs.readFileSync("pages/products.tsx", "utf8");
 const route = fs.readFileSync("src/routes/products.ts", "utf8");
 const standalone = fs.readFileSync("public/app.js", "utf8");
+const apiClient = fs.readFileSync("frontend/api-client.ts", "utf8");
 
 assert.match(page, /name="vat_rate"/);
 assert.match(page, /<FormLabel>VAT Rate \(%\)<\/FormLabel>/);
@@ -23,5 +24,10 @@ assert.match(standalone, /name="vat_rate"/);
 assert.match(standalone, /name="tax_inclusive"/);
 assert.match(standalone, /payload\.tax_inclusive/);
 assert.match(standalone, /payload\.vat_rate/);
+
+// Product edits must use the actual parameterized PATCH route. The previous
+// client called /products/update, which is not implemented by the API, so VAT
+// edits (and the rest of product edits) never reached the persistence handler.
+assert.match(apiClient, /useUpdateProduct=mutation\(\x27\/api\/products\/\{id\}\x27,\x27PATCH\x27\)/);
 
 console.log("[test-product-vat-settings] PASS: product VAT rate and tax-inclusive settings match the standalone POS model and persist through the API.");
