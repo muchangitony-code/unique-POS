@@ -58,7 +58,7 @@ const productSchema = z.object({
   cost_price: z.coerce.number().min(0),
   selling_price: z.coerce.number().min(0),
   vat_rate: z.coerce.number().min(0).max(100),
-  tax_inclusive: z.boolean(),
+  tax_inclusive: z.boolean().default(false),
   current_stock: z.coerce.number().min(0).optional(),
   min_stock: z.coerce.number().min(0).optional(),
   image_url: z.string().url().optional().or(z.literal('')),
