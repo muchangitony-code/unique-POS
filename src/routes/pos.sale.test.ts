@@ -151,10 +151,10 @@ function makeSaleRow(overrides: Record<string, unknown> = {}) {
     customerId: null,
     subtotal: "240",
     discountAmount: "0",
-    taxAmount: "0",
-    total: "240",
+    taxAmount: "38.4",
+    total: "278.4",
     amountPaid: "300",
-    change: "60",
+    change: "21.6",
     paymentMethod: "cash",
     cashierName: "Cashier",
     status: "completed",
@@ -214,6 +214,16 @@ describe("POST /pos/sale — successful sale", () => {
     expect(res.statusCode).toBe(201);
     const body = res.body as { receipt_number: string; total: number };
     expect(body.receipt_number).toBe("RCP-123");
+  });
+
+  it("calculates 16% VAT and includes it in the sale total", async () => {
+    const res = makeRes();
+    await handler()(makeReq(validBody), res);
+
+    expect(res.statusCode).toBe(201);
+    const body = res.body as { tax_amount: number; total: number };
+    expect(body.tax_amount).toBeCloseTo(38.4, 2);
+    expect(body.total).toBeCloseTo(278.4, 2);
   });
 
   it("deducts stock once per line item", async () => {
