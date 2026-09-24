@@ -64,7 +64,7 @@ export default function BulkImport() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
-      setJob(data.job || { ...job, status: 'processing', processed_rows: 0, created_count: 0 });
+      setJob({ ...(data.job || job), status: 'processing', processed_rows: data.job?.processed_rows ?? 0, created_count: data.job?.created_count ?? 0 });
       toast.success('Bulk product import started');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Unable to start the import');
