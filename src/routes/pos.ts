@@ -38,8 +38,14 @@ router.post("/pos/sale", async (req, res): Promise<void> => {
   const branchId = await resolveWriteBranchId(req);
   const receiptNumber = `RCP-${Date.now()}`;
   let subtotal = 0;
-  for (const item of items) { subtotal += item.quantity * item.unit_price; }
-  const total = subtotal - Number(discount_amount);
+  let taxAmount = 0;
+  for (const item of items) {
+    const lineSubtotal = Number(item.quantity) * Number(item.unit_price);
+    const vatRate = item.vat_rate === undefined || item.vat_rate === null ? 16 : Number(item.vat_rate);
+    subtotal += lineSubtotal;
+    taxAmount += lineSubtotal * (Number.isFinite(vatRate) ? vatRate : 16) / 100;
+  }
+  const total = subtotal + taxAmount - Number(discount_amount);
   const change = Math.max(0, Number(amount_paid) - total);
 
   const cashierName = (req as { user?: { name?: string } }).user?.name ?? null;
@@ -54,11 +60,13 @@ router.post("/pos/sale", async (req, res): Promise<void> => {
         deducted.push({ product_id: item.product_id, quantity: item.quantity, before: result.before, after: result.after });
       }
       const [s] = await tx.insert(salesTable).values({
-        receiptNumber, branchId, customerId: customer_id, subtotal: subtotal.toString(), discountAmount: discount_amount.toString(), total: total.toString(), amountPaid: amount_paid.toString(), change: change.toString(), paymentMethod: payment_method, cashierName,
+        receiptNumber, branchId, customerId: customer_id, subtotal: subtotal.toString(), discountAmount: discount_amount.toString(), taxAmount: taxAmount.toString(), total: total.toString(), amountPaid: amount_paid.toString(), change: change.toString(), paymentMethod: payment_method, cashierName,
       }).returning();
       for (const item of items) {
-        const lineTotal = item.quantity * item.unit_price;
-        await tx.insert(saleItemsTable).values({ saleId: s.id, productId: item.product_id, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: (item.discount ?? 0).toString(), vatRate: (item.vat_rate ?? 16).toString(), total: lineTotal.toString() });
+        const lineSubtotal = Number(item.quantity) * Number(item.unit_price);
+        const vatRate = item.vat_rate === undefined || item.vat_rate === null ? 16 : Number(item.vat_rate);
+        const lineTotal = lineSubtotal + (lineSubtotal * (Number.isFinite(vatRate) ? vatRate : 16) / 100);
+        await tx.insert(saleItemsTable).values({ saleId: s.id, productId: item.product_id, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: (item.discount ?? 0).toString(), vatRate: (Number.isFinite(vatRate) ? vatRate : 16).toString(), total: lineTotal.toString() });
         const d = deducted.find((x) => x.product_id === item.product_id)!;
         await tx.insert(stockMovementsTable).values({ branchId, productId: item.product_id, type: "sale", quantity: -item.quantity, quantityBefore: d.before, quantityAfter: d.after, reference: receiptNumber });
       }
