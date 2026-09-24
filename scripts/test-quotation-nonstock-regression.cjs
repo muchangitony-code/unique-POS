@@ -2,8 +2,10 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const { computeDocumentTotals } = require("../src/lib/document-totals");
 const { adaptDocumentPayload } = require("../server/pdf/document-adapter.cjs");
+
+(async () => {
+  const { computeDocumentTotals } = await import("../src/lib/document-totals.ts");
 
 // 1) A non-stock quotation line is a normal commercial line for pricing.
 const items = [
@@ -45,4 +47,5 @@ assert.match(quotationPage, /function quotationItemName\(it: any\)/);
 assert.match(quotationPage, /product_name: quotationItemName\(it\)/);
 assert.match(quotationPage, /\{quotationItemName\(it\)\}/);
 
-console.log("[test-quotation-nonstock-regression] PASS: non-stock line pricing, persistence/display fallback, PDF adaptation, and UI guardrails are covered.");
+  console.log("[test-quotation-nonstock-regression] PASS: non-stock line pricing, persistence/display fallback, PDF adaptation, and UI guardrails are covered.");
+})().catch((error) => { console.error(error); process.exit(1); });
