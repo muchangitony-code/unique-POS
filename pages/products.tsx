@@ -200,10 +200,10 @@ export default function Products() {
   });
 
   const onSubmit = (data: ProductFormValues) => {
-    const payload = { ...data, vat_rate: data.vattable ? data.vat_rate : 0 };
+    const productPayload = { ...data, vat_rate: data.vattable ? data.vat_rate : 0 };
     if (editingProduct) {
       updateProduct.mutate(
-        { id: editingProduct.id, data: payload },
+        { id: editingProduct.id, data: productPayload },
         {
           onSuccess: () => {
             toast.success('Product updated successfully');
@@ -214,7 +214,7 @@ export default function Products() {
       );
     } else {
       createProduct.mutate(
-        { data: payload },
+        { data: productPayload },
         {
           onSuccess: () => {
             toast.success('Product created successfully');
