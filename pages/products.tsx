@@ -57,7 +57,8 @@ const productSchema = z.object({
   supplier_id: z.coerce.number().optional(),
   cost_price: z.coerce.number().min(0),
   selling_price: z.coerce.number().min(0),
-  vat_rate: z.coerce.number().min(0).optional(),
+  vattable: z.boolean(),
+  vat_rate: z.coerce.number().min(0).max(100),
   current_stock: z.coerce.number().min(0).optional(),
   min_stock: z.coerce.number().min(0).optional(),
   image_url: z.string().url().optional().or(z.literal('')),
@@ -189,6 +190,7 @@ export default function Products() {
       barcode: '',
       cost_price: 0,
       selling_price: 0,
+      vattable: true,
       vat_rate: 16,
       current_stock: 0,
       min_stock: 5,
@@ -198,9 +200,10 @@ export default function Products() {
   });
 
   const onSubmit = (data: ProductFormValues) => {
+    const payload = { ...data, vat_rate: data.vattable ? data.vat_rate : 0 };
     if (editingProduct) {
       updateProduct.mutate(
-        { id: editingProduct.id, data },
+        { id: editingProduct.id, data: payload },
         {
           onSuccess: () => {
             toast.success('Product updated successfully');
@@ -211,7 +214,7 @@ export default function Products() {
       );
     } else {
       createProduct.mutate(
-        { data },
+        { data: payload },
         {
           onSuccess: () => {
             toast.success('Product created successfully');
@@ -248,7 +251,8 @@ export default function Products() {
       supplier_id: product.supplier_id || undefined,
       cost_price: product.cost_price,
       selling_price: product.selling_price,
-      vat_rate: product.vat_rate || 16,
+      vattable: Number(product.vat_rate) > 0,
+      vat_rate: Number(product.vat_rate) > 0 ? Number(product.vat_rate) : 16,
       current_stock: product.current_stock,
       min_stock: product.min_stock,
       image_url: product.image_url || '',
@@ -531,6 +535,39 @@ export default function Products() {
                         <FormItem>
                           <FormLabel>Selling Price (KES)</FormLabel>
                           <FormControl><Input type="number" step="0.01" {...field} /></FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="vattable"
+                      render={({ field }) => (
+                        <FormItem className="sm:col-span-2 rounded-lg border p-4">
+                          <div className="flex items-center justify-between gap-4">
+                            <div>
+                              <FormLabel className="text-base">VAT Applicable</FormLabel>
+                              <p className="text-sm text-muted-foreground">
+                                Enable for standard-rated products. Disable for zero-rated/non-VATable products.
+                              </p>
+                            </div>
+                            <FormControl>
+                              <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                            </FormControl>
+                          </div>
+                          {field.value && (
+                            <FormField
+                              control={form.control}
+                              name="vat_rate"
+                              render={({ field: vatField }) => (
+                                <FormItem className="mt-3 max-w-xs">
+                                  <FormLabel>VAT Rate (%)</FormLabel>
+                                  <FormControl><Input type="number" min="0" max="100" step="0.01" {...vatField} /></FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          )}
                           <FormMessage />
                         </FormItem>
                       )}
