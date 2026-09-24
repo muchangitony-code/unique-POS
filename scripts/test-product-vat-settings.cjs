@@ -13,7 +13,7 @@ assert.match(page, /Enter 0 for zero-rated \/ non-VATable products\./);
 assert.match(page, /name="tax_inclusive"/);
 assert.match(page, /Prices are tax inclusive/);
 assert.match(page, /tax_inclusive: false/);
-assert.match(page, /vat_rate: product\.vat_rate \?\? 16/);
+assert.match(page, /vat_rate: Number\(product\.vat_rate \?\? 16\)/);
 
 assert.match(route, /vatRate: vat_rate\?\.toString\(\) \?\? "16"/);
 assert.match(route, /tax_inclusive/);
