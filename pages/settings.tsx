@@ -596,7 +596,6 @@ const settingsSchema = z.object({
   tax_number: z.string().optional(),
   currency: z.string().min(1, 'Currency is required'),
   currency_symbol: z.string().optional(),
-  vat_rate: z.coerce.number().min(0).max(100),
   receipt_footer: z.string().optional(),
   country: z.string().optional(),
   timezone: z.string().optional(),
@@ -1421,7 +1420,6 @@ export default function Settings() {
       tax_number: '',
       currency: 'KES',
       currency_symbol: 'KES',
-      vat_rate: 16,
       receipt_footer: 'Thank you for your business!',
       country: 'Kenya',
       timezone: 'Africa/Nairobi',
@@ -1438,7 +1436,6 @@ export default function Settings() {
         tax_number: settings.tax_number || '',
         currency: settings.currency || 'KES',
         currency_symbol: settings.currency_symbol || 'KES',
-        vat_rate: settings.vat_rate || 16,
         receipt_footer: settings.receipt_footer || 'Thank you for your business!',
         country: settings.country || 'Kenya',
         timezone: settings.timezone || 'Africa/Nairobi',
@@ -1584,17 +1581,6 @@ export default function Settings() {
                       <FormItem>
                         <FormLabel>Currency Symbol</FormLabel>
                         <FormControl><Input {...field} disabled /></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="vat_rate"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Default VAT Rate (%)</FormLabel>
-                        <FormControl><Input type="number" {...field} /></FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
