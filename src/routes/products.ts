@@ -8,13 +8,13 @@ import { loadStockMap, getBranchStockRow, setBranchStock } from "../lib/stock";
 
 const router: IRouter = Router();
 
-function formatProduct(p: typeof productsTable.$inferSelect, catName?: string | null, brandName?: string | null, supplierName?: string | null, stock?: { current: number; min: number }) {
+function formatProduct(p: typeof productsTable.$inferSelect, catName?: string | null, brandName?: string | null, supplierName?: string | null, stock?: { current: number; min: number }, taxInclusive = false) {
   return {
     id: p.id, product_code: p.productCode, barcode: p.barcode, product_name: p.productName,
     description: p.description, category_id: p.categoryId, category_name: catName ?? null,
     brand_id: p.brandId, brand_name: brandName ?? null, supplier_id: p.supplierId,
     supplier_name: supplierName ?? null, cost_price: Number(p.costPrice), selling_price: Number(p.sellingPrice),
-    vat_rate: Number(p.vatRate), current_stock: stock ? stock.current : p.currentStock,
+    vat_rate: Number(p.vatRate), tax_inclusive: Boolean(taxInclusive), current_stock: stock ? stock.current : p.currentStock,
     min_stock: stock ? stock.min : p.minStock, image_url: p.imageUrl, unit: p.unit, created_at: p.createdAt,
   };
 }
@@ -50,10 +50,12 @@ router.get("/products", async (req, res): Promise<void> => {
   const [categories, brands, suppliers] = await Promise.all([
     db.select().from(categoriesTable), db.select().from(brandsTable), db.select().from(suppliersTable),
   ]);
+  const taxRows = await db.execute(sql`SELECT id, tax_inclusive FROM products`);
+  const taxMap = new Map<number, boolean>((taxRows as Array<{ id: number; tax_inclusive: boolean }>).map((r) => [Number(r.id), Boolean(r.tax_inclusive)]));
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c.name]));
   const brandMap = Object.fromEntries(brands.map((b) => [b.id, b.name]));
   const supplierMap = Object.fromEntries(suppliers.map((s) => [s.id, s.name]));
-  let formatted = allProducts.map((prod) => formatProduct(prod, prod.categoryId ? catMap[prod.categoryId] : null, prod.brandId ? brandMap[prod.brandId] : null, prod.supplierId ? supplierMap[prod.supplierId] : null, stockFor(stockMap, prod)));
+  let formatted = allProducts.map((prod) => formatProduct(prod, prod.categoryId ? catMap[prod.categoryId] : null, prod.brandId ? brandMap[prod.brandId] : null, prod.supplierId ? supplierMap[prod.supplierId] : null, stockFor(stockMap, prod), taxMap.get(prod.id) ?? false));
   if (low_stock === "true") formatted = formatted.filter((r) => r.current_stock <= r.min_stock);
   const total = formatted.length;
   const offset = (p - 1) * l;
@@ -61,7 +63,7 @@ router.get("/products", async (req, res): Promise<void> => {
 });
 
 router.post("/products", requireRole("administrator", "manager", "storekeeper"), async (req, res): Promise<void> => {
-  const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, current_stock, min_stock, image_url, unit } = req.body;
+  const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, tax_inclusive, current_stock, min_stock, image_url, unit } = req.body;
   if (!product_name) { res.status(400).json({ error: "product_name required" }); return; }
   const [category] = category_id ? await db.select({ name: categoriesTable.name }).from(categoriesTable).where(eq(categoriesTable.id, Number(category_id))) : [];
   const requestedCode = typeof product_code === "string" ? product_code.trim() : "";
@@ -73,13 +75,14 @@ router.post("/products", requireRole("administrator", "manager", "storekeeper"),
     vatRate: vat_rate?.toString() ?? "16", currentStock: current_stock ?? 0, minStock: min_stock ?? 0,
     imageUrl: image_url, unit,
   }).returning();
+  await db.execute(sql`UPDATE products SET tax_inclusive = ${Boolean(req.body.tax_inclusive)} WHERE id = ${p.id}`);
   const branchId = await resolveWriteBranchId(req);
   await setBranchStock(branchId, p.id, current_stock ?? 0, min_stock ?? 0);
   if ((current_stock ?? 0) > 0) {
     await db.insert(stockMovementsTable).values({ branchId, productId: p.id, type: "opening", quantity: current_stock, quantityBefore: 0, quantityAfter: current_stock, reference: `OPEN-${p.productCode}`, notes: "Opening stock" });
   }
   await logAudit(req, { action: "product.created", entityType: "product", entityId: p.id, description: `Created product "${p.productName}" (${p.productCode})` });
-  res.status(201).json(formatProduct(p, category?.name, undefined, undefined, { current: current_stock ?? 0, min: min_stock ?? 0 }));
+  res.status(201).json(formatProduct(p, category?.name, undefined, undefined, { current: current_stock ?? 0, min: min_stock ?? 0 }, Boolean(req.body.tax_inclusive)));
 });
 
 export function makeBarcode(productCode: string, productId: number): string {
@@ -118,7 +121,8 @@ router.get("/products/barcode/:barcode", async (req, res): Promise<void> => {
   if (!p) { res.status(404).json({ error: "Product not found" }); return; }
   const scope = getBranchScope(req);
   const map = await loadStockMap({ branchId: scope.branchId, all: scope.mode === "all" });
-  res.json(formatProduct(p, undefined, undefined, undefined, stockFor(map, p)));
+  const [taxRow] = await db.execute(sql`SELECT tax_inclusive FROM products WHERE id = ${p.id}`);
+  res.json(formatProduct(p, undefined, undefined, undefined, stockFor(map, p), Boolean((taxRow as any)?.tax_inclusive));
 });
 
 router.get("/products/:id", async (req, res): Promise<void> => {
@@ -146,6 +150,7 @@ router.patch("/products/:id", requireRole("administrator", "manager", "storekeep
   if (cost_price !== undefined) updateData.costPrice = cost_price.toString();
   if (selling_price !== undefined) updateData.sellingPrice = selling_price.toString();
   if (vat_rate !== undefined) updateData.vatRate = vat_rate.toString();
+  if (tax_inclusive !== undefined) await db.execute(sql`UPDATE products SET tax_inclusive = ${Boolean(tax_inclusive)} WHERE id = ${id}`);
   if (image_url !== undefined) updateData.imageUrl = image_url;
   if (unit !== undefined) updateData.unit = unit;
   const [p] = Object.keys(updateData).length ? await db.update(productsTable).set(updateData).where(eq(productsTable.id, id)).returning() : [before];
@@ -157,9 +162,13 @@ router.patch("/products/:id", requireRole("administrator", "manager", "storekeep
     await setBranchStock(branchId, id, newCur, newMin);
   }
   const stockRow = await getBranchStockRow(branchId, id);
+  const [taxRow] = await db.execute(sql`SELECT tax_inclusive FROM products WHERE id = ${id}`);
   const stock = { current: stockRow?.currentStock ?? 0, min: stockRow?.minStock ?? p.minStock };
-  const beforeSnap = formatProduct(before);
-  const afterSnap = formatProduct(p, undefined, undefined, undefined, stock);
+  const [beforeTaxRow] = await db.execute(sql`SELECT tax_inclusive FROM products WHERE id = ${id}`);
+  const beforeTaxInclusive = Boolean((beforeTaxRow as any)?.tax_inclusive);
+  const afterTaxInclusive = Boolean((taxRow as any)?.tax_inclusive);
+  const beforeSnap = formatProduct(before, undefined, undefined, undefined, undefined, beforeTaxInclusive);
+  const afterSnap = formatProduct(p, undefined, undefined, undefined, stock, afterTaxInclusive);
   await logAudit(req, { action: "product.updated", entityType: "product", entityId: p.id, description: `Updated product "${p.productName}" (${p.productCode})`, metadata: { before: beforeSnap, after: afterSnap } });
   res.json(afterSnap);
 });
