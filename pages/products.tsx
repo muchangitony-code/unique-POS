@@ -57,8 +57,8 @@ const productSchema = z.object({
   supplier_id: z.coerce.number().optional(),
   cost_price: z.coerce.number().min(0),
   selling_price: z.coerce.number().min(0),
-  vattable: z.boolean(),
   vat_rate: z.coerce.number().min(0).max(100),
+  tax_inclusive: z.boolean(),
   current_stock: z.coerce.number().min(0).optional(),
   min_stock: z.coerce.number().min(0).optional(),
   image_url: z.string().url().optional().or(z.literal('')),
@@ -190,8 +190,8 @@ export default function Products() {
       barcode: '',
       cost_price: 0,
       selling_price: 0,
-      vattable: true,
       vat_rate: 16,
+      tax_inclusive: false,
       current_stock: 0,
       min_stock: 5,
       image_url: '',
@@ -200,7 +200,7 @@ export default function Products() {
   });
 
   const onSubmit = (data: ProductFormValues) => {
-    const productPayload = { ...data, vat_rate: data.vattable ? data.vat_rate : 0 };
+    const productPayload = { ...data, vat_rate: Number(data.vat_rate) };
     if (editingProduct) {
       updateProduct.mutate(
         { id: editingProduct.id, data: productPayload },
@@ -251,8 +251,8 @@ export default function Products() {
       supplier_id: product.supplier_id || undefined,
       cost_price: product.cost_price,
       selling_price: product.selling_price,
-      vattable: Number(product.vat_rate) > 0,
-      vat_rate: Number(product.vat_rate) > 0 ? Number(product.vat_rate) : 16,
+      vat_rate: Number(product.vat_rate ?? 16),
+      tax_inclusive: Boolean((product as any).tax_inclusive),
       current_stock: product.current_stock,
       min_stock: product.min_stock,
       image_url: product.image_url || '',
@@ -541,44 +541,32 @@ export default function Products() {
                     />
                     <FormField
                       control={form.control}
-                      name="vattable"
+                      name="vat_rate"
                       render={({ field }) => (
-                        <FormItem className="sm:col-span-2 rounded-lg border p-4">
-                          <div className="flex items-center justify-between gap-4">
-                            <div>
-                              <FormLabel className="text-base">VAT Applicable</FormLabel>
-                              <p className="text-sm text-muted-foreground">
-                                Enable for standard-rated products. Disable for zero-rated/non-VATable products.
-                              </p>
-                            </div>
-                            <FormControl>
-                              <Checkbox checked={field.value} onCheckedChange={field.onChange} />
-                            </FormControl>
-                          </div>
-                          {field.value && (
-                            <FormField
-                              control={form.control}
-                              name="vat_rate"
-                              render={({ field: vatField }) => (
-                                <FormItem className="mt-3 max-w-xs">
-                                  <FormLabel>VAT Rate (%)</FormLabel>
-                                  <FormControl><Input type="number" min="0" max="100" step="0.01" {...vatField} /></FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          )}
+                        <FormItem>
+                          <FormLabel>VAT Rate (%)</FormLabel>
+                          <FormControl>
+                            <Input type="number" min="0" max="100" step="0.01" {...field} />
+                          </FormControl>
+                          <p className="text-xs text-muted-foreground">Enter 0 for zero-rated / non-VATable products.</p>
                           <FormMessage />
                         </FormItem>
                       )}
                     />
                     <FormField
                       control={form.control}
-                      name="current_stock"
+                      name="tax_inclusive"
                       render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Initial Stock</FormLabel>
-                          <FormControl><Input type="number" {...field} disabled={!!editingProduct} /></FormControl>
+                        <FormItem className="rounded-lg border p-4">
+                          <div className="flex items-center justify-between gap-4">
+                            <div>
+                              <FormLabel className="text-base">Prices are tax inclusive</FormLabel>
+                              <p className="text-sm text-muted-foreground">Matches the original POS tax setting.</p>
+                            </div>
+                            <FormControl>
+                              <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                            </FormControl>
+                          </div>
                           <FormMessage />
                         </FormItem>
                       )}
