@@ -131,14 +131,17 @@ router.get("/products/:id", async (req, res): Promise<void> => {
   if (!p) { res.status(404).json({ error: "Product not found" }); return; }
   const scope = getBranchScope(req);
   const map = await loadStockMap({ branchId: scope.branchId, all: scope.mode === "all" });
-  res.json(formatProduct(p, undefined, undefined, undefined, stockFor(map, p)));
+  const [taxRow] = await db.execute(sql`SELECT tax_inclusive FROM products WHERE id = ${p.id}`);
+  res.json(formatProduct(p, undefined, undefined, undefined, stockFor(map, p), Boolean((taxRow as any)?.tax_inclusive)));
 });
 
 router.patch("/products/:id", requireRole("administrator", "manager", "storekeeper"), async (req, res): Promise<void> => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, current_stock, min_stock, image_url, unit } = req.body;
+  const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, tax_inclusive, current_stock, min_stock, image_url, unit } = req.body;
   const [before] = await db.select().from(productsTable).where(eq(productsTable.id, id));
   if (!before) { res.status(404).json({ error: "Product not found" }); return; }
+  const [beforeTaxRow] = await db.execute(sql`SELECT tax_inclusive FROM products WHERE id = ${id}`);
+  const beforeTaxInclusive = Boolean((beforeTaxRow as any)?.tax_inclusive);
   const updateData: Record<string, unknown> = {};
   if (product_code !== undefined) updateData.productCode = product_code;
   if (barcode !== undefined) updateData.barcode = barcode;
@@ -164,8 +167,6 @@ router.patch("/products/:id", requireRole("administrator", "manager", "storekeep
   const stockRow = await getBranchStockRow(branchId, id);
   const [taxRow] = await db.execute(sql`SELECT tax_inclusive FROM products WHERE id = ${id}`);
   const stock = { current: stockRow?.currentStock ?? 0, min: stockRow?.minStock ?? p.minStock };
-  const [beforeTaxRow] = await db.execute(sql`SELECT tax_inclusive FROM products WHERE id = ${id}`);
-  const beforeTaxInclusive = Boolean((beforeTaxRow as any)?.tax_inclusive);
   const afterTaxInclusive = Boolean((taxRow as any)?.tax_inclusive);
   const beforeSnap = formatProduct(before, undefined, undefined, undefined, undefined, beforeTaxInclusive);
   const afterSnap = formatProduct(p, undefined, undefined, undefined, stock, afterTaxInclusive);
