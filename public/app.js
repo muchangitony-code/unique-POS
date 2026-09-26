@@ -2570,7 +2570,7 @@
       const tax = item.tax_inclusive && rate > 0
         ? grossAfterDiscount - (grossAfterDiscount / (1 + rate / 100))
         : grossAfterDiscount * rate / 100;
-      const net = grossAfterDiscount - tax;
+      const net = item.tax_inclusive ? grossAfterDiscount - tax : grossAfterDiscount;
       subtotal += net;
       vat += tax;
     });
