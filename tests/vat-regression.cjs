@@ -8,10 +8,11 @@ function totals(price, rate, taxInclusive) {
     ? gross - gross / (1 + rate / 100)
     : gross * rate / 100;
   const net = gross - tax;
-  return { net: Math.round(net * 100) / 100, tax: Math.round(tax * 100) / 100, total: Math.round(gross * 100) / 100 };
+  const total = taxInclusive ? gross : gross + tax;
+  return { net: Math.round(net * 100) / 100, tax: Math.round(tax * 100) / 100, total: Math.round(total * 100) / 100 };
 }
 
-assert.deepEqual(totals(100, 16, false), { net: 100, tax: 16, total: 100 });
+assert.deepEqual(totals(100, 16, false), { net: 100, tax: 16, total: 116 });
 assert.deepEqual(totals(116, 16, true), { net: 100, tax: 16, total: 116 });
 assert.deepEqual(totals(100, 0, false), { net: 100, tax: 0, total: 100 });
 assert.deepEqual(totals(100, 0, true), { net: 100, tax: 0, total: 100 });
