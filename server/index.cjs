@@ -70198,7 +70198,7 @@ router6.get("/products/:id", async (req, res) => {
 });
 router6.patch("/products/:id", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
-  const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, current_stock, min_stock, image_url, unit } = req.body;
+  const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, tax_inclusive, current_stock, min_stock, image_url, unit } = req.body;
   const [before] = await db.select().from(productsTable).where(eq(productsTable.id, id));
   if (!before) {
     res.status(404).json({ error: "Product not found" });
