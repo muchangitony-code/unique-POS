@@ -71042,7 +71042,7 @@ function computeDocumentTotals(items, manualDiscount = 0) {
       ? afterDiscount - afterDiscount / (1 + vatRate / 100)
       : afterDiscount * vatRate / 100;
     const lineNet = afterDiscount - lineTax;
-    const lineTotal = afterDiscount;
+    const lineTotal = taxInclusive ? afterDiscount : afterDiscount + lineTax;
     subtotal += lineNet;
     taxAmount += lineTax;
     lineDiscountTotal += lineDiscount;
