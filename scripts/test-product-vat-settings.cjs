@@ -8,7 +8,7 @@ const route = fs.readFileSync("src/routes/products.ts", "utf8");
 const standalone = fs.readFileSync("public/app.js", "utf8");
 const apiClient = fs.readFileSync("frontend/api-client.ts", "utf8");
 const publicIndex = fs.readFileSync("public/index.html", "utf8");
-const bundleMatch = publicIndex.match(/<script[^>]+src="\\/assets\\/(index-[^"]+\\.js)"/);
+const bundleMatch = publicIndex.match(/<script[^>]+src="\/assets\/(index-[^"]+\.js)"/);
 assert.ok(bundleMatch, "public/index.html must reference a frontend bundle");
 const servedBundle = fs.readFileSync("public/assets/" + bundleMatch[1], "utf8");
 
