@@ -31,3 +31,14 @@ assert.match(standalone, /payload\.vat_rate/);
 assert.match(apiClient, /useUpdateProduct=mutation\(\x27\/api\/products\/\{id\}\x27,\x27PATCH\x27\)/);
 
 console.log("[test-product-vat-settings] PASS: product VAT rate and tax-inclusive settings match the standalone POS model and persist through the API.");
+
+
+assert.match(page, /vat_rate: 16,/);
+assert.match(page, /vat_rate: Number\(product\.vat_rate \?\? 16\)/);
+// Zero is a valid saved rate and must not be replaced by the 16% default.
+assert.match(page, /min="0" max="100" step="0\.01"/);
+assert.match(route, /vat_rate !== undefined/);
+assert.match(route, /vatRate = vat_rate\.toString\(\)/);
+assert.match(standalone, /Number\(payload\.vat_rate \|\| 0\)/);
+
+console.log("[test-product-vat-settings] PASS: 16% is only the new-product default; saved 0% VAT remains editable and is persisted.");
