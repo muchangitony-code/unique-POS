@@ -71041,7 +71041,7 @@ function computeDocumentTotals(items, manualDiscount = 0) {
     const lineTax = taxInclusive && vatRate > 0
       ? afterDiscount - afterDiscount / (1 + vatRate / 100)
       : afterDiscount * vatRate / 100;
-    const lineNet = afterDiscount - lineTax;
+    const lineNet = taxInclusive ? afterDiscount - lineTax : afterDiscount;
     const lineTotal = taxInclusive ? afterDiscount : afterDiscount + lineTax;
     subtotal += lineNet;
     taxAmount += lineTax;
@@ -71533,8 +71533,9 @@ router14.post("/pos/sale", async (req, res) => {
     const taxInclusive = Boolean(product?.taxInclusive ?? item.tax_inclusive);
     const gross = Number(item.quantity) * Number(item.unit_price);
     const tax = taxInclusive && vatRate > 0 ? gross - gross / (1 + vatRate / 100) : gross * vatRate / 100;
-    const net = gross - tax;
-    return { item, vatRate, taxInclusive, net, tax, total: gross };
+    const net = taxInclusive ? gross - tax : gross;
+    const total = taxInclusive ? gross : gross + tax;
+    return { item, vatRate, taxInclusive, net, tax, total };
   });
   const subtotal = calculatedItems.reduce((sum, row) => sum + row.net, 0);
   const taxAmount = calculatedItems.reduce((sum, row) => sum + row.tax, 0);
