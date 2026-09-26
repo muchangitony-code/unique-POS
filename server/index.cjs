@@ -66734,6 +66734,7 @@ var productsTable = pgTable("products", {
   costPrice: numeric("cost_price", { precision: 15, scale: 2 }).notNull().default("0"),
   sellingPrice: numeric("selling_price", { precision: 15, scale: 2 }).notNull().default("0"),
   vatRate: numeric("vat_rate", { precision: 5, scale: 2 }).notNull().default("16"),
+  taxInclusive: boolean("tax_inclusive").notNull().default(false),
   currentStock: integer("current_stock").notNull().default(0),
   minStock: integer("min_stock").notNull().default(0),
   imageUrl: text("image_url"),
@@ -70038,6 +70039,7 @@ function formatProduct(p, catName, brandName, supplierName, stock) {
     cost_price: Number(p.costPrice),
     selling_price: Number(p.sellingPrice),
     vat_rate: Number(p.vatRate),
+    tax_inclusive: Boolean(p.taxInclusive),
     current_stock: stock ? stock.current : p.currentStock,
     min_stock: stock ? stock.min : p.minStock,
     image_url: p.imageUrl,
@@ -70078,7 +70080,7 @@ router6.get("/products", async (req, res) => {
   res.json({ data: formatted.slice(offset, offset + l), total, page: p, limit: l });
 });
 router6.post("/products", requireRole("administrator", "manager", "storekeeper"), async (req, res) => {
-  const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, current_stock, min_stock, image_url, unit } = req.body;
+  const { product_code, barcode, product_name, description, category_id, brand_id, supplier_id, cost_price, selling_price, vat_rate, tax_inclusive, current_stock, min_stock, image_url, unit } = req.body;
   if (!product_code || !product_name) {
     res.status(400).json({ error: "product_code and product_name required" });
     return;
@@ -70094,6 +70096,7 @@ router6.post("/products", requireRole("administrator", "manager", "storekeeper")
     costPrice: cost_price?.toString() ?? "0",
     sellingPrice: selling_price?.toString() ?? "0",
     vatRate: vat_rate?.toString() ?? "16",
+    taxInclusive: Boolean(tax_inclusive),
     currentStock: current_stock ?? 0,
     minStock: min_stock ?? 0,
     imageUrl: image_url,
@@ -70212,6 +70215,7 @@ router6.patch("/products/:id", requireRole("administrator", "manager", "storekee
   if (cost_price !== void 0) updateData.costPrice = cost_price.toString();
   if (selling_price !== void 0) updateData.sellingPrice = selling_price.toString();
   if (vat_rate !== void 0) updateData.vatRate = vat_rate.toString();
+  if (tax_inclusive !== void 0) updateData.taxInclusive = Boolean(tax_inclusive);
   if (image_url !== void 0) updateData.imageUrl = image_url;
   if (unit !== void 0) updateData.unit = unit;
   const [p] = Object.keys(updateData).length ? await db.update(productsTable).set(updateData).where(eq(productsTable.id, id)).returning() : [before];
@@ -71032,10 +71036,14 @@ function computeDocumentTotals(items, manualDiscount = 0) {
     const price = Number(item.unit_price);
     const lineSubtotal = qty * price;
     const lineDiscount = lineSubtotal * discount / 100;
-    const afterDiscount = lineSubtotal - lineDiscount;
-    const lineTax = afterDiscount * vatRate / 100;
-    const lineTotal = afterDiscount + lineTax;
-    subtotal += afterDiscount;
+    const afterDiscount = Math.max(0, lineSubtotal - lineDiscount);
+    const taxInclusive = Boolean(item.tax_inclusive);
+    const lineTax = taxInclusive && vatRate > 0
+      ? afterDiscount - afterDiscount / (1 + vatRate / 100)
+      : afterDiscount * vatRate / 100;
+    const lineNet = afterDiscount - lineTax;
+    const lineTotal = afterDiscount;
+    subtotal += lineNet;
     taxAmount += lineTax;
     lineDiscountTotal += lineDiscount;
     return { ...item, discount, vat_rate: vatRate, total: round2(lineTotal) };
@@ -71512,11 +71520,25 @@ router14.post("/pos/sale", async (req, res) => {
   }
   const branchId = await resolveWriteBranchId(req);
   const receiptNumber = `RCP-${Date.now()}`;
-  let subtotal = 0;
-  for (const item of items) {
-    subtotal += item.quantity * item.unit_price;
-  }
-  const total = subtotal - Number(discount_amount);
+  const productIds = items.map((item) => Number(item.product_id)).filter((id) => Number.isInteger(id) && id > 0);
+  const productRows = productIds.length
+    ? await db.select({ id: productsTable.id, vatRate: productsTable.vatRate, taxInclusive: productsTable.taxInclusive })
+        .from(productsTable)
+        .where(inArray(productsTable.id, productIds))
+    : [];
+  const productTaxMap = new Map(productRows.map((product) => [product.id, product]));
+  const calculatedItems = items.map((item) => {
+    const product = productTaxMap.get(Number(item.product_id));
+    const vatRate = Number(product?.vatRate ?? item.vat_rate ?? 16);
+    const taxInclusive = Boolean(product?.taxInclusive ?? item.tax_inclusive);
+    const gross = Number(item.quantity) * Number(item.unit_price);
+    const tax = taxInclusive && vatRate > 0 ? gross - gross / (1 + vatRate / 100) : gross * vatRate / 100;
+    const net = gross - tax;
+    return { item, vatRate, taxInclusive, net, tax, total: gross };
+  });
+  const subtotal = calculatedItems.reduce((sum, row) => sum + row.net, 0);
+  const taxAmount = calculatedItems.reduce((sum, row) => sum + row.tax, 0);
+  const total = Math.max(0, subtotal + taxAmount - Number(discount_amount));
   const change = Math.max(0, Number(amount_paid) - total);
   const cashierName = req.user?.name ?? null;
   let sale;
@@ -71534,15 +71556,17 @@ router14.post("/pos/sale", async (req, res) => {
         customerId: customer_id,
         subtotal: subtotal.toString(),
         discountAmount: discount_amount.toString(),
+        taxAmount: taxAmount.toString(),
         total: total.toString(),
         amountPaid: amount_paid.toString(),
         change: change.toString(),
         paymentMethod: payment_method,
         cashierName
       }).returning();
-      for (const item of items) {
-        const lineTotal = item.quantity * item.unit_price;
-        await tx.insert(saleItemsTable).values({ saleId: s.id, productId: item.product_id, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: (item.discount ?? 0).toString(), vatRate: (item.vat_rate ?? 16).toString(), total: lineTotal.toString() });
+      for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+        const item = items[itemIndex];
+        const calculated = calculatedItems[itemIndex];
+        await tx.insert(saleItemsTable).values({ saleId: s.id, productId: item.product_id, quantity: item.quantity, unitPrice: item.unit_price.toString(), discount: (item.discount ?? 0).toString(), vatRate: calculated.vatRate.toString(), total: calculated.total.toString() });
         const d = deducted.find((x) => x.product_id === item.product_id);
         await tx.insert(stockMovementsTable).values({ branchId, productId: item.product_id, type: "sale", quantity: -item.quantity, quantityBefore: d.before, quantityAfter: d.after, reference: receiptNumber });
       }
