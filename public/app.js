@@ -2537,6 +2537,7 @@
         unit_price: firstNumber(product.selling_price, 0),
         quantity: 1,
         vat_rate: firstNumber(product.vat_rate, 16),
+        tax_inclusive: Boolean(product.tax_inclusive),
         discount: 0,
         image_url: firstText(product.image_url, ""),
         current_stock: firstNumber(product.current_stock, 0)
@@ -2559,8 +2560,20 @@
   }
 
   function calculatePosTotals() {
-    const subtotal = sumBy(state.pos.basket, function (item) { return firstNumber(item.unit_price, 0) * firstNumber(item.quantity, 0); });
-    const vat = sumBy(state.pos.basket, function (item) { return firstNumber(item.unit_price, 0) * firstNumber(item.quantity, 0) * (firstNumber(item.vat_rate, 0) / 100); });
+    let subtotal = 0;
+    let vat = 0;
+    state.pos.basket.forEach(function (item) {
+      const gross = firstNumber(item.unit_price, 0) * firstNumber(item.quantity, 0);
+      const rate = firstNumber(item.vat_rate, 0);
+      const discount = firstNumber(item.discount, 0);
+      const grossAfterDiscount = Math.max(0, gross - discount);
+      const tax = item.tax_inclusive && rate > 0
+        ? grossAfterDiscount - (grossAfterDiscount / (1 + rate / 100))
+        : grossAfterDiscount * rate / 100;
+      const net = grossAfterDiscount - tax;
+      subtotal += net;
+      vat += tax;
+    });
     const discount = firstNumber(state.pos.discount_amount, 0);
     const shipping = firstNumber(state.pos.shipping_amount, 0);
     const total = Math.max(0, subtotal + vat + shipping - discount);
@@ -2568,8 +2581,12 @@
   }
 
   function lineTotal(line) {
-    const base = firstNumber(line.unit_price, 0) * firstNumber(line.quantity, 0);
-    return base + (base * firstNumber(line.vat_rate, 0) / 100) - firstNumber(line.discount, 0);
+    const gross = firstNumber(line.unit_price, 0) * firstNumber(line.quantity, 0);
+    const rate = firstNumber(line.vat_rate, 0);
+    const discount = firstNumber(line.discount, 0);
+    const grossAfterDiscount = Math.max(0, gross - discount);
+    if (line.tax_inclusive && rate > 0) return grossAfterDiscount;
+    return grossAfterDiscount + (grossAfterDiscount * rate / 100);
   }
 
   function holdSale(mode) {
@@ -2639,7 +2656,8 @@
           quantity: line.quantity,
           unit_price: line.unit_price,
           discount: firstNumber(line.discount, 0),
-          vat_rate: firstNumber(line.vat_rate, 16)
+          vat_rate: firstNumber(line.vat_rate, 16),
+          tax_inclusive: Boolean(line.tax_inclusive)
         };
       })
     };
