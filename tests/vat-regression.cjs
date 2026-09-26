@@ -7,7 +7,7 @@ function totals(price, rate, taxInclusive) {
   const tax = taxInclusive && rate > 0
     ? gross - gross / (1 + rate / 100)
     : gross * rate / 100;
-  const net = gross - tax;
+  const net = taxInclusive ? gross - tax : gross;
   const total = taxInclusive ? gross : gross + tax;
   return { net: Math.round(net * 100) / 100, tax: Math.round(tax * 100) / 100, total: Math.round(total * 100) / 100 };
 }
