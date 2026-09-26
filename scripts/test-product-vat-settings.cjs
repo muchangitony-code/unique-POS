@@ -7,6 +7,10 @@ const page = fs.readFileSync("pages/products.tsx", "utf8");
 const route = fs.readFileSync("src/routes/products.ts", "utf8");
 const standalone = fs.readFileSync("public/app.js", "utf8");
 const apiClient = fs.readFileSync("frontend/api-client.ts", "utf8");
+const publicIndex = fs.readFileSync("public/index.html", "utf8");
+const bundleMatch = publicIndex.match(/<script[^>]+src="\\/assets\\/(index-[^"]+\\.js)"/);
+assert.ok(bundleMatch, "public/index.html must reference a frontend bundle");
+const servedBundle = fs.readFileSync("public/assets/" + bundleMatch[1], "utf8");
 
 assert.match(page, /name="vat_rate"/);
 assert.match(page, /<FormLabel>VAT Rate \(%\)<\/FormLabel>/);
@@ -24,6 +28,13 @@ assert.match(standalone, /name="vat_rate"/);
 assert.match(standalone, /name="tax_inclusive"/);
 assert.match(standalone, /payload\.tax_inclusive/);
 assert.match(standalone, /payload\.vat_rate/);
+
+// The production server serves the compiled React bundle from public/assets.
+// Keep a regression guard on the actual served artifact, not only the source.
+assert.match(servedBundle, /VAT Rate \(%\)/);
+assert.match(servedBundle, /name:"vat_rate"/);
+assert.match(servedBundle, /type:"number",min:"0",max:"100",step:"0\.01"/);
+assert.match(servedBundle, /vat_rate:Number\(U\.vat_rate\?\?16\)/);
 
 // Product edits must use the actual parameterized PATCH route. The previous
 // client called /products/update, which is not implemented by the API, so VAT
