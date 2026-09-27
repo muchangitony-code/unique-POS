@@ -38,9 +38,11 @@ function mountAdminTestSaleDeleteRuntime(runtimeSource) {
   const code = `
 /* UNIQUEPOS_ADMIN_TEST_SALE_DELETE_RUNTIME_V1 */
 (function mountAdminTestSaleDelete() {
-  const expressDb = require("@workspace/db");
-  const { eq, and, sql } = require("drizzle-orm");
-  const { db, salesTable, saleItemsTable, customersTable, productStockTable, saleReturnsTable } = expressDb;
+  const { Pool } = require("pg");
+  const cleanupPool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.PGSSL === "true" ? { rejectUnauthorized: false } : undefined
+  });
 
   app_default.delete("/api/pos/sale/:id", async (req, res) => {
     const role = String(req.user?.role || "");
@@ -51,61 +53,108 @@ function mountAdminTestSaleDeleteRuntime(runtimeSource) {
     const id = Number.parseInt(String(req.params.id), 10);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid sale id" });
 
+    const client = await cleanupPool.connect();
     try {
-      const deleted = await db.transaction(async (tx) => {
-        const [sale] = await tx.select().from(salesTable).where(eq(salesTable.id, id));
-        if (!sale) return null;
+      await client.query("BEGIN");
 
-        const branchId = Number(req.user?.branchId ?? req.user?.branch_id ?? 0);
-        if (branchId > 0 && Number(sale.branchId) !== branchId) {
-          const err = new Error("Sale is outside your branch scope");
-          err.code = "BRANCH_SCOPE";
-          throw err;
-        }
+      const saleResult = await client.query(
+        "SELECT id, receipt_number, customer_id, total, amount_paid, branch_id FROM sales WHERE id = $1 FOR UPDATE",
+        [id]
+      );
+      const sale = saleResult.rows[0];
+      if (!sale) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Sale not found" });
+      }
 
-        const returned = await tx.select({ id: saleReturnsTable.id })
-          .from(saleReturnsTable)
-          .where(eq(saleReturnsTable.saleId, id));
-        if (returned.length) {
-          const err = new Error("This sale has returns and cannot be deleted. Use the returns process instead.");
-          err.code = "HAS_RETURNS";
-          throw err;
-        }
+      const userBranch = Number(req.user?.branchId ?? req.user?.branch_id ?? 0);
+      if (userBranch > 0 && Number(sale.branch_id) !== userBranch) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ error: "Sale is outside your branch scope" });
+      }
 
-        const items = await tx.select().from(saleItemsTable).where(eq(saleItemsTable.saleId, id));
+      const returned = await client.query(
+        "SELECT id FROM sale_returns WHERE sale_id = $1 LIMIT 1",
+        [id]
+      );
+      if (returned.rows.length) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "This sale has returns and cannot be deleted. Use the returns process instead." });
+      }
 
-        for (const item of items) {
-          await tx.insert(productStockTable)
-            .values({ branchId: sale.branchId, productId: item.productId, currentStock: 0, minStock: 0 })
-            .onConflictDoNothing();
+      const items = await client.query(
+        "SELECT id, product_id, quantity FROM sale_items WHERE sale_id = $1",
+        [id]
+      );
 
-          await tx.update(productStockTable)
-            .set({ currentStock: sql.raw('"current_stock" + ' + Number(item.quantity)) })
-            .where(and(
-              eq(productStockTable.branchId, sale.branchId),
-              eq(productStockTable.productId, item.productId)
-            ));
-        }
+      for (const item of items.rows) {
+        const stock = await client.query(
+          "INSERT INTO product_stock (branch_id, product_id, current_stock, min_stock) VALUES ($1, $2, 0, 0) ON CONFLICT DO NOTHING RETURNING current_stock",
+          [sale.branch_id, item.product_id]
+        );
 
-        const unpaid = Math.max(0, Number(sale.total) - Number(sale.amountPaid));
-        if (sale.customerId && unpaid > 0) {
-          await tx.update(customersTable)
-            .set({ balance: sql.raw('GREATEST(0, "balance" - ' + unpaid + ")") })
-            .where(eq(customersTable.id, sale.customerId));
-        }
+        const beforeResult = await client.query(
+          "SELECT current_stock FROM product_stock WHERE branch_id = $1 AND product_id = $2 FOR UPDATE",
+          [sale.branch_id, item.product_id]
+        );
+        const before = Number(beforeResult.rows[0]?.current_stock ?? 0);
+        const after = before + Number(item.quantity);
 
-        await tx.delete(salesTable).where(eq(salesTable.id, id));
-        return sale;
-      });
+        await client.query(
+          "UPDATE product_stock SET current_stock = $1 WHERE branch_id = $2 AND product_id = $3",
+          [after, sale.branch_id, item.product_id]
+        );
 
-      if (!deleted) return res.status(404).json({ error: "Sale not found" });
-      return res.json({ ok: true, deleted: { id: deleted.id, receipt_number: deleted.receiptNumber } });
+        await client.query(
+          "INSERT INTO stock_movements (product_id, type, quantity, quantity_before, quantity_after, reference, notes, created_by, branch_id) VALUES ($1, 'adjustment', $2, $3, $4, $5, $6, $7, $8)",
+          [
+            item.product_id,
+            Number(item.quantity),
+            before,
+            after,
+            "DELETE-" + sale.receipt_number,
+            "Stock restored after administrator deleted test sale " + sale.receipt_number,
+            String(req.user?.name || req.user?.email || "Administrator"),
+            sale.branch_id
+          ]
+        );
+      }
+
+      const unpaid = Math.max(0, Number(sale.total) - Number(sale.amount_paid));
+      if (sale.customer_id && unpaid > 0) {
+        await client.query(
+          "UPDATE customers SET balance = GREATEST(0, balance - $1) WHERE id = $2",
+          [unpaid, sale.customer_id]
+        );
+      }
+
+      await client.query("DELETE FROM sale_items WHERE sale_id = $1", [id]);
+      await client.query("DELETE FROM sales WHERE id = $1", [id]);
+
+      await client.query(
+        "INSERT INTO audit_log (actor_id, actor_name, actor_role, ip_address, action, entity_type, entity_id, description, metadata, branch_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+        [
+          Number(req.user?.userId || req.user?.id || 0) || null,
+          String(req.user?.name || req.user?.email || "Administrator"),
+          role,
+          req.ip || null,
+          "sale.deleted",
+          "sale",
+          String(sale.id),
+          "Administrator deleted test sale " + sale.receipt_number + " — KES " + Number(sale.total).toLocaleString(),
+          JSON.stringify({ receipt: sale.receipt_number, reason: "test_data_cleanup" }),
+          sale.branch_id
+        ]
+      );
+
+      await client.query("COMMIT");
+      return res.json({ ok: true, deleted: { id: sale.id, receipt_number: sale.receipt_number } });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message === "Sale is outside your branch scope") return res.status(403).json({ error: message });
-      if (message.includes("has returns")) return res.status(409).json({ error: message });
+      try { await client.query("ROLLBACK"); } catch (_) {}
       console.error("[admin-test-sale-delete]", error);
       return res.status(500).json({ error: "Could not delete sale" });
+    } finally {
+      client.release();
     }
   });
 })();
