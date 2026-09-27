@@ -15,8 +15,7 @@ export default defineConfig({
   },
   publicDir: false,
   build: {
-    outDir: path.resolve(process.cwd(), 'public'),
-    emptyOutDir: false,
+    // Keep generated Vite output separate from the legacy public/ tree.\n    // Railway/Railpack was serving the tracked legacy public/index.html after build.\n    outDir: path.resolve(process.cwd(), 'dist'),\n    emptyOutDir: true,
     assetsDir: 'assets',
     manifest: true,
     rollupOptions: {
