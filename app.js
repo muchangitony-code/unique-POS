@@ -20,7 +20,8 @@ if (fs.existsSync(envPath)) {
 }
 
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
-process.env.SERVE_CLIENT_DIR = process.env.SERVE_CLIENT_DIR || path.join(__dirname, "public");
+const defaultClientDir = fs.existsSync(path.join(__dirname, "dist")) ? path.join(__dirname, "dist") : path.join(__dirname, "public");
+process.env.SERVE_CLIENT_DIR = process.env.SERVE_CLIENT_DIR || defaultClientDir;
 process.env.BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups");
 process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dirname, "storage");
 
