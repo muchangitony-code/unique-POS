@@ -201,6 +201,68 @@ router.get("/pos/returns", async (req, res): Promise<void> => {
   });
 });
 
+router.delete("/pos/sale/:id", requireRole("administrator"), async (req, res): Promise<void> => {
+  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid sale id" }); return; }
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      const [sale] = await tx.select().from(salesTable).where(eq(salesTable.id, id));
+      if (!sale || !isBranchInScope(req, sale.branchId)) return null;
+
+      const returns = await tx.select({ id: saleReturnsTable.id }).from(saleReturnsTable).where(eq(saleReturnsTable.saleId, id));
+      if (returns.length) throw new Error("This sale has returns and cannot be deleted. Use the returns process instead.");
+
+      const items = await tx.select().from(saleItemsTable).where(eq(saleItemsTable.saleId, id));
+
+      // Restore stock quantities because the original sale deducted them.
+      for (const item of items) {
+        const { before, after } = await applyStockDelta(sale.branchId, item.productId, item.quantity, { allowNegative: true }, tx);
+        await tx.insert(stockMovementsTable).values({
+          branchId: sale.branchId,
+          productId: item.productId,
+          type: "adjustment",
+          quantity: item.quantity,
+          quantityBefore: before,
+          quantityAfter: after,
+          reference: `DELETE-${sale.receiptNumber}`,
+          notes: `Stock restored after administrator deleted test sale ${sale.receiptNumber}`,
+        });
+      }
+
+      // Reverse any outstanding customer balance created by this credit sale.
+      const unpaid = Math.max(0, Number(sale.total) - Number(sale.amountPaid));
+      if (sale.customerId && unpaid > 0) {
+        await tx.update(customersTable)
+          .set({ balance: sql`GREATEST(0, ${customersTable.balance} - ${unpaid})` })
+          .where(eq(customersTable.id, sale.customerId));
+      }
+
+      await tx.delete(stockMovementsTable)
+        .where(and(eq(stockMovementsTable.branchId, sale.branchId), eq(stockMovementsTable.reference, sale.receiptNumber)));
+
+      await tx.delete(salesTable).where(eq(salesTable.id, id));
+      return sale;
+    });
+
+    if (!result) { res.status(404).json({ error: "Sale not found" }); return; }
+
+    await logAudit(req, {
+      action: "sale.deleted",
+      entityType: "sale",
+      entityId: result.id,
+      description: `Administrator deleted sale ${result.receiptNumber} — KES ${Number(result.total).toLocaleString()}`,
+      metadata: { receipt: result.receiptNumber, reason: "test_data_cleanup" },
+    });
+
+    res.json({ ok: true, deleted: { id: result.id, receipt_number: result.receiptNumber } });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("has returns")) { res.status(409).json({ error: message }); return; }
+    throw err;
+  }
+});
+
 router.get("/pos/sales", async (req, res): Promise<void> => {
   const { page = "1", limit = "50" } = req.query as Record<string, string>;
   const p = Math.max(1, parseInt(page, 10));
