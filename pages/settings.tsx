@@ -792,7 +792,7 @@ function NotificationSettingsPanel({ settings }: { settings: SettingsData | unde
                 control={form.control}
                 name="backup_alert_enabled"
                 render={({ field }) => (
-                  <div className="flex items-center justify-between">
+                  <FormItem><div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <Bell className="h-4 w-4 text-destructive" />
                       <div>
@@ -807,14 +807,14 @@ function NotificationSettingsPanel({ settings }: { settings: SettingsData | unde
                       checked={field.value}
                       onCheckedChange={field.onChange}
                     />
-                  </div>
+                  </div></FormItem>
                 )}
               />
               <FormField
                 control={form.control}
                 name="backup_success_notify"
                 render={({ field }) => (
-                  <div className="flex items-center justify-between">
+                  <FormItem><div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <CheckCircle2 className="h-4 w-4 text-green-600" />
                       <div>
@@ -829,7 +829,7 @@ function NotificationSettingsPanel({ settings }: { settings: SettingsData | unde
                       checked={field.value}
                       onCheckedChange={field.onChange}
                     />
-                  </div>
+                  </div></FormItem>
                 )}
               />
             </div>
