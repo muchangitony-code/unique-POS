@@ -43,6 +43,7 @@ import { format, formatDistanceToNow } from 'date-fns';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useLocation } from 'wouter';
+import { useQueryClient } from '@tanstack/react-query';
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -55,6 +56,7 @@ const ADMIN_ROLES = new Set(['super_admin', 'business_owner']);
 export default function Dashboard() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const isAdmin = !!user && ADMIN_ROLES.has(user.role);
 
   const { data: stats, isLoading: statsLoading } = useGetDashboardStats({ query: { queryKey: getGetDashboardStatsQueryKey(), refetchInterval: 30000 } });
@@ -71,6 +73,10 @@ export default function Dashboard() {
     if (!window.confirm(`Delete test sale ${tx.reference} for ${formatCurrency(tx.amount)}? This will remove the sale and restore its stock. This action cannot be undone.`)) return;
     deleteSale.mutate({ id: tx.id }, {
       onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetRecentTransactionsQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetDashboardStatsQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetSalesChartQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetTopProductsQueryKey() });
         window.alert(`Sale ${tx.reference} deleted.`);
       },
       onError: (error: any) => {
