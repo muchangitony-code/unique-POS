@@ -4,6 +4,7 @@ import {
   useGetRecentTransactions, 
   useGetSalesChart, 
   useGetTopProducts,
+  useDeleteSale,
   useGetBackupStatus,
   getGetBackupStatusQueryKey,
   getGetDashboardStatsQueryKey,
@@ -23,6 +24,7 @@ import {
   Activity,
   DatabaseBackup,
   CheckCircle2,
+  Trash2,
   XCircle,
 } from 'lucide-react';
 import { 
@@ -59,9 +61,23 @@ export default function Dashboard() {
   const { data: recentTransactions, isLoading: transactionsLoading } = useGetRecentTransactions({ query: { queryKey: getGetRecentTransactionsQueryKey(), refetchInterval: 30000 } });
   const { data: salesChart, isLoading: chartLoading } = useGetSalesChart({ query: { queryKey: getGetSalesChartQueryKey(), refetchInterval: 60000 } });
   const { data: topProducts, isLoading: productsLoading } = useGetTopProducts({ query: { queryKey: getGetTopProductsQueryKey(), refetchInterval: 60000 } });
+  const deleteSale = useDeleteSale();
   const { data: backupStatus, isLoading: backupLoading, isError: backupError } = useGetBackupStatus({
     query: { enabled: isAdmin, queryKey: getGetBackupStatusQueryKey() },
   });
+
+  const handleDeleteTestSale = (tx: any) => {
+    if (tx.type !== 'sale') return;
+    if (!window.confirm(`Delete test sale ${tx.reference} for ${formatCurrency(tx.amount)}? This will remove the sale and restore its stock. This action cannot be undone.`)) return;
+    deleteSale.mutate({ id: tx.id }, {
+      onSuccess: () => {
+        window.alert(`Sale ${tx.reference} deleted.`);
+      },
+      onError: (error: any) => {
+        window.alert(error?.message || 'Could not delete the sale.');
+      },
+    });
+  };
 
   const renderStatCard = (title: string, value: string | number, icon: React.ElementType, change?: number, loading?: boolean) => (
     <Card>
@@ -261,6 +277,7 @@ export default function Dashboard() {
                     <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground">Date</th>
                     <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground">Amount</th>
                     <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground">Status</th>
+                    {isAdmin && <th className="h-10 px-4 text-right align-middle font-medium text-muted-foreground">Admin</th>}
                   </tr>
                 </thead>
                 <tbody className="[&_tr:last-child]:border-0">
@@ -277,11 +294,27 @@ export default function Dashboard() {
                       <td className="p-4 align-middle">
                         <Badge variant="outline" className="capitalize">{tx.status}</Badge>
                       </td>
+                      {isAdmin && (
+                        <td className="p-4 align-middle text-right">
+                          {tx.type === 'sale' && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => handleDeleteTestSale(tx)}
+                              disabled={deleteSale.isPending}
+                              title="Delete test sale"
+                            >
+                              <Trash2 className="h-4 w-4 mr-1" /> Delete
+                            </Button>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                   {recentTransactions?.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="p-4 text-center text-muted-foreground">No recent transactions</td>
+                      <td colSpan={isAdmin ? 6 : 5} className="p-4 text-center text-muted-foreground">No recent transactions</td>
                     </tr>
                   )}
                 </tbody>
