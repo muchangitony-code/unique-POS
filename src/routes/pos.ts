@@ -38,8 +38,15 @@ router.post("/pos/sale", async (req, res): Promise<void> => {
   const branchId = await resolveWriteBranchId(req);
   const receiptNumber = `RCP-${Date.now()}`;
   let subtotal = 0;
-  for (const item of items) { subtotal += item.quantity * item.unit_price; }
-  const total = subtotal - Number(discount_amount);
+  let taxAmount = 0;
+  for (const item of items) {
+    const gross = Number(item.quantity) * Number(item.unit_price);
+    const rate = Number(item.vat_rate ?? 16);
+    const lineTax = rate > 0 ? (gross * rate) / (100 + rate) : 0;
+    subtotal += gross - lineTax;
+    taxAmount += lineTax;
+  }
+  const total = subtotal + taxAmount - Number(discount_amount);
   const change = Math.max(0, Number(amount_paid) - total);
 
   const cashierName = (req as { user?: { name?: string } }).user?.name ?? null;
@@ -54,7 +61,7 @@ router.post("/pos/sale", async (req, res): Promise<void> => {
         deducted.push({ product_id: item.product_id, quantity: item.quantity, before: result.before, after: result.after });
       }
       const [s] = await tx.insert(salesTable).values({
-        receiptNumber, branchId, customerId: customer_id, subtotal: subtotal.toString(), discountAmount: discount_amount.toString(), total: total.toString(), amountPaid: amount_paid.toString(), change: change.toString(), paymentMethod: payment_method, cashierName,
+        receiptNumber, branchId, customerId: customer_id, subtotal: subtotal.toString(), discountAmount: discount_amount.toString(), taxAmount: taxAmount.toString(), total: total.toString(), amountPaid: amount_paid.toString(), change: change.toString(), paymentMethod: payment_method, cashierName,
       }).returning();
       for (const item of items) {
         const lineTotal = item.quantity * item.unit_price;
