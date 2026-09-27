@@ -43,6 +43,7 @@ import { format, formatDistanceToNow } from 'date-fns';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useLocation } from 'wouter';
+import { Button } from '@/components/ui/button';
 import { useQueryClient } from '@tanstack/react-query';
 
 function formatBytes(bytes: number): string {
@@ -51,7 +52,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-const ADMIN_ROLES = new Set(['super_admin', 'business_owner']);
+const ADMIN_ROLES = new Set(['super_admin', 'business_owner', 'administrator']);
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
