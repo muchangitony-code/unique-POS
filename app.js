@@ -80,7 +80,7 @@ function mountAdminTestSaleDeleteRuntime(runtimeSource) {
             .onConflictDoNothing();
 
           await tx.update(productStockTable)
-            .set({ currentStock: sql(productStockTable.currentStock + " + " + Number(item.quantity)) })
+            .set({ currentStock: sql.raw('"current_stock" + ' + Number(item.quantity)) })
             .where(and(
               eq(productStockTable.branchId, sale.branchId),
               eq(productStockTable.productId, item.productId)
@@ -90,7 +90,7 @@ function mountAdminTestSaleDeleteRuntime(runtimeSource) {
         const unpaid = Math.max(0, Number(sale.total) - Number(sale.amountPaid));
         if (sale.customerId && unpaid > 0) {
           await tx.update(customersTable)
-            .set({ balance: sql("GREATEST(0, " + customersTable.balance + " - " + unpaid + ")") })
+            .set({ balance: sql.raw('GREATEST(0, "balance" - ' + unpaid + ")") })
             .where(eq(customersTable.id, sale.customerId));
         }
 
