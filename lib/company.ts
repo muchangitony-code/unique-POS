@@ -14,7 +14,7 @@ export const COMPANY = {
   phone: '+254 733 873 089', email: 'info@uniquesolarkenya.co.ke',
   kraPin: 'P052303835W', mpesa: '+254 733 873 089',
   primaryColor: '#1B4DA5', secondaryColor: '#F5A500',
-  logoUrl: () => new URL(`${import.meta.env.BASE_URL}assets/branding/logo.svg`, window.location.href).href,
+  logoUrl: () => '',
 } as const;
 
 export interface BrandingData {
@@ -128,7 +128,7 @@ export function getBranding(): ResolvedBranding {
     phone: clean(b.business_phone) || COMPANY.phone, phone2: clean(b.business_phone2),
     email: clean(b.business_email) || COMPANY.email, website: clean(b.website),
     kraPin: clean(b.tax_number) || COMPANY.kraPin, vatNumber: clean(b.vat_number),
-    logoUrl: resolveAssetUrl(clean(b.logo_url) || null) || COMPANY.logoUrl(),
+    logoUrl: resolveAssetUrl(clean(b.logo_url) || null) || '',
     primaryColor: primary, secondaryColor: secondary, navyColor: darkenHex(primary, 0.4),
     bodyFontStack: fontStack(b.body_font), headingFontStack: fontStack(b.heading_font),
     bodyFontGoogle: googleSpec(b.body_font), headingFontGoogle: googleSpec(b.heading_font),
