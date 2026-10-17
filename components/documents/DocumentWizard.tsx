@@ -674,7 +674,7 @@ function PreviewStep({ mode, state, totals, customerName }: {
   return (
     <div className="space-y-4 text-sm">
       <div className="flex items-start gap-3 p-4 rounded-lg bg-primary/5 border border-primary/15">
-        <img src={branding.logoUrl} alt={branding.name} onError={(e) => { const img = e.currentTarget; img.onerror = null; img.src = new URL(`${import.meta.env.BASE_URL}assets/branding/logo.svg`, window.location.href).href; }} className="w-12 h-12 object-contain rounded" />
+        {branding.logoUrl && <img src={branding.logoUrl} alt={branding.name} className="w-12 h-12 object-contain rounded" />}
         <div>
           <p className="font-bold text-primary">{branding.name}</p>
           <p className="text-xs text-muted-foreground">{branding.addressLine}</p>
