@@ -62,7 +62,7 @@ function layout(data, company, paper, probe) {
 
 async function renderReceiptDocument({ doc: data, company, paper = '80mm' }) {
   const width = WIDTHS[paper] || WIDTHS['80mm']; const items = normalizeItems(data); const totals = calculateTotals(items);
-  const logo = (await loadLogo(logoSource(company))) || (await loadLogo(BRAND.thermalLogo));
+  const logo = await loadLogo(logoSource(company));
   const stamp = await loadLogo(company?.stampUrl || company?.stamp_url || company?.stamp);
   const signature = await loadLogo(company?.signatureUrl || company?.signature_url || company?.signature);
   if (!logo) throw new Error('Thermal branding logo could not be loaded; refusing to generate an unbranded receipt');
