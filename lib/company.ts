@@ -14,7 +14,7 @@ export const COMPANY = {
   phone: '+254 733 873 089', email: 'info@uniquesolarkenya.co.ke',
   kraPin: 'P052303835W', mpesa: '+254 733 873 089',
   primaryColor: '#1B4DA5', secondaryColor: '#F5A500',
-  logoUrl: () => new URL(`${import.meta.env.BASE_URL}logo.jpg`, window.location.href).href,
+  logoUrl: () => new URL(`${import.meta.env.BASE_URL}assets/branding/logo.svg`, window.location.href).href,
 } as const;
 
 export interface BrandingData {
