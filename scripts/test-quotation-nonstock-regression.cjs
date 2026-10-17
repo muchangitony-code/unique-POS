@@ -2,7 +2,19 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const { computeDocumentTotals } = require("../src/lib/document-totals");
+const path = require("node:path");
+const Module = require("node:module");
+const ts = require("typescript");
+const totalsPath = path.resolve(__dirname, "../src/lib/document-totals.ts");
+const totalsSource = fs.readFileSync(totalsPath, "utf8");
+const totalsCompiled = ts.transpileModule(totalsSource, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
+}).outputText;
+const totalsModule = new Module(totalsPath, module);
+totalsModule.filename = totalsPath;
+totalsModule.paths = Module._nodeModulePaths(path.dirname(totalsPath));
+totalsModule._compile(totalsCompiled, totalsPath);
+const { computeDocumentTotals } = totalsModule.exports;
 const { adaptDocumentPayload } = require("../server/pdf/document-adapter.cjs");
 
 // 1) A non-stock quotation line is a normal commercial line for pricing.
