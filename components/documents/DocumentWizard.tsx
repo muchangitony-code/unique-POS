@@ -139,7 +139,7 @@ export function DocumentWizard({ mode, open, onOpenChange, initial, onCreated }:
       if (state.customerMode === 'new') return state.newCustomer.name.trim().length > 0;
       return true;
     }
-    if (step === 1) return state.lines.length > 0 && state.lines.every((l) => l.quantity > 0 && l.unit_price >= 0);
+    if (step === 1) return state.lines.length > 0 && state.lines.every((l) => l.quantity > 0 && l.unit_price >= 0 && (l.product_id != null || (l.product_name?.trim() && !['unknown', 'undefined', 'null', 'item', 'non-stock item'].includes(l.product_name.trim().toLowerCase()))));
     return true;
   }, [step, state]);
 
