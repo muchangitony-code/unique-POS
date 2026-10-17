@@ -33,8 +33,13 @@ async function loadLogo(source) {
   if (raw.startsWith('/')) { files.push(path.join(process.cwd(), 'public', raw.slice(1))); files.push(path.join(process.cwd(), raw.slice(1))); }
   else if (!/^https?:\/\//i.test(raw)) { files.push(path.resolve(process.cwd(), raw)); files.push(path.join(process.cwd(), raw)); }
   for (const file of files) { try { const buffer = fs.readFileSync(file); if (buffer.length > MAX_LOGO) continue; if (raster(buffer)) return buffer; if (svg(buffer)) return buffer.toString('utf8'); } catch (_) {} }
-  if (!/^https?:\/\//i.test(raw)) return null;
-  try { const response = await fetch(raw, { redirect: 'follow' }); if (!response.ok) return null; const buffer = Buffer.from(await response.arrayBuffer()); if (buffer.length > MAX_LOGO) return null; if (raster(buffer)) return buffer; if (svg(buffer)) return buffer.toString('utf8'); } catch (_) {}
+  let url = raw;
+  if (!/^https?:\/\//i.test(raw)) {
+    const host = process.env.PUBLIC_APP_URL || process.env.APP_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '');
+    if (!host) return null;
+    try { url = new URL(raw, host.endsWith('/') ? host : host + '/').href; } catch (_) { return null; }
+  }
+  try { const response = await fetch(url, { redirect: 'follow' }); if (!response.ok) return null; const buffer = Buffer.from(await response.arrayBuffer()); if (buffer.length > MAX_LOGO) return null; if (raster(buffer)) return buffer; if (svg(buffer)) return buffer.toString('utf8'); } catch (_) {}
   return null;
 }
 function companyValue(company, key, fallback) { return String(company?.[key] ?? '').trim() || fallback; }
@@ -47,7 +52,7 @@ function drawThermalLogo(pdf, logo, width, y) {
   return y + size + 6;
 }
 function layout(data, company, paper, probe) {
-  const width = WIDTHS[paper] || WIDTHS['80mm']; const inner = width - MARGIN * 2; const logoSize = Math.min(LOGO_SIZE_MAX, width - 20); let y = MARGIN + 8 + logoSize + 6;
+  const width = WIDTHS[paper] || WIDTHS['80mm']; const inner = width - MARGIN * 2; const logoSize = Math.min(LOGO_SIZE_MAX, width - 20); const hasMarks = Boolean(company?.stampUrl || company?.stamp_url || company?.signatureUrl || company?.signature_url); let y = MARGIN + 8 + logoSize + 6 + (hasMarks ? 26 : 0);
   const addCentered = (value, size, font = 'body', gap = 0) => { y += measure(probe, value, inner, size, font) + gap; };
   addCentered(companyValue(company, 'name', BRAND.legalName), 11, 'bold', 2); addCentered(company?.tagline || BRAND.tagline, 7.2, 'bold', 2); addCentered(companyValue(company, 'address', BRAND.address), 7.1, 'body', 2); addCentered(companyValue(company, 'phone', BRAND.phone), 7.1, 'body', 2); addCentered(companyValue(company, 'website', BRAND.website), 7.1, 'body', 2); if (company?.taxId) addCentered(`KRA PIN: ${company.taxId}`, 7.1, 'body', 2);
   y += 8; addCentered('RECEIPT', 12, 'bold', 2); addCentered(`No: ${data.number}`, 8, 'body', 1); addCentered(`Date: ${data.date || '—'}`, 8, 'body', 1); addCentered(`Customer: ${data.customer?.name || 'Walk-in Customer'}`, 8, 'body', 4); y += 7 + 12;
@@ -58,12 +63,15 @@ function layout(data, company, paper, probe) {
 async function renderReceiptDocument({ doc: data, company, paper = '80mm' }) {
   const width = WIDTHS[paper] || WIDTHS['80mm']; const items = normalizeItems(data); const totals = calculateTotals(items);
   const logo = (await loadLogo(logoSource(company))) || (await loadLogo(BRAND.thermalLogo));
+  const stamp = await loadLogo(company?.stampUrl || company?.stamp_url || company?.stamp);
+  const signature = await loadLogo(company?.signatureUrl || company?.signature_url || company?.signature);
   if (!logo) throw new Error('Thermal branding logo could not be loaded; refusing to generate an unbranded receipt');
   const probe = new PDFDocument({ size: [width, 2000], margins: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN } }); registerFonts(probe); const height = layout(data, company, paper, probe); probe.end();
   const pdf = new PDFDocument({ size: [width, height], margins: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN }, autoFirstPage: true, info: { Title: `Receipt ${data.number}`, Author: companyValue(company, 'name', BRAND.legalName) } }); registerFonts(pdf);
   const chunks = []; const result = new Promise((resolve, reject) => { pdf.on('data', (chunk) => chunks.push(chunk)); pdf.once('end', () => resolve(Buffer.concat(chunks))); pdf.once('error', reject); });
   let y = MARGIN; const inner = width - MARGIN * 2;
   pdf.fillColor(C.ink).rect(0, 0, width, 3).fill(); pdf.fillColor(C.orange).rect(width * .72, 0, width * .28, 3).fill(); y += 8; y = drawThermalLogo(pdf, logo, width, y);
+  if (stamp || signature) { const markW = Math.min(48, (inner - 12) / 2), markH = 20, totalW = stamp && signature ? markW * 2 + 12 : markW, startX = (width - totalW) / 2; for (const [idx, asset] of [signature, stamp].entries()) { if (!asset) continue; const x = startX + idx * (markW + 12); try { if (typeof asset === 'string' && svg(asset)) SVGtoPDF(pdf, asset, x, y, { width: markW, height: markH, preserveAspectRatio: 'xMidYMid meet' }); else pdf.image(asset, x, y, { fit: [markW, markH], align: 'center', valign: 'center' }); } catch (_) {} } y += 26; }
   const addCentered = (value, size, font = 'body', gap = 0, color = C.ink) => { text(pdf, value, MARGIN, y, inner, { font, size, align: 'center', color }); y += measure(pdf, value, inner, size, font) + gap; };
   addCentered(companyValue(company, 'name', BRAND.legalName), 11, 'bold', 2); addCentered(company?.tagline || BRAND.tagline, 7.2, 'bold', 2, C.orangeDeep); addCentered(companyValue(company, 'address', BRAND.address), 7.1, 'body', 2, C.muted); addCentered(companyValue(company, 'phone', BRAND.phone), 7.1, 'body', 2, C.muted); addCentered(companyValue(company, 'website', BRAND.website), 7.1, 'body', 2, C.muted); if (company?.taxId) addCentered(`KRA PIN: ${company.taxId}`, 7.1, 'body', 2, C.muted);
   pdf.strokeColor(C.line).lineWidth(.7).moveTo(MARGIN, y).lineTo(width - MARGIN, y).stroke(); y += 8; addCentered('RECEIPT', 12, 'bold', 2); addCentered(`No: ${data.number}`, 8, 'body', 1); addCentered(`Date: ${data.date || '—'}`, 8, 'body', 1); addCentered(`Customer: ${data.customer?.name || 'Walk-in Customer'}`, 8, 'body', 4);

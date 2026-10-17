@@ -20,6 +20,8 @@ function normalizeLogo(value) {
 }
 function normalizeDocument(type, doc, company) {
   const logo = normalizeLogo(company.logo ?? company.logoUrl ?? company.logo_url) || BRAND.logo;
+  const stamp = normalizeLogo(company.stamp ?? company.stampUrl ?? company.stamp_url);
+  const signature = normalizeLogo(company.signature ?? company.signatureUrl ?? company.signature_url);
   return {
     type, number: String(doc.number).trim(), date: String(doc.date).trim(), dueDate: str(doc.dueDate), validUntil: str(doc.validUntil),
     customer: normalizeCustomer(doc.customer),
@@ -27,7 +29,7 @@ function normalizeDocument(type, doc, company) {
     currency: String(doc.currency).trim().toUpperCase(), notes: str(doc.notes), terms: str(doc.terms),
     orderReference: str(doc.orderReference), channel: str(doc.channel), servedBy: str(doc.servedBy), paymentMethod: str(doc.paymentMethod), status: str(doc.status), preparedBy: str(doc.preparedBy), customerAcknowledgement: str(doc.customerAcknowledgement),
     paymentDetails: doc.paymentDetails && typeof doc.paymentDetails === 'object' ? { paybill: str(doc.paymentDetails.paybill), till: str(doc.paymentDetails.till), account: str(doc.paymentDetails.account), bank: str(doc.paymentDetails.bank), qr: str(doc.paymentDetails.qr) } : {},
-    company: { name: BRAND.legalName, tagline: BRAND.tagline, address: BRAND.address, phone: BRAND.phone, website: BRAND.website, email: str(company.email), taxId: str(company.taxId), logo }
+    company: { name: str(company.name ?? company.business_name) || BRAND.legalName, tagline: str(company.tagline) || BRAND.tagline, address: str(company.address ?? company.business_address) || BRAND.address, phone: str(company.phone ?? company.business_phone) || BRAND.phone, website: str(company.website) || BRAND.website, email: str(company.email ?? company.business_email), taxId: str(company.taxId ?? company.tax_number ?? company.kra_pin), logo, stampUrl: stamp, signatureUrl: signature }
   };
 }
 function validateDocument(type, doc, company) {
