@@ -149,7 +149,7 @@ export function brandingForBranch(base: ResolvedBranding, branch: BranchBranding
     name: clean(branch.name) || base.name, addressLine: addressLine || base.addressLine,
     phone: clean(branch.phone) || base.phone, phone2: clean(branch.phone2) || base.phone2,
     email: clean(branch.email) || base.email, kraPin: clean(branch.kra_pin) || base.kraPin,
-    logoUrl: resolveAssetUrl(clean(branch.logo_url) || null) || base.logoUrl,
+    logoUrl: base.logoUrl, // Company Branding settings are the single logo source for every branch.
     documentFooter: footer || base.documentFooter,
     paybillNumber: clean(branch.paybill_number), paybillAccount: clean(branch.paybill_account),
     tillNumber: clean(branch.till_number), bankName: clean(branch.bank_name),
