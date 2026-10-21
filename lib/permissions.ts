@@ -10,6 +10,7 @@ export const ROLE_TIER_MAP: Record<string, FunctionalTier> = {
   branch_manager: "manager",
   accountant:     "manager",
   cashier:        "sales_cashier",
+  sales_cashier:  "sales_cashier",
   sales_rep:      "sales_cashier",
   storekeeper:    "storekeeper",
   technician:     "storekeeper",
