@@ -35,7 +35,7 @@ async function generateProductCode(categoryName: string | null | undefined): Pro
   return `${categoryPrefix(categoryName)}-${String(sequence).padStart(6, "0")}`;
 }
 
-router.get("/products", async (req, res): Promise<void> => {
+router.get("/products", requireRole("administrator", "manager", "storekeeper", "sales_cashier"), async (req, res): Promise<void> => {
   const { search, category_id, brand_id, low_stock, page = "1", limit = "50" } = req.query as Record<string, string>;
   const p = Math.max(1, parseInt(page, 10));
   const l = Math.min(200, parseInt(limit, 10));
@@ -112,7 +112,7 @@ router.patch("/products/generate-barcodes", requireRole("administrator", "manage
   res.json({ updated: updatedIds.length, message: `Generated barcodes for ${updatedIds.length} product(s).`, products: updatedProducts });
 });
 
-router.get("/products/barcode/:barcode", async (req, res): Promise<void> => {
+router.get("/products/barcode/:barcode", requireRole("administrator", "manager", "storekeeper", "sales_cashier"), async (req, res): Promise<void> => {
   const barcode = Array.isArray(req.params.barcode) ? req.params.barcode[0] : req.params.barcode;
   const [p] = await db.select().from(productsTable).where(eq(productsTable.barcode, barcode));
   if (!p) { res.status(404).json({ error: "Product not found" }); return; }
@@ -121,7 +121,7 @@ router.get("/products/barcode/:barcode", async (req, res): Promise<void> => {
   res.json(formatProduct(p, undefined, undefined, undefined, stockFor(map, p)));
 });
 
-router.get("/products/:id", async (req, res): Promise<void> => {
+router.get("/products/:id", requireRole("administrator", "manager", "storekeeper", "sales_cashier"), async (req, res): Promise<void> => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
   const [p] = await db.select().from(productsTable).where(eq(productsTable.id, id));
   if (!p) { res.status(404).json({ error: "Product not found" }); return; }
