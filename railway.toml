@@ -1,5 +1,5 @@
 [build]
-buildCommand = "npm install --omit=dev && npm run build"
+buildCommand = "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg && install -d /usr/share/postgresql-common/pgdg && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg && echo \"deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo $VERSION_CODENAME)-pgdg main\" > /etc/apt/sources.list.d/pgdg.list && apt-get update && apt-get install -y --no-install-recommends postgresql-client-18 && ln -sf /usr/lib/postgresql/18/bin/pg_dump /usr/bin/pg_dump && ln -sf /usr/lib/postgresql/18/bin/pg_restore /usr/bin/pg_restore && ln -sf /usr/lib/postgresql/18/bin/psql /usr/bin/psql && pg_dump --version && npm install --omit=dev && npm run build"
 
 [deploy]
 startCommand = "node index.runtime.cjs"
