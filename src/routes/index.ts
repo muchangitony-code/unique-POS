@@ -51,7 +51,7 @@ router.use("/reports", requireRole("administrator", "manager"));
 // Administrator + Manager + Storekeeper + Sales/Cashier (read catalog for POS)
 // Product mutations remain protected by their own per-route administrator/manager/storekeeper guards.
 router.use("/products",   requireRole("administrator", "manager", "storekeeper", "sales_cashier"));
-router.use("/inventory",  requireRole("administrator", "manager", "storekeeper"));
+router.use("/inventory",  requireRole("administrator", "manager", "storekeeper", "sales_cashier"));
 router.use("/purchases",  requireRole("administrator", "manager", "storekeeper"));
 router.use("/suppliers",  requireRole("administrator", "manager", "storekeeper"));
 router.use("/brands",     requireRole("administrator", "manager", "storekeeper"));
