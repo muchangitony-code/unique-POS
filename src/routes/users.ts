@@ -2,7 +2,8 @@ import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
 import { hashPassword } from "../lib/auth";
-import { requireRole } from "../lib/permissions";
+import { requireRole, requireSuperAdmin, PERMISSION_MODULES, DEFAULT_MODULE_TIERS, getTier } from "../lib/permissions";
+import { pool } from "@workspace/db";
 import { getDefaultBranchId } from "../lib/branch-scope";
 import { logAudit } from "../lib/audit";
 
@@ -27,6 +28,54 @@ router.post("/users", async (req, res): Promise<void> => {
   const [u] = await db.insert(usersTable).values({ name, email, passwordHash, role, branch, branchId, phone }).returning();
   await logAudit(req, { action: "user.created", entityType: "user", entityId: u.id, description: `Created user "${u.name}" (${u.email}) with role ${u.role}` });
   res.status(201).json(fmt(u));
+});
+
+router.get("/users/:id/permissions", requireSuperAdmin, async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  const [target] = await db.select().from(usersTable).where(eq(usersTable.id, id));
+  if (!target) { res.status(404).json({ error: "User not found" }); return; }
+  const result = await pool.query("SELECT module, allowed FROM user_permission_overrides WHERE user_id = $1", [id]);
+  const savedOverrides = Object.fromEntries(result.rows.map((r: {module:string;allowed:boolean}) => [r.module, r.allowed]));
+  const tier = getTier(target.role);
+  const overrides = Object.fromEntries(PERMISSION_MODULES.map(module => [
+    module,
+    Object.prototype.hasOwnProperty.call(savedOverrides, module)
+      ? savedOverrides[module]
+      : (DEFAULT_MODULE_TIERS[module] ?? []).includes(tier as any)
+  ]));
+  res.json({ modules: PERMISSION_MODULES, overrides });
+});
+
+router.put("/users/:id/permissions", requireSuperAdmin, async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  const actor = (req as { user?: { userId?: number; role?: string } }).user;
+  const [target] = await db.select().from(usersTable).where(eq(usersTable.id, id));
+  if (!target) { res.status(404).json({ error: "User not found" }); return; }
+  if (["super_admin", "business_owner"].includes(target.role)) {
+    res.status(400).json({ error: "Super-admin accounts are not controlled by module overrides" }); return;
+  }
+  const overrides = req.body?.overrides;
+  if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) {
+    res.status(400).json({ error: "overrides object is required" }); return;
+  }
+  const invalid = Object.keys(overrides).filter(k => !(PERMISSION_MODULES as readonly string[]).includes(k) || typeof overrides[k] !== "boolean");
+  if (invalid.length) { res.status(400).json({ error: "Invalid permission module or value", invalid }); return; }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const [moduleName, allowed] of Object.entries(overrides)) {
+      await client.query(
+        "INSERT INTO user_permission_overrides (user_id, module, allowed, updated_by, updated_at) VALUES ($1,$2,$3,$4,NOW()) ON CONFLICT (user_id,module) DO UPDATE SET allowed=EXCLUDED.allowed, updated_by=EXCLUDED.updated_by, updated_at=NOW()",
+        [id, moduleName, allowed, actor?.userId ?? null]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally { client.release(); }
+  await logAudit(req, { action: "user.permissions.updated", entityType: "user", entityId: id, description: `Updated module permissions for "${target.name}"`, metadata: { overrides } });
+  res.json({ ok: true, overrides });
 });
 
 router.get("/users/:id", async (req, res): Promise<void> => {
