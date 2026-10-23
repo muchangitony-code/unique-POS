@@ -18,6 +18,19 @@ export async function runStartupMigrations(): Promise<void> {
       )
     `);
 
+    // Per-user module access overrides; absent rows use role-based defaults.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_permission_overrides (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        module TEXT NOT NULL,
+        allowed BOOLEAN NOT NULL,
+        updated_by INTEGER,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, module)
+      )
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS user_permission_overrides_module_idx ON user_permission_overrides (module)`);
+
     // Ensure the audit log table exists
     await client.query(`
       CREATE TABLE IF NOT EXISTS audit_log (
