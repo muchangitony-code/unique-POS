@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireRole } from "../lib/permissions";
+import { requireRole, requireModuleAccess } from "../lib/permissions";
 import healthRouter from "./health";
 import authRouter from "./auth";
 import dashboardRouter from "./dashboard";
@@ -37,33 +37,33 @@ router.use(storageRouter);
 // ─── Role guards (path-prefixed so they only run for matching routes) ─────────
 // Administrator only
 router.use("/admin",     requireRole("administrator"));
-router.use("/users",     requireRole("administrator"));
+router.use("/users",     requireModuleAccess("users"));
 // NOTE: /settings is intentionally NOT blanket-guarded here — GET /settings must
 // be readable by all authenticated users so documents (receipts/invoices) can
 // render the latest payment details. Write guards are applied per-route in settings.ts.
-router.use("/expenses",  requireRole("administrator"));
-router.use("/audit-log", requireRole("administrator"));
-router.use("/security",  requireRole("administrator"));
+router.use("/expenses",  requireModuleAccess("expenses"));
+router.use("/audit-log", requireModuleAccess("audit_log"));
+router.use("/security",  requireModuleAccess("security"));
 
 // Administrator + Manager
-router.use("/reports", requireRole("administrator", "manager"));
+router.use("/reports", requireModuleAccess("reports"));
 
 // Administrator + Manager + Storekeeper + Sales/Cashier (read catalog for POS)
 // Product mutations remain protected by their own per-route administrator/manager/storekeeper guards.
-router.use("/products",   requireRole("administrator", "manager", "storekeeper", "sales_cashier"));
-router.use("/inventory",  requireRole("administrator", "manager", "storekeeper", "sales_cashier"));
-router.use("/purchases",  requireRole("administrator", "manager", "storekeeper"));
-router.use("/suppliers",  requireRole("administrator", "manager", "storekeeper"));
+router.use("/products",   requireModuleAccess("products"));
+router.use("/inventory",  requireModuleAccess("inventory"));
+router.use("/purchases",  requireModuleAccess("purchases"));
+router.use("/suppliers",  requireModuleAccess("suppliers"));
 router.use("/brands",     requireRole("administrator", "manager", "storekeeper"));
 router.use("/categories", requireRole("administrator", "manager", "storekeeper"));
 
 // Administrator + Manager + Sales/Cashier
-router.use("/customers",  requireRole("administrator", "manager", "sales_cashier"));
-router.use("/quotations", requireRole("administrator", "manager", "sales_cashier"));
-router.use("/invoices",   requireRole("administrator", "manager", "sales_cashier"));
+router.use("/customers",  requireModuleAccess("customers"));
+router.use("/quotations", requireModuleAccess("quotations"));
+router.use("/invoices",   requireModuleAccess("invoices"));
 
 // Administrator + Sales/Cashier
-router.use("/pos", requireRole("administrator", "sales_cashier"));
+router.use("/pos", requireModuleAccess("pos"));
 
 // ─── Route routers ────────────────────────────────────────────────────────────
 router.use("/notifications", requireRole("administrator"));
