@@ -181,7 +181,7 @@ function mountUserPermissionsRuntime(runtimeSource) {
     "app_default.put(\"/api/users/:id/permissions\",async(req,res)=>{if(!auth(req,res))return;const id=Number(req.params.id);const o=req.body&&req.body.overrides;if(!Number.isInteger(id)||id<1)return res.status(400).json({error:\"Invalid user id\"});if(!o||typeof o!==\"object\"||Array.isArray(o))return res.status(400).json({error:\"Permission overrides are required\"});try{await ensure();const t=await p.query(\"SELECT id,role FROM users WHERE id=$1 LIMIT 1\",[id]);if(!t.rows.length)return res.status(404).json({error:\"User not found\"});if([\"super_admin\",\"business_owner\"].includes(String(t.rows[0].role)))return res.status(403).json({error:\"Super-admin permissions cannot be edited\"});const c=await p.connect();try{await c.query(\"BEGIN\");for(const m of mods){if(typeof o[m]!==\"boolean\")continue;await c.query(\"INSERT INTO user_permission_overrides(user_id,module,allowed,updated_by,updated_at) VALUES($1,$2,$3,$4,NOW()) ON CONFLICT(user_id,module) DO UPDATE SET allowed=EXCLUDED.allowed,updated_by=EXCLUDED.updated_by,updated_at=NOW()\",[id,m,o[m],Number(req.user.userId||req.user.id||0)||null]);}await c.query(\"COMMIT\");}catch(e){await c.query(\"ROLLBACK\");throw e;}finally{c.release();}return res.json({ok:true,overrides:o});}catch(e){console.error(\"[user-permissions] PUT\",e);return res.status(500).json({error:\"Could not save permissions\"});}});",
     "console.log(\"[user-permissions] production runtime routes mounted\");",
     "})();"
-  ].join("\\n") + "\\n";
+  ].join("\n") + "\n";
   return runtimeSource.slice(0, at) + code + runtimeSource.slice(at);
 }
 const runtimePath = path.join(__dirname, "server", "index.cjs");
