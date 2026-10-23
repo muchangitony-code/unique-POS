@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
 import { hashPassword } from "../lib/auth";
-import { requireRole, requireSuperAdmin, PERMISSION_MODULES } from "../lib/permissions";
+import { requireRole, requireSuperAdmin, PERMISSION_MODULES, DEFAULT_MODULE_TIERS, getTier } from "../lib/permissions";
 import { pool } from "@workspace/db";
 import { getDefaultBranchId } from "../lib/branch-scope";
 import { logAudit } from "../lib/audit";
@@ -35,7 +35,14 @@ router.get("/users/:id/permissions", requireSuperAdmin, async (req, res): Promis
   const [target] = await db.select().from(usersTable).where(eq(usersTable.id, id));
   if (!target) { res.status(404).json({ error: "User not found" }); return; }
   const result = await pool.query("SELECT module, allowed FROM user_permission_overrides WHERE user_id = $1", [id]);
-  const overrides = Object.fromEntries(result.rows.map((r: {module:string;allowed:boolean}) => [r.module, r.allowed]));
+  const savedOverrides = Object.fromEntries(result.rows.map((r: {module:string;allowed:boolean}) => [r.module, r.allowed]));
+  const tier = getTier(target.role);
+  const overrides = Object.fromEntries(PERMISSION_MODULES.map(module => [
+    module,
+    Object.prototype.hasOwnProperty.call(savedOverrides, module)
+      ? savedOverrides[module]
+      : (DEFAULT_MODULE_TIERS[module] ?? []).includes(tier as any)
+  ]));
   res.json({ modules: PERMISSION_MODULES, overrides });
 });
 
