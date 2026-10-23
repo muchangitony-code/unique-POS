@@ -91,7 +91,7 @@ export const PERMISSION_MODULES = [
 ] as const;
 export type PermissionModule = typeof PERMISSION_MODULES[number];
 
-const DEFAULT_MODULE_TIERS: Record<PermissionModule, FunctionalTier[]> = {
+export const DEFAULT_MODULE_TIERS: Record<PermissionModule, FunctionalTier[]> = {
   pos: ["administrator", "sales_cashier"],
   inventory: ["administrator", "manager", "storekeeper", "sales_cashier"],
   products: ["administrator", "manager", "storekeeper", "sales_cashier"],
