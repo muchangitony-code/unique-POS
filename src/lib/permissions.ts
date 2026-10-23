@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import type { JwtPayload } from "./auth";
+import { pool } from "@workspace/db";
 
 /**
  * Functional role tiers — maps every DB role enum value to one of four tiers.
@@ -79,5 +80,54 @@ export function requireRole(...allowedTiers: FunctionalTier[]) {
       return;
     }
     next();
+  };
+}
+
+
+export const PERMISSION_MODULES = [
+  "pos", "inventory", "products", "customers", "quotations", "invoices",
+  "purchases", "suppliers", "reports", "expenses", "users", "settings",
+  "branches", "audit_log", "security", "backups"
+] as const;
+export type PermissionModule = typeof PERMISSION_MODULES[number];
+
+const DEFAULT_MODULE_TIERS: Record<PermissionModule, FunctionalTier[]> = {
+  pos: ["administrator", "sales_cashier"],
+  inventory: ["administrator", "manager", "storekeeper", "sales_cashier"],
+  products: ["administrator", "manager", "storekeeper", "sales_cashier"],
+  customers: ["administrator", "manager", "sales_cashier"],
+  quotations: ["administrator", "manager", "sales_cashier"],
+  invoices: ["administrator", "manager", "sales_cashier"],
+  purchases: ["administrator", "manager", "storekeeper"],
+  suppliers: ["administrator", "manager", "storekeeper"],
+  reports: ["administrator", "manager"],
+  expenses: ["administrator"],
+  users: ["administrator"],
+  settings: ["administrator"],
+  branches: ["administrator", "manager"],
+  audit_log: ["administrator"],
+  security: ["administrator"],
+  backups: ["administrator"],
+};
+
+export function requireModuleAccess(moduleName: PermissionModule) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const user = (req as Request & { user?: JwtPayload }).user;
+    if (!user) { res.status(401).json({ error: "Unauthorized" }); return; }
+    if (["super_admin", "business_owner"].includes(user.role)) { next(); return; }
+    try {
+      const result = await pool.query(
+        "SELECT allowed FROM user_permission_overrides WHERE user_id = $1 AND module = $2 LIMIT 1",
+        [user.userId, moduleName]
+      );
+      const allowed = result.rows.length
+        ? result.rows[0].allowed === true
+        : (DEFAULT_MODULE_TIERS[moduleName] ?? []).includes(getTier(user.role) as FunctionalTier);
+      if (!allowed) { res.status(403).json({ error: "Permission denied", module: moduleName }); return; }
+      next();
+    } catch (error) {
+      // If the permission store is unavailable, fail closed for non-super-admins.
+      res.status(503).json({ error: "Permission service unavailable" });
+    }
   };
 }
