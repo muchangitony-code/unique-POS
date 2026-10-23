@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, ShieldCheck } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -56,6 +56,10 @@ type UserFormValues = z.infer<typeof userSchema>;
 export default function UsersPage() {
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
   const [editingUser, setEditingUser] = React.useState<User | null>(null);
+  const [permissionUser, setPermissionUser] = React.useState<User | null>(null);
+  const [permissionValues, setPermissionValues] = React.useState<Record<string, boolean>>({});
+  const [permissionLoading, setPermissionLoading] = React.useState(false);
+  const [permissionSaving, setPermissionSaving] = React.useState(false);
   
   const queryClient = useQueryClient();
   const { data: users, isLoading } = useGetUsers();
@@ -148,6 +152,65 @@ export default function UsersPage() {
     setIsDialogOpen(false);
     setEditingUser(null);
     form.reset();
+  };
+
+
+  const permissionModules = [
+    ['pos', 'POS & Sales'], ['inventory', 'Inventory visibility'], ['products', 'Product catalogue'],
+    ['customers', 'Customers'], ['quotations', 'Quotations'], ['invoices', 'Invoices'],
+    ['purchases', 'Purchases'], ['suppliers', 'Suppliers'], ['reports', 'Reports'],
+    ['expenses', 'Expenses'], ['users', 'Staff & Users'], ['settings', 'Settings'],
+    ['branches', 'Branches'], ['audit_log', 'Audit log'], ['security', 'Security'], ['backups', 'Backups'],
+  ] as const;
+
+  const authHeaders = (): Record<string, string> => {
+    let token = '';
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      const raw = localStorage.getItem(key) || '';
+      if (!token && /token/i.test(key) && raw.length > 20) token = raw.replace(/^"|"$/g, '');
+      try {
+        const parsed = JSON.parse(raw);
+        if (!token && parsed && typeof parsed === 'object') {
+          for (const [k, v] of Object.entries(parsed)) if (/token|accessToken|authToken/i.test(k) && typeof v === 'string') token = v;
+        }
+      } catch {}
+    }
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
+  const openPermissions = async (user: User) => {
+    setPermissionUser(user);
+    setPermissionLoading(true);
+    setPermissionValues({});
+    try {
+      const res = await fetch(`/api/users/${user.id}/permissions`, { headers: authHeaders(), credentials: 'include' });
+      if (!res.ok) throw new Error(res.status === 403 ? 'Only a super admin can manage permissions.' : 'Could not load permissions.');
+      const data = await res.json();
+      const values: Record<string, boolean> = {};
+      for (const module of data.modules as string[]) {
+        if (Object.prototype.hasOwnProperty.call(data.overrides, module)) values[module] = data.overrides[module];
+      }
+      setPermissionValues(values);
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Could not load permissions'); }
+    finally { setPermissionLoading(false); }
+  };
+
+  const savePermissions = async () => {
+    if (!permissionUser) return;
+    setPermissionSaving(true);
+    try {
+      const res = await fetch(`/api/users/${permissionUser.id}/permissions`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        credentials: 'include', body: JSON.stringify({ overrides: permissionValues }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not save permissions');
+      toast.success('Permissions saved. The user may need to sign in again.');
+      setPermissionUser(null);
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Could not save permissions'); }
+    finally { setPermissionSaving(false); }
   };
 
   const roleDisplay = (role: string) => getTierLabel(role);
@@ -306,6 +369,9 @@ export default function UsersPage() {
                     </Badge>
                   </td>
                   <td className="px-4 py-3 text-right">
+                    <Button variant="ghost" size="icon" title="Manage permissions" onClick={() => void openPermissions(user)}>
+                      <ShieldCheck className="w-4 h-4" />
+                    </Button>
                     <Button variant="ghost" size="icon" onClick={() => openEditDialog(user)}>
                       <Pencil className="w-4 h-4 text-primary" />
                     </Button>
@@ -319,6 +385,31 @@ export default function UsersPage() {
           </tbody>
         </table>
       </div>
+
+      {permissionUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div role="dialog" aria-modal="true" aria-label="Manage user permissions" className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-lg border bg-background p-6 shadow-xl space-y-4">
+            <div className="flex items-start justify-between gap-4">
+              <div><h3 className="text-xl font-semibold">Permissions — {permissionUser.name}</h3><p className="text-sm text-muted-foreground">Override access by POS module. Unchecked overrides revoke access; unset permissions use the user's role defaults.</p></div>
+              <Button variant="outline" onClick={() => setPermissionUser(null)}>Close</Button>
+            </div>
+            {permissionLoading ? <Skeleton className="h-32 w-full" /> : (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {permissionModules.map(([key, label]) => (
+                  <label key={key} className="flex items-center gap-3 rounded-md border p-3">
+                    <input type="checkbox" checked={permissionValues[key] ?? false} onChange={(e) => setPermissionValues(prev => ({ ...prev, [key]: e.target.checked }))} className="h-4 w-4" />
+                    <span className="text-sm font-medium">{label}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <div className="flex justify-end gap-2 border-t pt-4">
+              <Button variant="outline" onClick={() => setPermissionUser(null)}>Cancel</Button>
+              <Button onClick={() => void savePermissions()} disabled={permissionLoading || permissionSaving}>{permissionSaving ? 'Saving…' : 'Save permissions'}</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
