@@ -171,7 +171,7 @@ router.get("/inventory/transfers", async (req, res): Promise<void> => {
   });
 });
 
-router.post("/inventory/transfers", async (req, res): Promise<void> => {
+router.post("/inventory/transfers", requireRole("administrator", "manager", "storekeeper"), async (req, res): Promise<void> => {
   const { source_branch_id, destination_branch_id, product_id, quantity, transfer_date, notes } = req.body;
   const qty = Number(quantity);
   if (!product_id || !Number.isFinite(qty) || qty <= 0) { res.status(400).json({ error: "product_id and a positive quantity are required" }); return; }
