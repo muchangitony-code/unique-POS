@@ -23,7 +23,8 @@ process.env.NODE_ENV = process.env.NODE_ENV || "production";
 const defaultClientDir = fs.existsSync(path.join(__dirname, "dist")) ? path.join(__dirname, "dist") : path.join(__dirname, "public");
 process.env.SERVE_CLIENT_DIR = process.env.SERVE_CLIENT_DIR || defaultClientDir;
 process.env.BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups");
-process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dirname, "storage");
+// Branding uploads must live on Railway’s persistent volume, not the disposable container filesystem.
+process.env.LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(__dirname, "backups", "storage");
 
 
 // UNIQUEPOS_ADMIN_TEST_SALE_DELETE_RUNTIME_V1
