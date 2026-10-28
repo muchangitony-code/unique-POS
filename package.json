@@ -12,7 +12,8 @@
     "build:frontend": "vite build --config vite.config.mjs",
     "thermal-agent": "node tools/thermal-print-agent.cjs",
     "db:migrate": "node scripts/deploy-migrations.cjs",
-    "db:migration-audit": "node scripts/migration-safety.cjs"
+    "db:migration-audit": "node scripts/migration-safety.cjs",
+    "test:deployment-safety": "node tests/deployment-safety.cjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
