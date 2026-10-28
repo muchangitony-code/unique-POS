@@ -5,6 +5,7 @@ const path = require('node:path');
 const { Pool } = require('pg');
 const { parseAndValidateDatabaseUrl, railwaySsl } = require('./database-url.cjs');
 const { splitSqlStatements } = require('./sql-utils.cjs');
+const { classifyMigration, requireBackupFile } = require('./migration-safety.cjs');
 
 const MIGRATION_LOCK_ID = 2141383001;
 
@@ -199,11 +200,9 @@ async function applyMigrations(options = {}) {
 
       // Require explicit per-file approval and a fresh, non-empty backup for
       // any migration containing data-destructive SQL, regardless of caller.
-      const migrationSql = fs.readFileSync(path.join(migrationsDir, file), 'utf8')
-        .replace(/\/\*[\s\S]*?\*\//g, ' ')
-        .replace(/^\s*--.*$/gm, ' ');
-      const isDestructive = /\bTRUNCATE\b|\bDELETE\s+FROM\b|\bDROP\s+(TABLE|SCHEMA|DATABASE|TYPE|SEQUENCE|VIEW)\b|\bALTER\s+TABLE\b[\s\S]*?\bDROP\s+(COLUMN|CONSTRAINT)\b/i.test(migrationSql);
-      if (isDestructive) {
+      const migrationSql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+      const destructiveFindings = classifyMigration(migrationSql);
+      if (destructiveFindings.length > 0) {
         const approved = new Set(String(process.env.MIGRATION_APPROVED_FILES || '').split(',').map((v) => v.trim()).filter(Boolean));
         if (process.env.MIGRATION_ALLOW_DESTRUCTIVE !== 'YES'
           || process.env.MIGRATION_DESTRUCTIVE_APPROVAL !== 'APPROVE_DESTRUCTIVE_MIGRATION'
@@ -212,14 +211,10 @@ async function applyMigrations(options = {}) {
           || !approved.has(file)) {
           throw new Error(`Destructive migration blocked: ${file} requires explicit per-file approval and migration deployment credentials.`);
         }
-        const backupPath = String(process.env.MIGRATION_BACKUP_FILE || '');
-        if (!backupPath || !fs.existsSync(backupPath)) {
-          throw new Error(`Destructive migration blocked: ${file} requires a fresh verified backup file. No SQL was executed.`);
-        }
-        const backupStat = fs.statSync(backupPath);
-        const maxAge = Number(process.env.MIGRATION_MAX_BACKUP_AGE_MS || 15 * 60 * 1000);
-        if (!backupStat.isFile() || backupStat.size < 1024 || Date.now() - backupStat.mtimeMs > maxAge) {
-          throw new Error(`Destructive migration blocked: backup for ${file} is missing, too small, or stale. No SQL was executed.`);
+        try {
+          requireBackupFile(process.env.MIGRATION_BACKUP_FILE);
+        } catch (error) {
+          throw new Error(`Destructive migration blocked for ${file}: ${error.message} No SQL was executed.`);
         }
       }
 
