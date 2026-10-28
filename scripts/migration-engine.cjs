@@ -190,6 +190,39 @@ async function applyMigrations(options = {}) {
       // its SQL is intentionally never executed. This is used only when a
       // historical migration was deliberately abandoned and its effects are
       // known not to exist in the target database.
+      // Retired/fresh-start migrations must never run through the ordinary
+      // migration engine. This guard protects production even if a caller
+      // bypasses the higher-level migration audit command.
+      if (policy[file]?.action === 'retired' || policy[file]?.action === 'fresh_start') {
+        throw new Error(`Migration blocked: ${file} is marked ${policy[file].action} and requires a separately reviewed recovery/reconciliation plan. No SQL was executed for this migration.`);
+      }
+
+      // Require explicit per-file approval and a fresh, non-empty backup for
+      // any migration containing data-destructive SQL, regardless of caller.
+      const migrationSql = fs.readFileSync(path.join(migrationsDir, file), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/^\s*--.*$/gm, ' ');
+      const isDestructive = /\bTRUNCATE\b|\bDELETE\s+FROM\b|\bDROP\s+(TABLE|SCHEMA|DATABASE|TYPE|SEQUENCE|VIEW)\b|\bALTER\s+TABLE\b[\s\S]*?\bDROP\s+(COLUMN|CONSTRAINT)\b/i.test(migrationSql);
+      if (isDestructive) {
+        const approved = new Set(String(process.env.MIGRATION_APPROVED_FILES || '').split(',').map((v) => v.trim()).filter(Boolean));
+        if (process.env.MIGRATION_ALLOW_DESTRUCTIVE !== 'YES'
+          || process.env.MIGRATION_DESTRUCTIVE_APPROVAL !== 'APPROVE_DESTRUCTIVE_MIGRATION'
+          || process.env.MIGRATION_CONFIRMATION !== 'APPLY_MIGRATIONS'
+          || String(process.env.MIGRATION_DEPLOY_TOKEN || '').length < 32
+          || !approved.has(file)) {
+          throw new Error(`Destructive migration blocked: ${file} requires explicit per-file approval and migration deployment credentials.`);
+        }
+        const backupPath = String(process.env.MIGRATION_BACKUP_FILE || '');
+        if (!backupPath || !fs.existsSync(backupPath)) {
+          throw new Error(`Destructive migration blocked: ${file} requires a fresh verified backup file. No SQL was executed.`);
+        }
+        const backupStat = fs.statSync(backupPath);
+        const maxAge = Number(process.env.MIGRATION_MAX_BACKUP_AGE_MS || 15 * 60 * 1000);
+        if (!backupStat.isFile() || backupStat.size < 1024 || Date.now() - backupStat.mtimeMs > maxAge) {
+          throw new Error(`Destructive migration blocked: backup for ${file} is missing, too small, or stale. No SQL was executed.`);
+        }
+      }
+
       if (policy[file]?.action === 'baseline') {
         await client.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [file]);
         console.log(`[migrations] Baseline recorded without executing SQL: ${file}`);
