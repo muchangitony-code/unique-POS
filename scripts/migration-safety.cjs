@@ -126,7 +126,7 @@ async function auditMigrationState(options = {}) {
   return scanned.map((item) => ({ ...item, status: applied.has(item.name) ? 'applied' : 'pending' }));
 }
 
-module.exports = { CONFIRMATION, DESTRUCTIVE_APPROVAL, scanMigrations, auditMigrationState, assertMigrationDeploymentSafe, requireBackupFile };
+module.exports = { CONFIRMATION, DESTRUCTIVE_APPROVAL, classifyMigration, scanMigrations, auditMigrationState, assertMigrationDeploymentSafe, requireBackupFile };
 
 if (require.main === module) {
   auditMigrationState().then((rows) => {

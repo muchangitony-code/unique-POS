@@ -5,6 +5,7 @@ const path = require('node:path');
 const { Pool } = require('pg');
 const { parseAndValidateDatabaseUrl, railwaySsl } = require('./database-url.cjs');
 const { splitSqlStatements } = require('./sql-utils.cjs');
+const { classifyMigration, requireBackupFile } = require('./migration-safety.cjs');
 
 const MIGRATION_LOCK_ID = 2141383001;
 
@@ -190,6 +191,33 @@ async function applyMigrations(options = {}) {
       // its SQL is intentionally never executed. This is used only when a
       // historical migration was deliberately abandoned and its effects are
       // known not to exist in the target database.
+      // Retired/fresh-start migrations must never run through the ordinary
+      // migration engine. This guard protects production even if a caller
+      // bypasses the higher-level migration audit command.
+      if (policy[file]?.action === 'retired' || policy[file]?.action === 'fresh_start') {
+        throw new Error(`Migration blocked: ${file} is marked ${policy[file].action} and requires a separately reviewed recovery/reconciliation plan. No SQL was executed for this migration.`);
+      }
+
+      // Require explicit per-file approval and a fresh, non-empty backup for
+      // any migration containing data-destructive SQL, regardless of caller.
+      const migrationSql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+      const destructiveFindings = classifyMigration(migrationSql);
+      if (destructiveFindings.length > 0) {
+        const approved = new Set(String(process.env.MIGRATION_APPROVED_FILES || '').split(',').map((v) => v.trim()).filter(Boolean));
+        if (process.env.MIGRATION_ALLOW_DESTRUCTIVE !== 'YES'
+          || process.env.MIGRATION_DESTRUCTIVE_APPROVAL !== 'APPROVE_DESTRUCTIVE_MIGRATION'
+          || process.env.MIGRATION_CONFIRMATION !== 'APPLY_MIGRATIONS'
+          || String(process.env.MIGRATION_DEPLOY_TOKEN || '').length < 32
+          || !approved.has(file)) {
+          throw new Error(`Destructive migration blocked: ${file} requires explicit per-file approval and migration deployment credentials.`);
+        }
+        try {
+          requireBackupFile(process.env.MIGRATION_BACKUP_FILE);
+        } catch (error) {
+          throw new Error(`Destructive migration blocked for ${file}: ${error.message} No SQL was executed.`);
+        }
+      }
+
       if (policy[file]?.action === 'baseline') {
         await client.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [file]);
         console.log(`[migrations] Baseline recorded without executing SQL: ${file}`);

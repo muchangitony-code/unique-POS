@@ -22,7 +22,18 @@ function main() {
   const stat = fs.statSync(output);
   if (!stat.isFile() || stat.size < 1024) throw new Error(`Backup was created but is invalid or too small: ${output}`);
 
-  console.log(JSON.stringify({ backupFile: output, bytes: stat.size, createdAt: new Date().toISOString() }));
+  // Parse the custom-format archive table before allowing a destructive
+  // migration to proceed. File size alone does not establish archive integrity.
+  const validation = spawnSync('pg_restore', ['--list', output], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  if (validation.error) throw new Error(`pg_restore validation could not start: ${validation.error.message}`);
+  if (validation.status !== 0 || !String(validation.stdout || '').includes('Dumped from database version')) {
+    throw new Error('Backup archive validation failed. Migration will not run.');
+  }
+
+  console.log(JSON.stringify({ backupFile: output, bytes: stat.size, archiveValidated: true, createdAt: new Date().toISOString() }));
   return output;
 }
 

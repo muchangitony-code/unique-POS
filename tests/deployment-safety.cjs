@@ -10,6 +10,7 @@ const app = read('app.js');
 const bootstrap = read('scripts/bootstrap-db.cjs');
 const reset = read('scripts/production-reset.cjs');
 const directRunner = read('scripts/run-migrations.cjs');
+const migrationEngine = read('scripts/migration-engine.cjs');
 const packageJson = JSON.parse(read('package.json'));
 const policy = JSON.parse(read('migration-safety.json'));
 
@@ -20,6 +21,10 @@ if (packageJson.scripts['db:migrate'] !== 'node scripts/deploy-migrations.cjs') 
 if (!packageJson.scripts['db:migration-audit']) throw new Error('db:migration-audit script is missing.');
 if (!/UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS/.test(app)) throw new Error('Application startup must disable internal migration paths before loading the runtime bundle.');
 if (!/MIGRATION_DEPLOY_TOKEN/.test(directRunner) || !/MIGRATION_CONFIRMATION/.test(directRunner)) throw new Error('Direct migration runner is not credential-gated.');
+if (!/policy\[file\]\?\.action === 'retired'/.test(migrationEngine) || !/Destructive migration blocked/.test(migrationEngine)) throw new Error('Migration engine must block retired migrations and require backup-backed destructive approval.');
+if (!/classifyMigration\(migrationSql\)/.test(migrationEngine) || !/requireBackupFile\(process\.env\.MIGRATION_BACKUP_FILE\)/.test(migrationEngine)) throw new Error('Migration engine must use the shared destructive SQL classifier and backup validation gate.');
+const backupScript = read('scripts/backup-before-migration.cjs');
+if (!/pg_restore/.test(backupScript) || !/archiveValidated: true/.test(backupScript)) throw new Error('Pre-migration backup must validate the custom-format archive before approving it.');
 
 const scanned = scanMigrations(path.resolve(__dirname, '..', 'migrations'));
 const knownRetired = [
@@ -31,7 +36,8 @@ const knownRetired = [
   '0023_production_catalog_clean_slate.sql',
   '0023_production_catalog_wipe.sql',
   '0023_production_clean_slate_catalog.sql',
-  '0026_inventory_clean_start.sql'
+  '0026_inventory_clean_start.sql',
+  '0028_initialize_clean_inventory_catalog.sql'
 ];
 for (const name of knownRetired) {
   const row = scanned.find((item) => item.name === name);
