@@ -17,6 +17,22 @@ const required=['app.js','index.cjs','dist/index.html','public/app.js','public/i
 for(const file of required){const full=path.join(root,file);if(!fs.existsSync(full)||fs.statSync(full).size===0)throw new Error(`Build: missing required ${file}`);}
 for(const stale of ['public/bulk-import-v2.js','public/bulk-import-v2-launcher.js','server/bulk-import-v2.cjs','server/bulk-import-v2-router.cjs'])if(fs.existsSync(path.join(root,stale)))throw new Error(`Build: legacy component remains: ${stale}`);
 for(const script of ['build-runtime-patch.cjs','patch-pos-product-access.cjs']){const patch=spawnSync(process.execPath,[path.join(__dirname,script)],{stdio:'inherit'});if(patch.status!==0)process.exit(patch.status||1);}
+
+// The checked-in runtime bundle was generated in a legacy Replit workspace and
+// may retain its absolute pino/thread-stream worker path. Resolve it against
+// this deployment's installed thread-stream package before syntax validation.
+const serverBundle=path.join(root,'server','index.cjs');
+if(fs.existsSync(serverBundle)){
+  let source=fs.readFileSync(serverBundle,'utf8');
+  const staleWorker='/home/runner/workspace/deploy/server/thread-stream-worker.cjs';
+  const actualWorker=path.join(root,'node_modules','thread-stream','lib','worker.js');
+  if(source.includes(staleWorker)){
+    if(!fs.existsSync(actualWorker))throw new Error('Build: thread-stream worker is missing from installed dependencies');
+    source=source.split(staleWorker).join(actualWorker);
+    fs.writeFileSync(serverBundle,source,'utf8');
+    console.log('[build] repaired legacy absolute thread-stream worker path');
+  }
+}
 const runtime=path.join(root,'index.runtime.cjs');fs.writeFileSync(runtime,fs.readFileSync(path.join(root,'index.cjs'),'utf8'),'utf8');
 for(const file of ['app.js','index.cjs','index.runtime.cjs','server/index.cjs','server/inventory-v3.cjs','server/quotations-v2.cjs','server/quotations-v2-ui.cjs','server/pdf/bundle-loader.cjs','server/pdf/index.cjs','server/pdf/a4-renderer.cjs','server/pdf/professional-a4-renderer.cjs','server/pdf/receipt.cjs','server/pdf/document-adapter.cjs']){const r=spawnSync(process.execPath,['--check',path.join(root,file)],{stdio:'inherit'});if(r.status!==0)process.exit(r.status||1);}
 const pdf=require(path.join(root,'server/pdf/index.cjs'));if(typeof pdf.renderPdfBuffer!=='function')throw new Error('Build: PDF renderer is unavailable');
