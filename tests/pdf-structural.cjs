@@ -21,7 +21,7 @@ for (const [name, number, customer, expectedPages] of cases) {
   if (expectedPages && count !== expectedPages) throw new Error(`${name}: expected ${expectedPages} page(s), got ${count}`);
   if (name.includes('25-items') && count < 2) throw new Error(`${name}: pagination did not create a continuation page`);
   if (name.includes('25-items') && count > 4) throw new Error(`${name}: excessive pagination (${count} pages)`);
-  const extracted = run('pdftotext', ['-layout', file, '-']);
+  const extracted = run('pdftotext', ['-layout', file, '-']).replace(/\s+/g, ' ').trim();
   for (const required of [number, customer, BRAND.legalName, BRAND.address, BRAND.phone]) if (!extracted.includes(required)) throw new Error(`${name}: extracted text missing ${required}`);
   const totals = (extracted.match(/GRAND TOTAL/g) || []).length; if (totals !== 1) throw new Error(`${name}: expected exactly one final total, found ${totals}`);
   console.log(`[pdf-structural] ${name}: ${count} page(s)`);
