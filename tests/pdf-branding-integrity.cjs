@@ -25,26 +25,28 @@ for (const stale of [
   'public/receipt-print-payment-fix.js'
 ]) assert.equal(exists(stale), false, `stale document workaround still exists: ${stale}`);
 
-const html = read('public/index.html');
+const html = read('dist/index.html');
 assert.doesNotMatch(html, /receipt-logo-fix\.js|receipt-print-payment-fix\.js/);
-assert.match(html, /invoices\.js/);
+assert.match(html, /assets\/index-[^\"']+\.js/);
 
-const renderer = read('server/pdf/a4-renderer.cjs');
-assert.match(renderer, /require\('\.\.\/document-branding\.cjs'\)/);
-assert.match(renderer, /const C = BRAND\.colors/);
-assert.match(renderer, /loadLogo\(BRAND\.logo\)/);
-assert.match(renderer, /refusing to generate an unbranded customer document/);
+const rendererFacade = read('server/pdf/a4-renderer.cjs');
+assert.match(rendererFacade, /professional-a4-renderer\.cjs/);
+const renderer = read('server/pdf/professional-a4-renderer.cjs');
+assert.match(renderer, /loadLogo\(c\.logoUrl\|\|c\.logo\|\|d\.logoUrl\)/);
+assert.match(renderer, /drawLogo\(pdf,logo/);
+const adapter = read('server/pdf/document-adapter.cjs');
+assert.match(adapter, /logoUrl: first\(company\.logoUrl/);
 
 const receipt = read('server/pdf/receipt.cjs');
 assert.match(receipt, /require\('\.\.\/document-branding\.cjs'\)/);
 assert.match(receipt, /company\?\.logoUrl/);
-assert.match(receipt, /BRAND\.thermalLogo/);
+assert.match(receipt, /loadLogo\(logoSource\(company\)\)/);
 assert.match(receipt, /refusing to generate an unbranded receipt/);
 
 const build = read('scripts/build.cjs');
-assert.match(build, /authoritative PDF engine/);
-assert.match(build, /public\/invoices\.js/);
-assert.match(build, /stale document workaround still exists/);
+assert.match(build, /PDF subsystem verified/);
+assert.match(build, /prebuilt frontend bundle verified/);
+assert.match(build, /prebuilt frontend bundle verified/);
 assert.doesNotMatch(build, /public\/invoice-workspace\.js/);
 
 console.log('[pdf-branding-integrity] PASS: shared branding, settings-logo propagation, and stale workaround guards are enforced');

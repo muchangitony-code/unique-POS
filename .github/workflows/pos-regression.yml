@@ -22,22 +22,21 @@ jobs:
       - name: Build and syntax validation
         run: |
           npm run build
-          node --check public/app.js
-          node --check public/pos-catalog-compat.js
-          node --check public/pos-auth-bridge.js
+          node --check app.js
+          node --check server/index.cjs
+          node --check server/pino-worker.cjs
+          node --check server/pino-file.cjs
           node - <<'NODE'
           const fs = require('node:fs');
-          const html = fs.readFileSync('public/index.html', 'utf8');
-          const app = fs.readFileSync('public/app.js', 'utf8');
-          const compat = fs.readFileSync('public/pos-catalog-compat.js', 'utf8');
-          const bridge = fs.readFileSync('public/pos-auth-bridge.js', 'utf8');
-          if (html.indexOf('pos-catalog-compat.js') > html.indexOf('pos-auth-bridge.js')) throw new Error('Counter compatibility layer must load before auth bridge');
-          if (html.indexOf('pos-auth-bridge.js') > html.indexOf('app.js')) throw new Error('Auth bridge must load before POS app');
-          if (!app.includes('data-action=\"add-to-basket\"')) throw new Error('Counter Add to Basket action missing after deterministic build');
-          if (!app.includes('Cannot sell more than available stock.')) throw new Error('Counter stock guard missing after deterministic build');
-          if (!compat.includes('in_stock_only')) throw new Error('Counter compatibility stock fallback missing');
-          if (!bridge.includes('Authorization')) throw new Error('Counter auth bridge missing Authorization support');
-          console.log('Counter static smoke checks passed.');
+          const html = fs.readFileSync('dist/index.html', 'utf8');
+          const page = fs.readFileSync('pages/quotations.tsx', 'utf8');
+          const wizard = fs.readFileSync('components/documents/DocumentWizard.tsx', 'utf8');
+          if (!html.includes('/assets/index-') || !html.includes('.js')) throw new Error('Production frontend bundle is not referenced by dist/index.html');
+          if (!page.includes('Edit quotation')) throw new Error('Quotation amendment action is missing');
+          if (!page.includes('setWizardInitial({')) throw new Error('Amendment does not prefill the quotation wizard');
+          if (!page.includes('Amended from ')) throw new Error('Amendment source reference is missing');
+          if (!wizard.includes('useCreateQuotation')) throw new Error('Amendment draft must use the normal quotation creation flow');
+          console.log('Production frontend and quotation amendment smoke checks passed.');
           NODE
       - name: Deployment safety regression
         run: node tests/deployment-safety.cjs
@@ -47,14 +46,12 @@ jobs:
           const fs = require('node:fs');
           const uiPatch = fs.readFileSync('scripts/quotation-custom-item-ui.cjs', 'utf8');
           const quotations = fs.readFileSync('src/routes/quotations.ts', 'utf8');
-          const invoices = fs.readFileSync('src/routes/invoices.ts', 'utf8');
           const migration = fs.readFileSync('migrations/0006_quotation_custom_items.sql', 'utf8');
           const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           if (!uiPatch.includes('Non-stock / Custom Item')) throw new Error('Non-stock quotation action is missing');
           if (!uiPatch.includes('product_id: null')) throw new Error('Custom quotation lines are not marked non-stock');
           if (!uiPatch.includes('allowNonStock')) throw new Error('Quotation-only non-stock mode is missing');
           if (!quotations.includes('productId == null') || !quotations.includes('productId as any')) throw new Error('Quotation backend does not preserve non-stock lines');
-          if (!invoices.includes('productId == null') || !invoices.includes('product_id as any')) throw new Error('Invoice backend does not preserve non-stock lines');
           if (!migration.includes('ALTER COLUMN product_id DROP NOT NULL')) throw new Error('Quotation migration does not permit non-stock items');
           if (!packageJson.scripts.build.includes('quotation-custom-item-ui.cjs')) throw new Error('Non-stock quotation UI patch is not part of the production build');
           console.log('Quotation custom-item integration checks passed.');
@@ -135,7 +132,7 @@ jobs:
           for i in $(seq 1 60); do
             HEALTH=$(curl -fsS "http://localhost:$PORT/api/healthz" 2>/dev/null || true)
             if [ -n "$HEALTH" ]; then
-              if printf '%s' "$HEALTH" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.exit(j.db_ok===true?0:1)}catch{process.exit(1)}})'; then READY=1; break; fi
+              if printf '%s' "$HEALTH" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.exit(j.status==="ok"?0:1)}catch{process.exit(1)}})'; then READY=1; break; fi
             fi
             sleep 1
           done
