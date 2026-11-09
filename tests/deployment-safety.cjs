@@ -20,7 +20,9 @@ if (/TRUNCATE TABLE[\s\S]*CASCADE|CASCADE/.test(reset)) throw new Error('Product
 if (packageJson.scripts['db:migrate'] !== 'node scripts/deploy-migrations.cjs') throw new Error('db:migrate must use the explicit deployment gate.');
 if (!packageJson.scripts['db:migration-audit']) throw new Error('db:migration-audit script is missing.');
 const stagingWorkflow = read('.github/workflows/pos-regression.yml');
+const buildScript = read('scripts/build.cjs');
 if (!/UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS:\s*["']?1/.test(stagingWorkflow)) throw new Error('Staging startup safety proof must disable internal startup migrations.');
+if (!/UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS === ["']1["']/.test(buildScript)) throw new Error('Build must honor the controlled startup-migration safety flag.');
 if (!/require\(["']\.\/server\/index\.cjs["']\)/.test(app)) throw new Error('Application entrypoint must load the production runtime bundle.');
 if (!/MIGRATION_DEPLOY_TOKEN/.test(directRunner) || !/MIGRATION_CONFIRMATION/.test(directRunner)) throw new Error('Direct migration runner is not credential-gated.');
 if (!/policy\[file\]\?\.action === 'retired'/.test(migrationEngine) || !/Destructive migration blocked/.test(migrationEngine)) throw new Error('Migration engine must block retired migrations and require backup-backed destructive approval.');
