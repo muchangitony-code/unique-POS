@@ -6,6 +6,8 @@
 export interface DocLine {
   product_id: number | null;
   product_name: string;
+  /** Original catalogue name, used to detect quotation-only name overrides. */
+  original_product_name?: string;
   description?: string;
   unit?: string;
   quantity: number;
