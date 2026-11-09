@@ -132,7 +132,7 @@ jobs:
           for i in $(seq 1 60); do
             HEALTH=$(curl -fsS "http://localhost:$PORT/api/healthz" 2>/dev/null || true)
             if [ -n "$HEALTH" ]; then
-              if printf '%s' "$HEALTH" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.exit(j.db_ok===true?0:1)}catch{process.exit(1)}})'; then READY=1; break; fi
+              if printf '%s' "$HEALTH" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.exit(j.status==='ok'?0:1)}catch{process.exit(1)}})'; then READY=1; break; fi
             fi
             sleep 1
           done
