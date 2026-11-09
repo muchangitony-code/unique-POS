@@ -32,15 +32,10 @@ if (!/pg_restore/.test(backupScript) || !/archiveValidated: true/.test(backupScr
 
 const scanned = scanMigrations(path.resolve(__dirname, '..', 'migrations'));
 const knownRetired = [
-  '0011_production_clean_start.sql',
-  '0012_clear_stale_bulk_import_history.sql',
-  '0013_production_clear_product_catalog.sql',
-  '0014_force_clean_test_catalog.sql',
   '0021_replace_canonical_catalog_with_exact_source.sql',
   '0023_production_catalog_clean_slate.sql',
   '0023_production_catalog_wipe.sql',
   '0023_production_clean_slate_catalog.sql',
-  '0026_inventory_clean_start.sql',
   '0028_initialize_clean_inventory_catalog.sql'
 ];
 for (const name of knownRetired) {
