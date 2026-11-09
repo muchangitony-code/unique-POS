@@ -208,12 +208,12 @@ export default function Quotations() {
                 <td className="px-4 py-3"><div className="flex gap-1 justify-end">
                   <Button variant="ghost" size="sm" title="Preview" onClick={() => setViewQuotation(quote)}><Eye className="w-4 h-4" /></Button>
                   <Button variant="ghost" size="sm" title="Duplicate" onClick={() => { setWizardInitial(toWizardInitial(quote)); setWizardOpen(true); }}><Copy className="w-4 h-4" /></Button>
-                  {['sent', 'accepted', 'expired', 'rejected'].includes(String(quote.status).toLowerCase()) && (
+                  {String(quote.status).toLowerCase() !== 'converted' && (
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
-                      title="Amend quotation — opens a new editable draft and preserves this sent quotation"
-                      aria-label={"Amend quotation " + quote.quotation_number}
+                      title="Edit quotation — opens a new editable draft and preserves this original quotation"
+                      aria-label={"Edit quotation " + quote.quotation_number}
                       onClick={() => {
                         const original = toWizardInitial(quote);
                         setWizardInitial({
@@ -223,7 +223,8 @@ export default function Quotations() {
                         setWizardOpen(true);
                       }}
                     >
-                      <FilePenLine className="w-4 h-4" />
+                      <FilePenLine className="mr-1 h-4 w-4" />
+                      Edit
                     </Button>
                   )}
                   <Button variant="ghost" size="sm" title="Print Quotation" onClick={() => printQuotation({ ...toPrintQuotation(quote), payment }, branchMap.get((quote as { branch_id?: number }).branch_id ?? -1))}><Printer className="w-4 h-4" /></Button>
