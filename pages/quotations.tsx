@@ -72,6 +72,7 @@ function toWizardInitial(q: any) {
     lines: (q.items ?? []).map((it: any) => ({
       product_id: it.product_id,
       product_name: quotationItemName(it),
+      original_product_name: quotationItemName(it),
       description: it.description ?? '',
       unit: it.unit ?? '',
       quantity: it.quantity,
