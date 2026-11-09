@@ -179,7 +179,12 @@ export function DocumentWizard({ mode, open, onOpenChange, initial, onCreated }:
 
       const items = state.lines.map((l) => ({
         product_id: l.product_id,
-        description: l.description || undefined,
+        // A renamed catalogue item keeps its product_id (and stock linkage).
+        // Store the quotation-only display name in a tagged description so the
+        // product master record is never changed.
+        description: l.original_product_name && l.product_name?.trim() !== l.original_product_name
+          ? `[[QUOTE_ITEM_NAME]]${l.product_name?.trim() || l.original_product_name}`
+          : (l.description || undefined),
         unit: l.unit || undefined,
         quantity: l.quantity,
         unit_price: l.unit_price,
@@ -408,6 +413,7 @@ function ProductsStep({ state, patch, allowNonStock = false }: { state: WizardSt
     patch({ lines: [...state.lines, {
       product_id: p.id,
       product_name: p.product_name,
+      original_product_name: p.product_name,
       description: p.description ?? '',
       unit: p.unit ?? '',
       quantity: 1,
@@ -430,6 +436,7 @@ function ProductsStep({ state, patch, allowNonStock = false }: { state: WizardSt
     patch({ lines: [...state.lines, {
       product_id: null as any,
       product_name: name,
+      original_product_name: name,
       description: customDescription.trim() || name,
       unit: customUnit.trim(),
       quantity,
@@ -525,12 +532,12 @@ function ProductsStep({ state, patch, allowNonStock = false }: { state: WizardSt
               return (
               <div key={String(line.product_id ?? 'custom') + '-' + index} className="border rounded-lg p-3 space-y-3">
                 <div className="flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium truncate">{displayName}</p>
-                      {line.product_id == null && <Badge variant="outline" className="shrink-0">NON-STOCK</Badge>}
-                    </div>
-                    {line.description && <p className="text-xs text-muted-foreground mt-0.5">{line.description}</p>}
+                  <div className="flex-1 min-w-0 space-y-1.5">
+                    <label className="text-xs text-muted-foreground">Quotation item name</label>
+                    <Input aria-label="Quotation item name" value={line.product_name ?? displayName}
+                      onChange={(e) => updateLine(index, { product_name: e.target.value })} />
+                    {line.product_id == null && <Badge variant="outline" className="shrink-0">NON-STOCK</Badge>}
+                    {line.description && line.description !== displayName && <p className="text-xs text-muted-foreground mt-0.5">{line.description}</p>}
                   </div>
                   <Button type="button" variant="ghost" size="sm" onClick={() => removeLine(index)} className="text-destructive">
                     <Trash2 className="w-4 h-4" />

@@ -46,7 +46,12 @@ async function formatQuotation(quotation: typeof quotationsTable.$inferSelect) {
   return {
     id: quotation.id, quotation_number: quotation.quotationNumber, branch_id: quotation.branchId,
     customer_id: quotation.customerId, customer_name: customerName,
-    items: items.map((i) => ({ id: i.id, product_id: i.productId, product_name: i.productId ? (productMap[i.productId] ?? i.description ?? "Non-stock item") : (i.description ?? "Non-stock item"), description: i.description, unit: i.unit, quantity: i.quantity, unit_price: Number(i.unitPrice), discount: Number(i.discount), vat_rate: Number(i.vatRate), total: Number(i.total) })),
+    items: items.map((i) => {
+      const taggedName = typeof i.description === "string" && i.description.startsWith("[[QUOTE_ITEM_NAME]]")
+        ? i.description.slice("[[QUOTE_ITEM_NAME]]".length)
+        : null;
+      return { id: i.id, product_id: i.productId, product_name: taggedName || (i.productId ? (productMap[i.productId] ?? i.description ?? "Non-stock item") : (i.description ?? "Non-stock item")), description: taggedName ? null : i.description, unit: i.unit, quantity: i.quantity, unit_price: Number(i.unitPrice), discount: Number(i.discount), vat_rate: Number(i.vatRate), total: Number(i.total) };
+    }),
     subtotal: Number(quotation.subtotal), discount_amount: Number(quotation.discountAmount), tax_amount: Number(quotation.taxAmount), total: Number(quotation.total),
     status: quotation.status, notes: quotation.notes,
     delivery_time: quotation.deliveryTime, warranty: quotation.warranty, payment_terms: quotation.paymentTerms,
