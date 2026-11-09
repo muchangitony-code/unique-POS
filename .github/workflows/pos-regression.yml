@@ -22,22 +22,21 @@ jobs:
       - name: Build and syntax validation
         run: |
           npm run build
-          node --check public/app.js
-          node --check public/pos-catalog-compat.js
-          node --check public/pos-auth-bridge.js
+          node --check app.js
+          node --check server/index.cjs
+          node --check server/pino-worker.cjs
+          node --check server/pino-file.cjs
           node - <<'NODE'
           const fs = require('node:fs');
-          const html = fs.readFileSync('public/index.html', 'utf8');
-          const app = fs.readFileSync('public/app.js', 'utf8');
-          const compat = fs.readFileSync('public/pos-catalog-compat.js', 'utf8');
-          const bridge = fs.readFileSync('public/pos-auth-bridge.js', 'utf8');
-          if (html.indexOf('pos-catalog-compat.js') > html.indexOf('pos-auth-bridge.js')) throw new Error('Counter compatibility layer must load before auth bridge');
-          if (html.indexOf('pos-auth-bridge.js') > html.indexOf('app.js')) throw new Error('Auth bridge must load before POS app');
-          if (!app.includes('data-action=\"add-to-basket\"')) throw new Error('Counter Add to Basket action missing after deterministic build');
-          if (!app.includes('Cannot sell more than available stock.')) throw new Error('Counter stock guard missing after deterministic build');
-          if (!compat.includes('in_stock_only')) throw new Error('Counter compatibility stock fallback missing');
-          if (!bridge.includes('Authorization')) throw new Error('Counter auth bridge missing Authorization support');
-          console.log('Counter static smoke checks passed.');
+          const html = fs.readFileSync('dist/index.html', 'utf8');
+          const page = fs.readFileSync('pages/quotations.tsx', 'utf8');
+          const wizard = fs.readFileSync('components/documents/DocumentWizard.tsx', 'utf8');
+          if (!/assets\\/index-[^"']+\\.js/.test(html)) throw new Error('Production frontend bundle is not referenced by dist/index.html');
+          if (!page.includes('Amend quotation')) throw new Error('Quotation amendment action is missing');
+          if (!page.includes('setWizardInitial({')) throw new Error('Amendment does not prefill the quotation wizard');
+          if (!page.includes('Amended from ')) throw new Error('Amendment source reference is missing');
+          if (!wizard.includes('useCreateQuotation')) throw new Error('Amendment draft must use the normal quotation creation flow');
+          console.log('Production frontend and quotation amendment smoke checks passed.');
           NODE
       - name: Deployment safety regression
         run: node tests/deployment-safety.cjs
