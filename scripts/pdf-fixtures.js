@@ -5,7 +5,7 @@ const require = createRequire(import.meta.url);
 const { renderDocument } = require('../server/pdf/index.cjs');
 const out = path.join(process.cwd(), 'out');
 fs.mkdirSync(out, { recursive: true });
-const company = { name: 'Unique Solar & General Supplies Limited', address: 'Eastern Bypass, Kiambu, Kenya', phone: '+254 733 573089', email: 'info@uniquesolarkenya.co.ke', taxId: 'P052303835W' };
+const company = { name: 'Unique Solar & General Supplies Limited', address: 'Kamakis Corner Square, Ruiru, Kenya', phone: '0733 573 089', website: 'https://uniquesolarkenya.co.ke', email: 'info@uniquesolarkenya.co.ke', taxId: 'P052303835W' };
 const customer = { name: 'Acme Electrical Supplies', address: 'Industrial Area, Nairobi', phone: '+254 711 111 111', email: 'buyer@example.test', taxId: 'P051111111B' };
 function payload(type, overrides = {}) {
   return { type, doc: { number: type === 'invoice' ? 'INV-QA-0024' : 'QTN-QA-0024', date: '2026-08-16', dueDate: '2026-08-30', validUntil: '2026-08-30', customer, items: [{ description: 'Solar cable 6mm²', qty: 2, unitPrice: '2500.00', taxRate: 16, discount: '0' }], currency: 'KES', notes: 'Thank you for your business.', terms: 'Payment is due according to the stated date.', ...overrides }, company };
