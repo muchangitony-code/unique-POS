@@ -413,6 +413,7 @@ function ProductsStep({ state, patch, allowNonStock = false }: { state: WizardSt
     patch({ lines: [...state.lines, {
       product_id: p.id,
       product_name: p.product_name,
+      original_product_name: p.product_name,
       description: p.description ?? '',
       unit: p.unit ?? '',
       quantity: 1,
@@ -435,6 +436,7 @@ function ProductsStep({ state, patch, allowNonStock = false }: { state: WizardSt
     patch({ lines: [...state.lines, {
       product_id: null as any,
       product_name: name,
+      original_product_name: name,
       description: customDescription.trim() || name,
       unit: customUnit.trim(),
       quantity,
