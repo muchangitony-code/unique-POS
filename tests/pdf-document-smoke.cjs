@@ -9,7 +9,8 @@ const company = {
   address: 'Nairobi, Kenya',
   phone: '+254 700 000 000',
   email: 'qa@example.test',
-  taxId: 'P000000000X'
+  taxId: 'P000000000X',
+  logoUrl: '/assets/branding/logo-monochrome.svg'
 };
 
 function payload(type) {
