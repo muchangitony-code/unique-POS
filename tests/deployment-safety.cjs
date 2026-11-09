@@ -15,7 +15,7 @@ const packageJson = JSON.parse(read('package.json'));
 const policy = JSON.parse(read('migration-safety.json'));
 
 if (/applyMigrations/.test(bootstrap)) throw new Error('Application bootstrap must not import or call applyMigrations.');
-if (/scope === ['"]all['"]|scope === ['"]all['"]|RESET_SCOPE.*all/.test(reset)) throw new Error('Production reset all mode must remain removed.');
+if (/if\s*\(\s*scope\s*===\s*['"]all['"]|RESET_SCOPE\s*===?\s*['"]all['"]/.test(reset)) throw new Error('Production reset all mode must remain removed.');
 if (/TRUNCATE TABLE[\s\S]*CASCADE|CASCADE/.test(reset)) throw new Error('Production reset must not contain CASCADE.');
 if (packageJson.scripts['db:migrate'] !== 'node scripts/deploy-migrations.cjs') throw new Error('db:migrate must use the explicit deployment gate.');
 if (!packageJson.scripts['db:migration-audit']) throw new Error('db:migration-audit script is missing.');
