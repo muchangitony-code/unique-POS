@@ -8,6 +8,7 @@ on:
 
 jobs:
   regression:
+    if: github.event_name == 'push'
     name: Full POS Regression
     runs-on: ubuntu-latest
     permissions:
