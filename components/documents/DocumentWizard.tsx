@@ -525,12 +525,12 @@ function ProductsStep({ state, patch, allowNonStock = false }: { state: WizardSt
               return (
               <div key={String(line.product_id ?? 'custom') + '-' + index} className="border rounded-lg p-3 space-y-3">
                 <div className="flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium truncate">{displayName}</p>
-                      {line.product_id == null && <Badge variant="outline" className="shrink-0">NON-STOCK</Badge>}
-                    </div>
-                    {line.description && <p className="text-xs text-muted-foreground mt-0.5">{line.description}</p>}
+                  <div className="flex-1 min-w-0 space-y-1.5">
+                    <label className="text-xs text-muted-foreground">Quotation item name</label>
+                    <Input aria-label="Quotation item name" value={line.product_name ?? displayName}
+                      onChange={(e) => updateLine(index, { product_name: e.target.value })} />
+                    {line.product_id == null && <Badge variant="outline" className="shrink-0">NON-STOCK</Badge>}
+                    {line.description && line.description !== displayName && <p className="text-xs text-muted-foreground mt-0.5">{line.description}</p>}
                   </div>
                   <Button type="button" variant="ghost" size="sm" onClick={() => removeLine(index)} className="text-destructive">
                     <Trash2 className="w-4 h-4" />
