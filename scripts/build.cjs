@@ -19,12 +19,23 @@ for(const stale of ['public/bulk-import-v2.js','public/bulk-import-v2-launcher.j
 for(const script of ['build-runtime-patch.cjs','patch-pos-product-access.cjs']){const patch=spawnSync(process.execPath,[path.join(__dirname,script)],{stdio:'inherit'});if(patch.status!==0)process.exit(patch.status||1);}
 const runtimeIndex=path.join(root,'server','index.cjs');
 let runtimeSource=fs.readFileSync(runtimeIndex,'utf8');
+let runtimeChanged=false;
 const stalePinoWorkerPath='const outputDir = "/home/runner/workspace/deploy/server";';
 if(runtimeSource.includes(stalePinoWorkerPath)){
   runtimeSource=runtimeSource.replaceAll(stalePinoWorkerPath,'const outputDir = __dirname;');
-  fs.writeFileSync(runtimeIndex,runtimeSource,'utf8');
+  runtimeChanged=true;
   console.log('[build] corrected bundled Pino worker path to the runtime directory');
 }
+const startupAnchor='runStartupMigrations().then(() => {';
+const guardedStartup='const startupMigrations = process.env.UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS === "1" ? Promise.resolve() : runStartupMigrations();\nstartupMigrations.then(() => {';
+if(runtimeSource.includes(startupAnchor)){
+  runtimeSource=runtimeSource.replace(startupAnchor,guardedStartup);
+  runtimeChanged=true;
+  console.log('[build] added explicit opt-out for internal startup migrations in controlled staging');
+} else if(!runtimeSource.includes('const startupMigrations = process.env.UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS === "1" ? Promise.resolve() : runStartupMigrations();')){
+  throw new Error('[build] startup migration guard anchor not found; refusing to build an unverified runtime');
+}
+if(runtimeChanged) fs.writeFileSync(runtimeIndex,runtimeSource,'utf8');
 
 const runtime=path.join(root,'index.runtime.cjs');fs.writeFileSync(runtime,fs.readFileSync(path.join(root,'index.cjs'),'utf8'),'utf8');
 for(const file of ['app.js','index.cjs','index.runtime.cjs','server/index.cjs','server/inventory-v3.cjs','server/quotations-v2.cjs','server/quotations-v2-ui.cjs','server/pdf/bundle-loader.cjs','server/pdf/index.cjs','server/pdf/a4-renderer.cjs','server/pdf/professional-a4-renderer.cjs','server/pdf/receipt.cjs','server/pdf/document-adapter.cjs']){const r=spawnSync(process.execPath,['--check',path.join(root,file)],{stdio:'inherit'});if(r.status!==0)process.exit(r.status||1);}
