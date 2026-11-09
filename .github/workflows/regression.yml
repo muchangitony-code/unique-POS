@@ -121,6 +121,25 @@ jobs:
           CREATE INDEX IF NOT EXISTS product_import_rows_job_id_idx ON product_import_rows (job_id, row_number);
           SQL
 
+      - name: Seed retired historical migrations as already applied
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const { Client } = require('pg');
+          const policy = JSON.parse(fs.readFileSync('migration-safety.json', 'utf8'));
+          const retired = Object.entries(policy).filter(([, rule]) => rule?.action === 'retired').map(([name]) => name);
+          const client = new Client({ connectionString: process.env.DATABASE_URL });
+          (async () => {
+            await client.connect();
+            await client.query('CREATE TABLE IF NOT EXISTS schema_migrations (id SERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
+            for (const name of retired) {
+              await client.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [name]);
+            }
+            await client.end();
+            console.log(`Seeded ${retired.length} retired migrations as historical in disposable CI database.`);
+          })().catch(async (error) => { console.error(error); try { await client.end(); } catch {} process.exit(1); });
+          NODE
+
       - name: Explicitly deploy database migrations
         run: node scripts/deploy-migrations.cjs
 
