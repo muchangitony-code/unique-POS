@@ -23,7 +23,7 @@ for (const [name, number, customer, expectedPages] of cases) {
   if (name.includes('25-items') && count > 4) throw new Error(`${name}: excessive pagination (${count} pages)`);
   const extracted = run('pdftotext', ['-layout', file, '-']);
   for (const required of [number, customer, BRAND.legalName, BRAND.address, BRAND.phone]) if (!extracted.includes(required)) throw new Error(`${name}: extracted text missing ${required}`);
-  const totals = (extracted.match(/(?:Total due|Estimated total)/g) || []).length; if (totals !== 1) throw new Error(`${name}: expected exactly one final total, found ${totals}`);
+  const totals = (extracted.match(/GRAND TOTAL/g) || []).length; if (totals !== 1) throw new Error(`${name}: expected exactly one final total, found ${totals}`);
   console.log(`[pdf-structural] ${name}: ${count} page(s)`);
 }
 console.log('[pdf-structural] all invoice/quotation layout assertions passed');
