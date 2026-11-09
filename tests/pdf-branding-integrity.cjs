@@ -40,7 +40,7 @@ assert.match(adapter, /logoUrl: first\(company\.logoUrl/);
 const receipt = read('server/pdf/receipt.cjs');
 assert.match(receipt, /require\('\.\.\/document-branding\.cjs'\)/);
 assert.match(receipt, /company\?\.logoUrl/);
-assert.match(receipt, /BRAND\.thermalLogo/);
+assert.match(receipt, /loadLogo\(logoSource\(company\)\)/);
 assert.match(receipt, /refusing to generate an unbranded receipt/);
 
 const build = read('scripts/build.cjs');
