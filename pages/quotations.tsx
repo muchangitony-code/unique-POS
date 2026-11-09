@@ -5,7 +5,7 @@ import {
 } from '@workspace/api-client-react';
 import { formatCurrency } from '@/lib/format';
 import { format } from 'date-fns';
-import { Plus, Search, FileOutput, Printer, Eye, Copy, Mail, MessageCircle, Trash2 } from 'lucide-react';
+import { Plus, Search, FileOutput, Printer, Eye, Copy, FilePenLine, Mail, MessageCircle, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -208,6 +208,24 @@ export default function Quotations() {
                 <td className="px-4 py-3"><div className="flex gap-1 justify-end">
                   <Button variant="ghost" size="sm" title="Preview" onClick={() => setViewQuotation(quote)}><Eye className="w-4 h-4" /></Button>
                   <Button variant="ghost" size="sm" title="Duplicate" onClick={() => { setWizardInitial(toWizardInitial(quote)); setWizardOpen(true); }}><Copy className="w-4 h-4" /></Button>
+                  {['sent', 'accepted', 'expired', 'rejected'].includes(String(quote.status).toLowerCase()) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      title="Amend quotation — opens a new editable draft and preserves this sent quotation"
+                      aria-label={"Amend quotation " + quote.quotation_number}
+                      onClick={() => {
+                        const original = toWizardInitial(quote);
+                        setWizardInitial({
+                          ...original,
+                          notes: "Amended from " + quote.quotation_number + (original.notes ? "\n" + original.notes : ''),
+                        });
+                        setWizardOpen(true);
+                      }}
+                    >
+                      <FilePenLine className="w-4 h-4" />
+                    </Button>
+                  )}
                   <Button variant="ghost" size="sm" title="Print Quotation" onClick={() => printQuotation({ ...toPrintQuotation(quote), payment }, branchMap.get((quote as { branch_id?: number }).branch_id ?? -1))}><Printer className="w-4 h-4" /></Button>
                   {quote.status !== 'converted' && quote.status !== 'rejected' && <Button variant="ghost" size="sm" title="Convert to Invoice" onClick={() => handleConvert(quote.id)} className="text-primary"><FileOutput className="w-4 h-4" /></Button>}
                   <Button variant="ghost" size="sm" title={quote.status === 'converted' ? 'Converted quotations are preserved' : 'Delete quotation'} disabled={quote.status === 'converted' || deletingId === quote.id} onClick={() => handleDelete(quote)} className="text-destructive hover:text-destructive"><Trash2 className="w-4 h-4" /></Button>
