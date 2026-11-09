@@ -25,9 +25,9 @@ for (const stale of [
   'public/receipt-print-payment-fix.js'
 ]) assert.equal(exists(stale), false, `stale document workaround still exists: ${stale}`);
 
-const html = read('public/index.html');
+const html = read('dist/index.html');
 assert.doesNotMatch(html, /receipt-logo-fix\.js|receipt-print-payment-fix\.js/);
-assert.match(html, /invoices\.js/);
+assert.match(html, /assets\/index-[^\"']+\.js/);
 
 const renderer = read('server/pdf/a4-renderer.cjs');
 assert.match(renderer, /require\('\.\.\/document-branding\.cjs'\)/);
