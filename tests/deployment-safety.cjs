@@ -19,7 +19,9 @@ if (/if\s*\(\s*scope\s*===\s*['"]all['"]|RESET_SCOPE\s*===?\s*['"]all['"]/.test(
 if (/TRUNCATE TABLE[\s\S]*CASCADE|CASCADE/.test(reset)) throw new Error('Production reset must not contain CASCADE.');
 if (packageJson.scripts['db:migrate'] !== 'node scripts/deploy-migrations.cjs') throw new Error('db:migrate must use the explicit deployment gate.');
 if (!packageJson.scripts['db:migration-audit']) throw new Error('db:migration-audit script is missing.');
-if (!/UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS/.test(app)) throw new Error('Application startup must disable internal migration paths before loading the runtime bundle.');
+const stagingWorkflow = read('.github/workflows/pos-regression.yml');
+if (!/UNIQUEPOS_DISABLE_INTERNAL_STARTUP_MIGRATIONS:\s*["']?1/.test(stagingWorkflow)) throw new Error('Staging startup safety proof must disable internal startup migrations.');
+if (!/require\(["']\.\/server\/index\.cjs["']\)/.test(app)) throw new Error('Application entrypoint must load the production runtime bundle.');
 if (!/MIGRATION_DEPLOY_TOKEN/.test(directRunner) || !/MIGRATION_CONFIRMATION/.test(directRunner)) throw new Error('Direct migration runner is not credential-gated.');
 if (!/policy\[file\]\?\.action === 'retired'/.test(migrationEngine) || !/Destructive migration blocked/.test(migrationEngine)) throw new Error('Migration engine must block retired migrations and require backup-backed destructive approval.');
 if (!/classifyMigration\(migrationSql\)/.test(migrationEngine) || !/requireBackupFile\(process\.env\.MIGRATION_BACKUP_FILE\)/.test(migrationEngine)) throw new Error('Migration engine must use the shared destructive SQL classifier and backup validation gate.');
