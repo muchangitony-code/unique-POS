@@ -31,7 +31,7 @@ jobs:
           const html = fs.readFileSync('dist/index.html', 'utf8');
           const page = fs.readFileSync('pages/quotations.tsx', 'utf8');
           const wizard = fs.readFileSync('components/documents/DocumentWizard.tsx', 'utf8');
-          if (!/assets\\/index-[^"']+\\.js/.test(html)) throw new Error('Production frontend bundle is not referenced by dist/index.html');
+          if (!html.includes('/assets/index-') || !html.includes('.js')) throw new Error('Production frontend bundle is not referenced by dist/index.html');
           if (!page.includes('Edit quotation')) throw new Error('Quotation amendment action is missing');
           if (!page.includes('setWizardInitial({')) throw new Error('Amendment does not prefill the quotation wizard');
           if (!page.includes('Amended from ')) throw new Error('Amendment source reference is missing');
