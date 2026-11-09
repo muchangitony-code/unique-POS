@@ -43,7 +43,7 @@ assert.match(receipt, /refusing to generate an unbranded receipt/);
 
 const build = read('scripts/build.cjs');
 assert.match(build, /authoritative PDF engine/);
-assert.match(build, /public\/invoices\.js/);
+assert.match(build, /prebuilt frontend bundle verified/);
 assert.match(build, /stale document workaround still exists/);
 assert.doesNotMatch(build, /public\/invoice-workspace\.js/);
 
