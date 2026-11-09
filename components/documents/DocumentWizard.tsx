@@ -179,7 +179,12 @@ export function DocumentWizard({ mode, open, onOpenChange, initial, onCreated }:
 
       const items = state.lines.map((l) => ({
         product_id: l.product_id,
-        description: l.description || undefined,
+        // A renamed catalogue item keeps its product_id (and stock linkage).
+        // Store the quotation-only display name in a tagged description so the
+        // product master record is never changed.
+        description: l.original_product_name && l.product_name?.trim() !== l.original_product_name
+          ? `[[QUOTE_ITEM_NAME]]${l.product_name?.trim() || l.original_product_name}`
+          : (l.description || undefined),
         unit: l.unit || undefined,
         quantity: l.quantity,
         unit_price: l.unit_price,
