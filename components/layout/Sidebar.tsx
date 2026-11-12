@@ -18,6 +18,7 @@ import {
   LogOut,
   ScrollText,
   ShieldAlert,
+  Database,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getTier, type FunctionalTier } from '@/lib/permissions';
@@ -47,6 +48,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/reports',    label: 'Reports',     icon: BarChart3,       tiers: ['administrator', 'manager'] },
   { href: '/audit-log',        label: 'Audit Log',      icon: ScrollText,  tiers: ['administrator'] },
   { href: '/security-alerts', label: 'Security Alerts', icon: ShieldAlert, tiers: ['administrator'] },
+  { href: '/admin/transaction-cleanup', label: 'Test Data Cleanup', icon: Database, tiers: ['administrator'] },
   { href: '/users',           label: 'Users',           icon: UserCog,     tiers: ['administrator'] },
   { href: '/settings',   label: 'Settings',    icon: Settings,        tiers: ['administrator'] },
 ];
@@ -67,7 +69,6 @@ export function Sidebar() {
 
   return (
     <div className="hidden md:flex w-64 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
-      {/* Logo / brand header */}
       <div className="flex h-16 items-center gap-3 px-4 border-b border-sidebar-border">
         <img
           src={branding.logoUrl}
