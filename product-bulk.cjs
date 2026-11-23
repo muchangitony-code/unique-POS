@@ -243,7 +243,21 @@ function createProductBulkRouter(deps) {
 
   // The remaining bulk endpoints use the same existing implementation below.
   router.post("/products/imports/upload-and-parse", async (req,res)=>{try{await ensureSchema();const raw=await collectRawBody(req);const {fields,file}=parseMultipartBody(raw,req.headers["content-type"]);const format=detectImportFormat({fileName:file.fileName,mimeType:file.mimeType,sourceTypeHint:fields.source_type,buffer:file.buffer});const source=await parseBufferSource({buffer:file.buffer,source_type:format.sourceType,file_name:file.fileName});const prepared=await prepareDraftRows(source);const actor=req.user||{};const job=await saveDraftJob({sourceType:format.sourceType,sourceName:fields.source_name||file.fileName,fileName:file.fileName,objectPath:null,mapping:prepared.mapping,preparedRows:prepared.rows,actor});res.status(201).json({job:serializeJob(job),rows:prepared.rows.map(row=>({row_number:row.row_number,raw_data:row.raw_data,normalized_data:row.normalized_data,validation_errors:row.validation_errors,action:row.action})),headers:source.headers});}catch(error){const status=error?.statusCode||400;res.status(status).json({error:error instanceof Error?error.message:String(error)});}});
-  router.post("/products/imports/:id/start", async (req,res)=>{try{const jobId=Number(req.params.id);if(!Number.isInteger(jobId)||jobId<=0)throw new Error("Invalid import job id.");const job=await loadJob(jobId);if(!job)throw new Error("Import job not found.");if(Number(job.invalid_rows||0)>0)throw importValidationError("Fix invalid rows before starting the import.");const actor=req.user||{};await pool.query(`UPDATE product_import_jobs SET options=$2::jsonb WHERE id=$1`,[jobId,JSON.stringify(req.body||{})]);startBackgroundJob(jobId,actor);res.status(202).json({job:serializeJob(await loadJob(jobId)),message:"Import started."});}catch(error){const status=error?.statusCode||400;res.status(status).json({error:error instanceof Error?error.message:String(error)});}});
+  router.post("/products/imports/:id/start", async (req,res)=>{
+    try {
+      const jobId=Number(req.params.id);
+      if(!Number.isInteger(jobId)||jobId<=0)throw new Error("Invalid import job id.");
+      const job=await loadJob(jobId);
+      if(!job)throw new Error("Import job not found.");
+      if(Number(job.invalid_rows||0)>0)throw importValidationError("Fix invalid rows before starting the import.");
+      const actor=req.user||{};
+      const options={on_duplicate:"skip",auto_create_references:true,...(req.body||{})};
+      const claimed=await pool.query("UPDATE product_import_jobs SET status='processing',started_at=NOW(),last_error=NULL,options=$2::jsonb WHERE id=$1 AND status IN ('draft','failed') RETURNING *",[jobId,JSON.stringify(options)]);
+      if(!claimed.rows[0]){const latest=await loadJob(jobId);res.status(409).json({error:"Import job cannot be started because its status is "+(latest?.status||"unknown")+".",job:serializeJob(latest)});return;}
+      startBackgroundJob(jobId,actor);
+      res.status(202).json({job:serializeJob(claimed.rows[0]),message:"Import started."});
+    } catch(error) { const status=error?.statusCode||400;res.status(status).json({error:error instanceof Error?error.message:String(error)}); }
+  });
   router.get("/products/imports", async (_req,res)=>{await ensureSchema();const {rows}=await pool.query(`SELECT * FROM product_import_jobs ORDER BY created_at DESC LIMIT 50`);res.json({data:rows.map(serializeJob)});});
   router.get("/products/imports/:id", async (req,res)=>{const job=await loadJob(Number(req.params.id));if(!job){res.status(404).json({error:"Import job not found"});return;}const result=await loadJobRows(Number(req.params.id),req.query||{});res.json({job:serializeJob(job),...result});});
   router.post("/products/imports/:id/remap", async (req,res)=>{try{const job=await loadJob(Number(req.params.id));if(!job)throw new Error("Import job not found");await remapJob(job.id,req.body?.mapping||{});res.json({job:serializeJob(await loadJob(job.id))});}catch(error){res.status(error?.statusCode||400).json({error:error instanceof Error?error.message:String(error)});}});
