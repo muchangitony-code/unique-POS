@@ -251,7 +251,7 @@ function createProductBulkRouter(deps) {
       if(!job)throw new Error("Import job not found.");
       if(Number(job.invalid_rows||0)>0)throw importValidationError("Fix invalid rows before starting the import.");
       const actor=req.user||{};
-      const options={on_duplicate:"skip",auto_create_references:true,...(req.body||{})};
+      const options={...(req.body||{}),on_duplicate:"skip",auto_create_references:true};
       const claimed=await pool.query("UPDATE product_import_jobs SET status='processing',started_at=NOW(),last_error=NULL,options=$2::jsonb WHERE id=$1 AND status IN ('draft','failed') RETURNING *",[jobId,JSON.stringify(options)]);
       if(!claimed.rows[0]){const latest=await loadJob(jobId);res.status(409).json({error:"Import job cannot be started because its status is "+(latest?.status||"unknown")+".",job:serializeJob(latest)});return;}
       startBackgroundJob(jobId,actor);
