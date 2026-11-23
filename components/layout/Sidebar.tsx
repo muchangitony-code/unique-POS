@@ -18,6 +18,7 @@ import {
   LogOut,
   ScrollText,
   ShieldAlert,
+  History,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getTier, type FunctionalTier } from '@/lib/permissions';
@@ -37,6 +38,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/dashboard',  label: 'Dashboard',  icon: LayoutDashboard, tiers: ['administrator', 'manager', 'sales_cashier', 'storekeeper'] },
   { href: '/pos',        label: 'POS',         icon: ShoppingCart,    tiers: ['administrator', 'sales_cashier'] },
   { href: '/products',   label: 'Products',    icon: Package,         tiers: ['administrator', 'manager', 'storekeeper'] },
+  { href: '/products/import-history', label: 'Import History', icon: History, tiers: ['administrator', 'manager', 'storekeeper'] },
   { href: '/inventory',  label: 'Inventory',   icon: Warehouse,       tiers: ['administrator', 'manager', 'storekeeper'] },
   { href: '/purchases',  label: 'Purchases',   icon: ShoppingBag,     tiers: ['administrator', 'manager', 'storekeeper'] },
   { href: '/customers',  label: 'Customers',   icon: Users,           tiers: ['administrator', 'manager', 'sales_cashier'] },

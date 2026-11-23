@@ -8,6 +8,7 @@ import Dashboard from '@/pages/dashboard';
 import POS from '@/pages/pos';
 import ProductsWithBulk from '@/pages/products-with-bulk';
 import BulkImport from '@/pages/bulk-import';
+import ImportHistory from '@/pages/import-history';
 import UsersPage from '@/pages/users';
 import Settings from '@/pages/settings';
 import Inventory from '@/pages/inventory';
@@ -55,6 +56,9 @@ export function AppRouter() {
 
       <Route path="/products/bulk-import">
         <ProtectedRoute title="Bulk Add Products" allowedTiers={['administrator', 'manager', 'storekeeper']}><BulkImport /></ProtectedRoute>
+      </Route>
+      <Route path="/products/import-history">
+        <ProtectedRoute title="Import History" allowedTiers={["administrator", "manager", "storekeeper"]}><ImportHistory /></ProtectedRoute>
       </Route>
       <Route path="/products">
         <ProtectedRoute title="Products Database" allowedTiers={['administrator', 'manager', 'storekeeper']}><ProductsWithBulk /></ProtectedRoute>
