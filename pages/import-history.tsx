@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, RefreshCw, History, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { ArrowLeft, RefreshCw, History, AlertCircle, CheckCircle2, Loader2, Play } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { customFetch } from '@workspace/api-client-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -28,6 +29,7 @@ export default function ImportHistory() {
     } catch (err) { setPageError(err instanceof Error ? err.message : 'Unable to load import history'); }
     finally { if (!quiet) setLoading(false); }
   };
+  const startJob = async (id: number) => { try { const result = await customFetch<any>('/products/imports/' + id + '/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on_duplicate: 'skip', auto_create_references: true }) }); if (result.job) setSelected(result.job); toast.success('Import job #' + id + ' restarted.'); await loadHistory(true); } catch (err) { const message = err instanceof Error ? err.message : 'Unable to start import'; setPageError(message); toast.error(message); } };
   const loadJob = async (id: number) => {
     setSelected(jobs.find(job => job.id === id) || null);
     try { const detail = await customFetch<any>('/products/imports/' + id); if (detail.job) setSelected(detail.job); }
@@ -53,6 +55,7 @@ export default function ImportHistory() {
     {selected && <Card><CardHeader><CardTitle className='flex items-center gap-2'>Import job #{selected.id}<Badge variant={status === 'failed' ? 'destructive' : status === 'completed' ? 'default' : 'secondary'}>{status || 'unknown'}</Badge></CardTitle></CardHeader><CardContent className='space-y-4'>
       <div className='grid grid-cols-2 md:grid-cols-4 gap-3'><div className='rounded-lg bg-muted/40 p-3'><div className='text-xs text-muted-foreground'>Rows</div><div className='text-xl font-bold'>{selected.total_rows ?? 0}</div></div><div className='rounded-lg bg-muted/40 p-3'><div className='text-xs text-muted-foreground'>Processed</div><div className='text-xl font-bold'>{selected.processed_rows ?? 0}</div></div><div className='rounded-lg bg-muted/40 p-3'><div className='text-xs text-muted-foreground'>Created</div><div className='text-xl font-bold'>{selected.created_count ?? 0}</div></div><div className='rounded-lg bg-muted/40 p-3'><div className='text-xs text-muted-foreground'>Skipped</div><div className='text-xl font-bold'>{selected.skipped_rows ?? 0}</div></div></div>
       {ACTIVE.has(status) && <p className='text-sm text-muted-foreground flex items-center gap-2'><Loader2 className='h-4 w-4 animate-spin' />The server is processing this job. Status refreshes automatically.</p>}
+      {(status === 'draft' || status === 'failed') && Number(selected.invalid_rows || 0) === 0 && <div className='flex justify-end'><Button onClick={() => startJob(selected.id)}><Play className='mr-2 h-4 w-4' />Start / Retry this import</Button></div>}
       {status === 'completed' && <div className='rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800'><CheckCircle2 className='inline mr-2 h-4 w-4' />Completed: {selected.created_count ?? 0} products created, {selected.updated_count ?? 0} updated, {selected.skipped_rows ?? 0} skipped. Opening stock: {stockProducts} products / {stockUnits.toLocaleString()} units.</div>}
       {status === 'failed' && <div className='rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm'><div className='font-semibold text-destructive flex items-center gap-2'><AlertCircle className='h-4 w-4' />Import failed</div><p className='mt-1'>{selected.last_error || 'No server error message was recorded.'}</p></div>}
       {selected.id === 14 && <p className='text-xs text-muted-foreground'>This is the previously submitted Unique Solar inventory import job.</p>}
